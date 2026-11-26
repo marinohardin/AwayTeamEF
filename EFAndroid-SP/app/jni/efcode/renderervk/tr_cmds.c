@@ -347,6 +347,11 @@ void RE_BeginFrame( stereoFrame_t stereoFrame ) {
 	tr.frameCount++;
 	tr.frameSceneNum = 0;
 
+#ifdef EF_VR
+	// wait for the headset's frame, get this frame's eye poses and images
+	R_VR_BeginFrame();
+#endif
+
 	if ( ( cmd = R_GetCommandBuffer( sizeof( *cmd ) ) ) == NULL )
 		return;
 
@@ -420,6 +425,11 @@ void RE_EndFrame( int *frontEndMsec, int *backEndMsec ) {
 	cmd->commandId = RC_SWAP_BUFFERS;
 
 	R_IssueRenderCommands();
+
+#ifdef EF_VR
+	// the frame has been submitted: hand the eye images to the compositor
+	R_VR_EndFrame();
+#endif
 
 	R_PerformanceCounters();
 

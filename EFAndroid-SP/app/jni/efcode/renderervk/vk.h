@@ -263,6 +263,10 @@ void vk_init_descriptors( void );
 // Shutdown vulkan subsystem by releasing resources acquired by Vk_Instance.
 void vk_shutdown( refShutdownCode_t code );
 void vk_resize_swapchain( void );
+#ifdef EF_VR
+qboolean vk_vr_active( void );				// OpenXR owns the instance/device and has a session
+qboolean vk_vr_take_eyes_written( void );	// were this frame's eye images filled? (clears the flag)
+#endif
 #if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
 qboolean vk_replace_window( void );
 #endif

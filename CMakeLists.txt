@@ -9,7 +9,7 @@ cmake_minimum_required(VERSION 3.21)
 #
 # macos/make-app.sh still builds the two halves separately (cmake -S efgame and
 # cmake -S EFAndroid-SP/app/jni/macos); both stay standalone projects.
-# Options: EF_APP_VERSION, EF_BINK, EF_VM_JIT, EF_COOP, EF_GOG, EF_DEPS_PREFIX, EF_FFMPEG_PREFIX.
+# Options: EF_APP_VERSION, EF_BINK, EF_VM_JIT, EF_COOP, EF_GOG, EF_VR, EF_DEPS_PREFIX, EF_FFMPEG_PREFIX.
 
 # (APPLE/WIN32 are only meaningful after project(), once a toolchain file has been read)
 project(EliteForce C CXX)

@@ -558,10 +558,89 @@ static void R_SetupFrustum( viewParms_t *dest, float xmin, float xmax, float yma
 R_SetupProjection
 ===============
 */
+#ifdef EF_VR
+/*
+===============
+R_VR_SetupProjection
+
+A VR eye's projection from OpenXR's asymmetric field of view (vrTan: the tangents of the
+left, right, up and down angles), and the matching culling frustum. The view origin is the
+eye itself, so there is no stereo separation term.
+===============
+*/
+static void R_VR_SetupProjection( viewParms_t *dest, float zProj, qboolean computeFrustum )
+{
+	const float xmin = zProj * dest->vrTan[0];	// left (negative)
+	const float xmax = zProj * dest->vrTan[1];	// right
+	const float ymax = zProj * dest->vrTan[2];	// up
+	const float ymin = zProj * dest->vrTan[3];	// down (negative)
+	const float width = xmax - xmin;
+	const float height = ymax - ymin;
+	float length;
+	int i;
+
+	dest->projectionMatrix[0] = 2 * zProj / width;
+	dest->projectionMatrix[4] = 0;
+	dest->projectionMatrix[8] = ( xmax + xmin ) / width;
+	dest->projectionMatrix[12] = 0;
+
+	dest->projectionMatrix[1] = 0;
+	dest->projectionMatrix[5] = 2 * zProj / height;
+	dest->projectionMatrix[9] = ( ymax + ymin ) / height;
+	dest->projectionMatrix[13] = 0;
+
+	dest->projectionMatrix[3] = 0;
+	dest->projectionMatrix[7] = 0;
+	dest->projectionMatrix[11] = -1;
+	dest->projectionMatrix[15] = 0;
+
+	if ( !computeFrustum )
+		return;
+
+	// side planes through the eye; axis[1] points left, so the right edge (xmax) bounds -axis[1]
+	length = sqrt( xmax * xmax + zProj * zProj );
+	VectorScale( dest->or.axis[0], xmax / length, dest->frustum[0].normal );
+	VectorMA( dest->frustum[0].normal, zProj / length, dest->or.axis[1], dest->frustum[0].normal );
+
+	length = sqrt( xmin * xmin + zProj * zProj );
+	VectorScale( dest->or.axis[0], -xmin / length, dest->frustum[1].normal );
+	VectorMA( dest->frustum[1].normal, -zProj / length, dest->or.axis[1], dest->frustum[1].normal );
+
+	// bottom (ymin) and top (ymax) planes
+	length = sqrt( ymin * ymin + zProj * zProj );
+	VectorScale( dest->or.axis[0], -ymin / length, dest->frustum[2].normal );
+	VectorMA( dest->frustum[2].normal, zProj / length, dest->or.axis[2], dest->frustum[2].normal );
+
+	length = sqrt( ymax * ymax + zProj * zProj );
+	VectorScale( dest->or.axis[0], ymax / length, dest->frustum[3].normal );
+	VectorMA( dest->frustum[3].normal, -zProj / length, dest->or.axis[2], dest->frustum[3].normal );
+
+	for ( i = 0; i < 4; i++ ) {
+		dest->frustum[i].type = PLANE_NON_AXIAL;
+		dest->frustum[i].dist = DotProduct( dest->or.origin, dest->frustum[i].normal );
+		SetPlaneSignbits( &dest->frustum[i] );
+	}
+
+	// near clipping plane
+	VectorCopy( dest->or.axis[0], dest->frustum[4].normal );
+	dest->frustum[4].type = PLANE_NON_AXIAL;
+	dest->frustum[4].dist = DotProduct( dest->or.origin, dest->frustum[4].normal ) + r_znear->value;
+	SetPlaneSignbits( &dest->frustum[4] );
+}
+#endif
+
+
 void R_SetupProjection( viewParms_t *dest, float zProj, qboolean computeFrustum )
 {
 	float	xmin, xmax, ymin, ymax;
 	float	width, height, stereoSep = r_stereoSeparation->value;
+
+#ifdef EF_VR
+	if ( dest->vrEye ) {
+		R_VR_SetupProjection( dest, zProj, computeFrustum );
+		return;
+	}
+#endif
 
 	/*
 	 * offset the view origin of the viewer for stereo rendering 

@@ -39,6 +39,15 @@ The tree also contains `libogg`, `libvorbis`, `opus`, `opusfile`, `curl`, `SDL2`
 QVM compiler (`efcode/tools/lcc`). The macOS build does **not** compile any of them. OpenAL is optional
 and loaded at runtime from the system `OpenAL.framework`; it is not bundled.
 
+**VR build only** (CMake option `EF_VR`, off by default; no desktop release compiles it):
+
+| Component | Version | Path | License | Text |
+|---|---|---|---|---|
+| Khronos OpenXR headers (`openxr.h`, `openxr_platform.h`, `openxr_platform_defines.h`, `openxr_loader_negotiation.h`) | OpenXR-SDK `release-1.1.65` | `deps/openxr/include/openxr` | Apache-2.0 OR MIT (SPDX header in each file); used under Apache-2.0 | `deps/openxr/LICENSE` |
+
+Headers only: no OpenXR loader is vendored or bundled. The Quest build uses the loader the
+headset provides.
+
 ## 3. Shared libraries bundled in the macOS `.app`
 
 | Component | Version | License | License text / source |

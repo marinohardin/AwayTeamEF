@@ -726,6 +726,12 @@ typedef struct {
 	unsigned int num_dlights;
 	struct dlight_s	*dlights;
 #endif
+#ifdef EF_VR
+	// a VR eye view: the projection comes from these tangents (OpenXR's asymmetric field of
+	// view: left, right, up, down; left and down normally negative) instead of fovX/fovY
+	qboolean	vrEye;
+	float		vrTan[4];
+#endif
 } viewParms_t;
 
 /*
@@ -1387,6 +1393,17 @@ extern cvar_t	*r_railSegmentLength;
 extern cvar_t	*r_znear;				// near Z clip plane
 extern cvar_t	*r_zproj;				// z distance of projection plane
 extern cvar_t	*r_stereoSeparation;			// separation of cameras for stereo rendering
+#ifdef EF_VR
+extern cvar_t	*vr_enable;						// 1 = use an OpenXR headset when there is one (latched)
+extern cvar_t	*vr_worldScale;					// game units per metre of head movement
+// tr_vr.c
+void R_VR_Register( void );
+void R_VR_Print( int isError, const char *msg );
+void R_VR_BeginFrame( void );
+void R_VR_EndFrame( void );
+int  R_VR_SceneEyes( const refdef_t *fd );
+void R_VR_SetupEye( viewParms_t *parms, const viewParms_t *base, int eye );
+#endif
 
 extern cvar_t	*r_lodbias;				// push/pull LOD transitions
 extern cvar_t	*r_lodscale;
