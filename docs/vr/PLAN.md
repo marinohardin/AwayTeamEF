@@ -1,0 +1,66 @@
+# Quest VR: goal and plan
+
+Branch: `feature/quest-vr`. Status: started 2026-11-26.
+
+## Goal
+
+A native **Meta Quest 2** build of AwayTeamEF with full **6DoF**: head position and rotation, and tracked Touch controllers. The headline feature is **VR co-op**: a Quest player plays the single-player campaign with a friend on a flat Mac, Windows or Linux PC.
+
+## Ground rules
+
+1. **Flat-screen players are never affected.**
+   - VR code is compiled only into the Quest build (CMake option `EF_VR`, off by default), or runs only when VR is active.
+   - Desktop builds must behave and perform exactly as before. The regress gates (`base-1_4_0`, `coop-m2-base`) must stay ALL IDENTICAL on every merge.
+2. **Single player:** anything goes inside the VR build.
+3. **Co-op:** a VR host or guest must play with non-VR clients on Mac, Windows and Linux.
+   - We ship both ends, so flat clients can learn to show VR-only things, such as a partner's real lean, or hand and weapon poses.
+   - Older AwayTeamEF clients must still connect. New data is optional and announced; it is never required.
+4. **Holomatch:** must stay compatible with servers and clients that aren't ours.
+   - **H1 (any server).** The usercmd and protocol are unchanged. Controller aim goes out as normal view angles. The head offset is applied only locally and clamped. Leaning past a small dead zone walks the whole body, so others see a normal player step out; where the body can't move, the view fades. A laser shows where the server's shot will really land. The game already steers shots to the crosshair, which helps keep the hand and the shot together.
+   - **H2 (our servers only, later).** VR extras such as a hitbox that really leans, hand muzzles and pose drawing, negotiated with clients that announce support. This would live in a fork of the Holomatch game modules; check that code's license and get the cMod author's OK before shipping one.
+   - **Never:** change the usercmd or protocol for everyone, allow unclamped leaning, or bring single player's slow-motion into Holomatch.
+5. **Code hygiene:**
+   - Our own code and our own UI.
+   - Stay on Vulkan.
+   - No game assets in the repo.
+   - Small vendored headers (such as the Khronos OpenXR headers, Apache-2.0) are fine, with their licenses listed in `THIRD_PARTY_LICENSES.md`.
+
+## Architecture (initial)
+
+- **Platform:** Android arm64 APK, OpenXR through the Quest's own OpenXR loader, and Vulkan through `XR_KHR_vulkan_enable2`. OpenXR creates the Vulkan instance and device, and the renderer accepts them instead of making its own.
+- **Rendering:** one pass per eye into OpenXR swapchain images, sharing culling where possible.
+  - The 2D HUD and menus go on a quad layer or on a virtual screen in front of the player.
+  - Cutscenes and scripted cameras use a comfort-safe virtual screen.
+- **Input:** Touch controllers mapped to the existing button and axis cvars, plus head and hand poses.
+  - Single player and co-op get a hand-aimed muzzle, with an eye-to-hand trace so you can't shoot through walls.
+  - Comfort options: snap or smooth turning, and a vignette.
+- **Co-op:** the VR player's sideways head offset drives the existing lean (`leanofs`), so flat partners see it through the normal replication. Hand poses are optional extra data that flat clients can draw.
+- **Android shell:** the tree started as an Android build, and the Android-only parts were removed when the project went cross-platform. The Quest build restores a minimal Android shell (NDK and CMake, a native activity, the APK manifest for Quest) on top of the current shared code. Gradle is not required.
+
+## Phases
+
+| # | Phase | Done when |
+|---|---|---|
+| 0 | Spikes | Each risk below has a yes or no and a written finding |
+| 1 | Restore the Android build | A flat arm64 APK builds from the current tree on this Mac and starts in an Android or Quest simulator; later on the Quest 2 |
+| 2 | VR single player on Quest | Stereo 6DoF, hand weapons, menus and comfort; a whole level is playable at 72 Hz |
+| 3 | VR co-op | A Quest player and a flat Mac player finish a level together; flat clients see lean and aim |
+| 4 | Holomatch H1 | A Quest player plays on a stock server, and stock clients see a normal player |
+| 5 | Holomatch H2 (optional) | Only after phase 4, and with the cMod author's OK |
+
+**Spikes:**
+1. Can the Vulkan renderer accept an instance and device that OpenXR created? Sketch the stereo render path.
+2. Rebuild the Android shell from the current tree: CMake, NDK and an APK, without Gradle if possible.
+3. Does the Meta XR Simulator (Mac) work with a Vulkan app through MoltenVK? If yes, VR code can be tested on the Mac.
+4. Does the co-op `leanofs` replicate to a flat partner? Tested with two flat copies on the Mac.
+5. Can the engine override the view and weapon in Holomatch without changing the game modules? Tested on a flat Mac build.
+
+## Testing from a Mac
+
+- **Meta Spatial Simulator (arm64):** an Android virtual device in Android Studio. Checks that the APK installs and starts, as a flat app.
+- **Meta XR Simulator (Mac):** an OpenXR runtime on the desktop, possibly for exercising the VR code path. Unverified with MoltenVK (spike 3).
+- **The real Quest 2:** developer mode, USB-C and `adb install`.
+
+## Owner notes
+
+- The working machine is a Mac with little free disk space. Large downloads (simulators, system images, SDK pieces) need the owner's OK first.
