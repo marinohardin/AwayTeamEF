@@ -1036,6 +1036,10 @@ static void RB_SetGL2D( void ) {
 
 	backEnd.projection2D = qtrue;
 
+#ifdef EF_VR
+	vk_vr_set_target( -1 );	// 2D always goes to the canvas
+#endif
+
 #ifdef USE_VULKAN
 	vk_update_mvp( NULL );
 
@@ -1403,6 +1407,13 @@ static const void *RB_DrawSurfs( const void *data ) {
 	backEnd.refdef = cmd->refdef;
 	backEnd.viewParms = cmd->viewParms;
 
+#ifdef EF_VR
+	// an eye view into its eye image, anything else into the 2D canvas
+	if ( !vk_vr_set_target( backEnd.viewParms.vrEye - 1 ) ) {
+		return (const void *)(cmd + 1);
+	}
+#endif
+
 #ifdef USE_VBO
 	VBO_UnBind();
 #endif
@@ -1437,7 +1448,11 @@ static const void *RB_DrawSurfs( const void *data ) {
 	RB_DebugGraphics();
 
 #ifdef USE_VULKAN
+#ifdef EF_VR
+	if ( cmd->refdef.switchRenderPass && !vk_vr_active() ) {
+#else
 	if ( cmd->refdef.switchRenderPass ) {
+#endif
 		vk_end_render_pass();
 		vk_begin_main_render_pass();
 		backEnd.screenMapDone = qtrue;

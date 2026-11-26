@@ -1769,6 +1769,15 @@ void R_SetColorMappings( void ) {
 		}
 	}
 
+#ifdef EF_VR
+	if ( vk_vr_active() ) {
+		// the eyes are drawn straight into their images, without the gamma pass that applies
+		// the overbright: it is folded into the lightmaps instead, as in windowed mode without FBO
+		tr.overbrightBits = 0;
+		applyGamma = qfalse;
+	}
+#endif
+
 	// allow 2 overbright bits in 24 bit, but only 1 in 16 bit
 	if ( glConfig.colorBits > 16 ) {
 		if ( tr.overbrightBits > 2 ) {

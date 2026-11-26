@@ -6,12 +6,13 @@ This file is part of AwayTeamEF and is licensed under the GNU General
 Public License, version 2 or (at your option) any later version.
 ===========================================================================
 
-- cvars vr_enable / vr_worldScale and the vr_recenter command
-- per frame: VR_BeginFrame from RE_BeginFrame, VR_EndFrame from RE_EndFrame
+- the vr_* cvars and the vr_recenter command
+- per frame: what kind of frame this is (game, menu, cutscene), VR_BeginFrame from
+  RE_BeginFrame, and the layers for VR_EndFrame from RE_EndFrame
 - per world scene: the view is drawn once per eye (RE_RenderScene calls R_VR_SetupEye),
-  each eye into its half of the frame, with the eye's pose and asymmetric field of view
+  each eye into its own OpenXR image, with the eye's pose and asymmetric field of view
 
-Without EF_VR this file compiles to nothing.
+docs/vr/RENDERING.md explains the choices. Without EF_VR this file compiles to nothing.
 */
 
 #ifdef EF_VR
@@ -21,12 +22,53 @@ Without EF_VR this file compiles to nothing.
 
 cvar_t	*vr_enable;
 cvar_t	*vr_worldScale;
+cvar_t	*vr_msaa;
+static cvar_t	*vr_resolutionScale;
+static cvar_t	*vr_refreshRate;
+static cvar_t	*vr_hudDistance;
+static cvar_t	*vr_hudWidth;
+static cvar_t	*vr_hudHeight;
+static cvar_t	*vr_hudFollow;
+static cvar_t	*vr_hudFollowAngle;
+static cvar_t	*vr_menuDistance;
+static cvar_t	*vr_menuWidth;
+static cvar_t	*vr_menuHeadLocked;
+static cvar_t	*vr_menuDim;
+static cvar_t	*vr_cutsceneScreen;
+static cvar_t	*vr_theaterDistance;
+static cvar_t	*vr_theaterWidth;
+static cvar_t	*vr_theaterDim;
+static cvar_t	*vr_uiState;		// set by the client: 1 = a menu is up, 2 = a cinematic plays
+static cvar_t	*vr_debugCapture;
+
+typedef enum {
+	VRF_GAME,		// the world in stereo, the HUD on its quad
+	VRF_MENU,		// a menu over the frozen, dimmed world
+	VRF_THEATER		// a cutscene camera or a cinematic on a big screen
+} vrFrameKind_t;
 
 static qboolean r_vrFrame;		// R_VR_BeginFrame ran VR_BeginFrame; R_VR_EndFrame is due
 static qboolean r_vrWarnedSmp;
+static vrFrameKind_t r_vrKind;
 
 static void R_VR_Recenter_f( void ) {
 	VR_Recenter();
+}
+
+static void R_VR_Screenshot_f( void ) {
+	if ( !vr_debugCapture->integer ) {
+		ri.Printf( PRINT_ALL, "vr_screenshot needs vr_debugCapture 1 (and a vid_restart)\n" );
+		return;
+	}
+	vk_vr_request_capture();
+}
+
+static cvar_t *R_VR_Cvar( const char *name, const char *value, int flags, const char *min, const char *max,
+	int type, const char *description ) {
+	cvar_t *cv = ri.Cvar_Get( name, value, flags );
+	ri.Cvar_CheckRange( cv, min, max, type );
+	ri.Cvar_SetDescription( cv, description );
+	return cv;
 }
 
 void R_VR_Register( void ) {
@@ -36,25 +78,98 @@ void R_VR_Register( void ) {
 	const char *enableDefault = "0";	// a desktop VR build only uses a headset when asked
 #endif
 
-	vr_enable = ri.Cvar_Get( "vr_enable", enableDefault, CVAR_ARCHIVE_ND | CVAR_LATCH );
-	ri.Cvar_CheckRange( vr_enable, "0", "1", CV_INTEGER );
-	ri.Cvar_SetDescription( vr_enable, "Render to an OpenXR headset when one is present. Requires vid_restart." );
+	vr_enable = R_VR_Cvar( "vr_enable", enableDefault, CVAR_ARCHIVE_ND | CVAR_LATCH, "0", "1", CV_INTEGER,
+		"Render to an OpenXR headset when one is present. Requires vid_restart." );
+	vr_worldScale = R_VR_Cvar( "vr_worldScale", "32", CVAR_ARCHIVE_ND, "8", "128", CV_FLOAT,
+		"VR: game units per metre of head movement (32: a standing player's eyes, 56 units up, are 1.75 m)." );
+	vr_msaa = R_VR_Cvar( "vr_msaa", "4", CVAR_ARCHIVE_ND | CVAR_LATCH, "0", "8", CV_INTEGER,
+		"VR: multisample anti-aliasing of the eye images (0, 2, 4 or 8). Requires vid_restart." );
+	vr_resolutionScale = R_VR_Cvar( "vr_resolutionScale", "1.0", CVAR_ARCHIVE_ND | CVAR_LATCH, "0.5", "1.5", CV_FLOAT,
+		"VR: eye image size, times the headset's recommended size. Requires vid_restart." );
+	vr_refreshRate = R_VR_Cvar( "vr_refreshRate", "72", CVAR_ARCHIVE_ND | CVAR_LATCH, "0", "144", CV_FLOAT,
+		"VR: display refresh rate to ask the headset for, in Hz (0: its default). Requires vid_restart." );
 
-	vr_worldScale = ri.Cvar_Get( "vr_worldScale", "32", CVAR_ARCHIVE_ND );
-	ri.Cvar_CheckRange( vr_worldScale, "8", "128", CV_FLOAT );
-	ri.Cvar_SetDescription( vr_worldScale, "VR: game units per metre of head movement." );
+	vr_hudDistance = R_VR_Cvar( "vr_hudDistance", "1.8", CVAR_ARCHIVE_ND, "0.5", "5", CV_FLOAT,
+		"VR: distance of the HUD in metres." );
+	vr_hudWidth = R_VR_Cvar( "vr_hudWidth", "1.5", CVAR_ARCHIVE_ND, "0.3", "5", CV_FLOAT,
+		"VR: width of the HUD in metres." );
+	vr_hudHeight = R_VR_Cvar( "vr_hudHeight", "-0.1", CVAR_ARCHIVE_ND, "-2", "2", CV_FLOAT,
+		"VR: height of the HUD's centre above eye level, in metres." );
+	vr_hudFollow = R_VR_Cvar( "vr_hudFollow", "2", CVAR_ARCHIVE_ND, "0", "2", CV_INTEGER,
+		"VR: the HUD 0 stays where it was placed, 1 is locked to the head, 2 turns after the head once it has looked away (vr_hudFollowAngle)." );
+	vr_hudFollowAngle = R_VR_Cvar( "vr_hudFollowAngle", "30", CVAR_ARCHIVE_ND, "0", "90", CV_FLOAT,
+		"VR: degrees the head may turn away before the HUD follows it (vr_hudFollow 2)." );
+
+	vr_menuDistance = R_VR_Cvar( "vr_menuDistance", "2.0", CVAR_ARCHIVE_ND, "0.5", "5", CV_FLOAT,
+		"VR: distance of the menu screen in metres." );
+	vr_menuWidth = R_VR_Cvar( "vr_menuWidth", "2.0", CVAR_ARCHIVE_ND, "0.3", "6", CV_FLOAT,
+		"VR: width of the menu screen in metres." );
+	vr_menuHeadLocked = R_VR_Cvar( "vr_menuHeadLocked", "0", CVAR_ARCHIVE_ND, "0", "1", CV_INTEGER,
+		"VR: 0 the menu stays where it opened, 1 it is locked to the head." );
+	vr_menuDim = R_VR_Cvar( "vr_menuDim", "0.6", CVAR_ARCHIVE_ND, "0", "1", CV_FLOAT,
+		"VR: how much the frozen world behind a menu is darkened (0 none, 1 black)." );
+
+	vr_cutsceneScreen = R_VR_Cvar( "vr_cutsceneScreen", "1", CVAR_ARCHIVE_ND, "0", "1", CV_INTEGER,
+		"VR: cutscene cameras and cinematics on a virtual screen (1), or cutscene cameras in stereo (0)." );
+	vr_theaterDistance = R_VR_Cvar( "vr_theaterDistance", "4.0", CVAR_ARCHIVE_ND, "1", "20", CV_FLOAT,
+		"VR: distance of the cutscene screen in metres." );
+	vr_theaterWidth = R_VR_Cvar( "vr_theaterWidth", "4.4", CVAR_ARCHIVE_ND, "1", "30", CV_FLOAT,
+		"VR: width of the cutscene screen in metres." );
+	vr_theaterDim = R_VR_Cvar( "vr_theaterDim", "0.85", CVAR_ARCHIVE_ND, "0", "1", CV_FLOAT,
+		"VR: how much the frozen world around the cutscene screen is darkened (0 none, 1 black)." );
+
+	vr_uiState = ri.Cvar_Get( "vr_uiState", "0", CVAR_ROM );
+	vr_debugCapture = R_VR_Cvar( "vr_debugCapture", "0", CVAR_LATCH, "0", "1", CV_INTEGER,
+		"VR debugging: make the eye images readable for vr_screenshot. Requires vid_restart." );
+
+	if ( vr_enable->integer ) {
+		// VR draws the 2D canvas in the main pass's offscreen image: it needs r_fbo, and an
+		// 8-bit colour format for the copy into the 2D layer
+		if ( !r_fbo->integer ) {
+			ri.Cvar_Set( "r_fbo", "1" );
+		}
+		if ( r_hdr->integer ) {
+			ri.Cvar_Set( "r_hdr", "0" );
+		}
+	}
 
 	ri.Cmd_AddCommand( "vr_recenter", R_VR_Recenter_f );
+	ri.Cmd_AddCommand( "vr_screenshot", R_VR_Screenshot_f );
 }
 
 void R_VR_Print( int isError, const char *msg ) {
 	ri.Printf( isError ? PRINT_WARNING : PRINT_ALL, "%s", msg );
 }
 
+void R_VR_SetOptions( void ) {
+	vrOptions_t options;
+
+	options.resolutionScale = vr_resolutionScale ? vr_resolutionScale->value : 1.0f;
+	options.refreshRate = vr_refreshRate ? vr_refreshRate->value : 72.0f;
+	options.debugCapture = vr_debugCapture ? vr_debugCapture->integer : 0;
+	VR_SetOptions( &options );
+}
+
+static vrFrameKind_t R_VR_FrameKind( void ) {
+	const int ui = vr_uiState ? vr_uiState->integer : 0;
+
+	if ( ui == 1 ) {
+		return VRF_MENU;
+	}
+	// the game's own state, no game-module change: the cgame sets cg_cameraActive while a
+	// scripted camera runs, and the client reports cinematics (vr_uiState 2)
+	if ( vr_cutsceneScreen->integer && ( ui == 2 || ri.Cvar_VariableIntegerValue( "cg_cameraActive" ) ) ) {
+		return VRF_THEATER;
+	}
+	return VRF_GAME;
+}
+
 void R_VR_BeginFrame( void ) {
+	float dim;
+
 	r_vrFrame = qfalse;
 
-	if ( !vk_vr_active() ) {
+	if ( !vk_vr_ready() ) {
 		return;
 	}
 	if ( glConfig.smpActive ) {
@@ -67,26 +182,76 @@ void R_VR_BeginFrame( void ) {
 		return;
 	}
 
-	VR_BeginFrame();
+	r_vrKind = R_VR_FrameKind();
+	dim = r_vrKind == VRF_MENU ? vr_menuDim->value : r_vrKind == VRF_THEATER ? vr_theaterDim->value : 0.0f;
+	VR_BeginFrame( r_vrKind == VRF_GAME, dim );
 	r_vrFrame = qtrue;
 }
 
 void R_VR_EndFrame( void ) {
+	vrFrameLayers_t layers;
+
 	if ( !r_vrFrame ) {
 		return;
 	}
 	r_vrFrame = qfalse;
 
+	Com_Memset( &layers, 0, sizeof( layers ) );
+	switch ( r_vrKind ) {
+	case VRF_GAME:
+		layers.projection = vk_vr_eyes_written() ? VR_PROJ_FRESH : VR_PROJ_NONE;
+		layers.quadMode = VR_QUAD_HUD;
+		layers.placement.distance = vr_hudDistance->value;
+		layers.placement.width = vr_hudWidth->value;
+		layers.placement.height = vr_hudHeight->value;
+		layers.placement.follow = vr_hudFollow->integer;
+		layers.placement.followAngle = vr_hudFollowAngle->value;
+		break;
+	case VRF_MENU:
+		layers.projection = VR_PROJ_FROZEN;
+		layers.dim = vr_menuDim->value > 0.0f;
+		layers.quadMode = VR_QUAD_MENU;
+		layers.placement.distance = vr_menuDistance->value;
+		layers.placement.width = vr_menuWidth->value;
+		layers.placement.follow = vr_menuHeadLocked->integer ? 1 : 0;
+		break;
+	case VRF_THEATER:
+		layers.projection = VR_PROJ_FROZEN;
+		layers.dim = vr_theaterDim->value > 0.0f;
+		layers.quadMode = VR_QUAD_THEATER;
+		layers.quadOpaque = 1;
+		layers.placement.distance = vr_theaterDistance->value;
+		layers.placement.width = vr_theaterWidth->value;
+		layers.placement.follow = 0;
+		break;
+	}
+	layers.quad = vk_vr_canvas_written();
+
 	// single-threaded back end: the frame's command buffer has been submitted by now
-	VR_EndFrame( vk_vr_take_eyes_written() );
+	VR_EndFrame( &layers );
 }
 
+/*
+How RE_RenderScene draws this scene: 2 = once per eye, into the eye images; 0 = once, flat,
+into the 2D canvas; -1 = not at all.
+*/
 int R_VR_SceneEyes( const refdef_t *fd ) {
 	if ( !r_vrFrame || !VR_FrameActive() ) {
 		return 0;
 	}
 	if ( fd->rdflags & RDF_NOWORLDMODEL ) {
-		return 0;	// HUD heads, menu models: 2D-layer content (docs/vr/RENDERING.md)
+		return 0;	// HUD heads, menu models: 2D canvas content
+	}
+	switch ( r_vrKind ) {
+	case VRF_MENU:
+		return -1;	// the last world frame stays up, frozen and dimmed
+	case VRF_THEATER:
+		return 0;	// the camera's view is the picture on the cutscene screen
+	default:
+		break;
+	}
+	if ( VR_GetEyeImageIndex( 0 ) < 0 || VR_GetEyeImageIndex( 1 ) < 0 ) {
+		return 0;
 	}
 	return VR_MAX_EYES;
 }
@@ -111,19 +276,19 @@ R_VR_SetupEye
 parms = base (the game's view), re-aimed for one eye:
 - body yaw comes from the game's view; pitch and roll come from the headset only
 - origin = the game's eye + the eye's offset from the recentred head origin, in game units
-- viewport = the eye's half of the game's viewport
+- viewport = the whole eye image
 - projection from the eye's asymmetric field of view (R_SetupProjection, vrEye)
 */
 void R_VR_SetupEye( viewParms_t *parms, const viewParms_t *base, int eye ) {
 	vrEyeView_t view;
+	vrSwapchainInfo_t info;
 	float offsetXr[3], col[3][3], v[3];
 	float qx, qy, qz, qw, yaw, scale;
 	vec3_t fwd, left, head, world;
-	int halfWidth;
 
 	*parms = *base;
 
-	if ( !VR_GetEyeView( eye, &view ) ) {
+	if ( !VR_GetEyeView( eye, &view ) || !VR_GetEyeSwapchain( eye, &info ) ) {
 		return;
 	}
 	VR_GetEyeOffset( eye, offsetXr );
@@ -163,13 +328,17 @@ void R_VR_SetupEye( viewParms_t *parms, const viewParms_t *base, int eye ) {
 	VectorMA( base->or.origin, scale, world, parms->or.origin );
 	VectorCopy( parms->or.origin, parms->pvsOrigin );
 
-	halfWidth = base->viewportWidth / 2;
-	parms->viewportX = base->viewportX + eye * halfWidth;
-	parms->viewportWidth = halfWidth;
-	parms->scissorX = parms->viewportX;
+	// the whole eye image (the backend draws eye views at the eye image's size)
+	parms->viewportX = 0;
+	parms->viewportY = 0;
+	parms->viewportWidth = (int)info.width;
+	parms->viewportHeight = (int)info.height;
+	parms->scissorX = 0;
+	parms->scissorY = 0;
 	parms->scissorWidth = parms->viewportWidth;
+	parms->scissorHeight = parms->viewportHeight;
 
-	parms->vrEye = qtrue;
+	parms->vrEye = eye + 1;
 	parms->vrTan[0] = tan( view.angleLeft );
 	parms->vrTan[1] = tan( view.angleRight );
 	parms->vrTan[2] = tan( view.angleUp );

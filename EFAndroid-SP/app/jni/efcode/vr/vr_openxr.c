@@ -11,9 +11,11 @@ Public License, version 2 or (at your option) any later version.
   comes from the APK (libopenxr_loader.so); EF_OPENXR_LOADER overrides the path.
 - Graphics: XR_KHR_vulkan_enable2. The runtime creates the VkInstance and VkDevice
   (VR_CreateVulkanInstance / VR_CreateVulkanDevice) and names the physical device.
-- Views: primary stereo, one swapchain per eye.
-- Space: STAGE when the runtime has it, else LOCAL.
-- Frames: xrWaitFrame + xrBeginFrame in VR_BeginFrame, one projection layer in VR_EndFrame.
+- Views: primary stereo, one swapchain per eye; the renderer draws straight into them.
+- Space: STAGE when the runtime has it, else LOCAL; VIEW for head-locked layers.
+- Layers (VR_EndFrame): the world (projection, fresh or frozen), a dimmer quad, and the 2D
+  canvas quad (HUD, menus, console, cutscenes). docs/vr/RENDERING.md has the reasons.
+- Display: XR_FB_display_refresh_rate, when present, asks for the wanted rate (72 Hz on a Quest 2).
 */
 
 #include <stdarg.h>
@@ -39,7 +41,11 @@ Public License, version 2 or (at your option) any later version.
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
-#define VR_MAX_SWAPCHAIN_IMAGES 8
+#include <math.h>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // ---------------------------------------------------------------------------
 // printing
@@ -221,40 +227,66 @@ static void VR_ClearFunctions( void ) {
 typedef struct {
 	XrSwapchain			handle;
 	uint32_t			width, height;
-	int64_t				format;
+	int64_t				format;			// the swapchain's own format
+	int64_t				viewFormat;		// what the renderer renders or copies through
 	uint32_t			imageCount;
 	XrSwapchainImageVulkan2KHR images[VR_MAX_SWAPCHAIN_IMAGES];
 	uint32_t			acquiredIndex;
 	int					acquired;
+	int					released;		// an image has been released at least once: submittable
 } vrSwapchain_t;
+
+typedef struct {
+	int					placed;
+	float				yaw;			// radians about +Y; 0 looks down -Z
+	float				position[3];	// in vr.space
+	int					turning;		// lazy follow: catching up with the head
+} vrQuadAnchor_t;
 
 static struct {
 	XrInstance			instance;
 	XrSystemId			systemId;
 	PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr;
 	XrGraphicsRequirementsVulkan2KHR graphicsReqs;
+	int					haveRefreshRate;	// XR_FB_display_refresh_rate enabled
+	vrOptions_t			options;
 
 	XrSession			session;
 	XrSessionState		sessionState;
 	int					sessionRunning;
 	XrSpace				space;
 	XrReferenceSpaceType spaceType;
+	XrSpace				viewSpace;			// head-locked layers
 
 	uint32_t			viewCount;
 	XrViewConfigurationView configViews[VR_MAX_EYES];
 	vrSwapchain_t		swapchains[VR_MAX_EYES];
+	vrSwapchain_t		canvas;				// the 2D layer
+	vrSwapchain_t		dimmer;				// translucent black, over a frozen world
+	float				dimmerAlpha;		// what the dimmer image holds
+	float				dimmerPending;		// what the renderer fills it with this frame
 
 	// current frame
 	int					frameBegun;		// xrBeginFrame called, xrEndFrame due
-	int					frameActive;	// views located and images acquired: render stereo
+	int					frameActive;	// views located: render
 	XrFrameState		frameState;
 	XrView				views[VR_MAX_EYES];
 	XrViewState			viewState;
+
+	// the views of the last fresh projection, for re-showing it frozen
+	int					frozenValid;
+	XrView				frozenViews[VR_MAX_EYES];
+
+	vrQuadAnchor_t		anchors[3];		// by vrQuadMode_t
+	int					lastQuadMode;	// -1 = no quad last frame
 
 	// head origin for VR_GetEyeOffset
 	int					recenterPending;
 	float				headOrigin[3];
 } vr;
+
+static PFN_xrEnumerateDisplayRefreshRatesFB qxrEnumerateDisplayRefreshRatesFB;
+static PFN_xrRequestDisplayRefreshRateFB qxrRequestDisplayRefreshRateFB;
 
 static const char *VR_ResultString( XrResult res ) {
 	static char buf[XR_MAX_RESULT_STRING_SIZE];
@@ -297,7 +329,7 @@ static int VR_HasExtension( const XrExtensionProperties *props, uint32_t count, 
 int VR_Init( PFN_vkGetInstanceProcAddr getInstanceProcAddr ) {
 	XrExtensionProperties *exts;
 	uint32_t extCount = 0, i;
-	const char *enabled[4];
+	const char *enabled[8];
 	uint32_t enabledCount = 0;
 	XrInstanceCreateInfo ici;
 	XrSystemGetInfo sgi;
@@ -355,6 +387,10 @@ int VR_Init( PFN_vkGetInstanceProcAddr getInstanceProcAddr ) {
 		return 0;
 	}
 	enabled[enabledCount++] = XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME;
+	vr.haveRefreshRate = VR_HasExtension( exts, extCount, XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME );
+	if ( vr.haveRefreshRate ) {
+		enabled[enabledCount++] = XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME;
+	}
 #ifdef __ANDROID__
 	if ( VR_HasExtension( exts, extCount, XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME ) ) {
 		enabled[enabledCount++] = XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME;
@@ -390,6 +426,12 @@ int VR_Init( PFN_vkGetInstanceProcAddr getInstanceProcAddr ) {
 	if ( !VR_LoadFunctions( vr.instance ) ) {
 		VR_Shutdown();
 		return 0;
+	}
+	qxrEnumerateDisplayRefreshRatesFB = NULL;
+	qxrRequestDisplayRefreshRateFB = NULL;
+	if ( vr.haveRefreshRate ) {
+		qxrGetInstanceProcAddr( vr.instance, "xrEnumerateDisplayRefreshRatesFB", (PFN_xrVoidFunction *)&qxrEnumerateDisplayRefreshRatesFB );
+		qxrGetInstanceProcAddr( vr.instance, "xrRequestDisplayRefreshRateFB", (PFN_xrVoidFunction *)&qxrRequestDisplayRefreshRateFB );
 	}
 
 	memset( &iprops, 0, sizeof( iprops ) );
@@ -454,7 +496,17 @@ int VR_Init( PFN_vkGetInstanceProcAddr getInstanceProcAddr ) {
 		XR_VERSION_MAJOR( vr.graphicsReqs.maxApiVersionSupported ), XR_VERSION_MINOR( vr.graphicsReqs.maxApiVersionSupported ) );
 
 	vr.recenterPending = 1;
+	if ( vr.options.resolutionScale <= 0.0f ) {
+		vr.options.resolutionScale = 1.0f;
+	}
 	return 1;
+}
+
+void VR_SetOptions( const vrOptions_t *options ) {
+	vr.options = *options;
+	if ( !( vr.options.resolutionScale >= 0.25f ) ) {
+		vr.options.resolutionScale = 1.0f;
+	}
 }
 
 void VR_Shutdown( void ) {
@@ -564,83 +616,222 @@ VkResult VR_CreateVulkanDevice( VkPhysicalDevice physicalDevice, const VkDeviceC
 }
 
 // ---------------------------------------------------------------------------
-// session, space, swapchains
+// swapchains
 // ---------------------------------------------------------------------------
 
-// The game's colours are already gamma-encoded, and the renderer copies them into the eye
-// images with vkCmdBlitImage, which converts formats. A UNORM eye image keeps the values as
-// they are; whether the compositor then treats them as sRGB is runtime-specific and to be
-// checked on the headset (docs/vr/RENDERING.md, "Colour space").
-static int64_t VR_PickSwapchainFormat( void ) {
-	static const int64_t preferred[] = {
-		VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM,
-		VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB,
-	};
-	int64_t formats[64];
-	uint32_t count = 0, i, j;
+/*
+Colour: the game's colours are gamma-encoded already (the renderer never linearises). An sRGB
+swapchain is what compositors expect, so it is created with MUTABLE_FORMAT and the renderer
+writes it through a UNORM view (or copies raw bits into it): the stored bytes are the game's own,
+and the compositor decodes them as sRGB, which is right. A UNORM swapchain is the fallback; a
+compositor then treats the values as linear and the picture looks washed out.
+*/
+static VkFormat VR_UnormTwin( VkFormat format ) {
+	switch ( format ) {
+	case VK_FORMAT_R8G8B8A8_SRGB: return VK_FORMAT_R8G8B8A8_UNORM;
+	case VK_FORMAT_B8G8R8A8_SRGB: return VK_FORMAT_B8G8R8A8_UNORM;
+	default: return format;
+	}
+}
 
-	if ( XR_FAILED( qxrEnumerateSwapchainFormats( vr.session, 64, &count, formats ) ) || count == 0 ) {
+static VkFormat VR_SrgbTwin( VkFormat format ) {
+	switch ( format ) {
+	case VK_FORMAT_R8G8B8A8_UNORM: return VK_FORMAT_R8G8B8A8_SRGB;
+	case VK_FORMAT_B8G8R8A8_UNORM: return VK_FORMAT_B8G8R8A8_SRGB;
+	default: return format;
+	}
+}
+
+// the first of prefs the runtime offers, or VK_FORMAT_UNDEFINED
+static int64_t VR_PickFormat( const int64_t *prefs, int count ) {
+	int64_t formats[64];
+	uint32_t n = 0, j;
+	int i;
+
+	if ( XR_FAILED( qxrEnumerateSwapchainFormats( vr.session, 64, &n, formats ) ) ) {
 		return VK_FORMAT_UNDEFINED;
 	}
-	for ( i = 0; i < sizeof( preferred ) / sizeof( preferred[0] ); i++ ) {
-		for ( j = 0; j < count; j++ ) {
-			if ( formats[j] == preferred[i] ) {
+	for ( i = 0; i < count; i++ ) {
+		for ( j = 0; j < n; j++ ) {
+			if ( formats[j] == prefs[i] ) {
 				return formats[j];
 			}
 		}
 	}
-	return formats[0];	// the runtime's own favourite
+	return VK_FORMAT_UNDEFINED;
 }
 
-static int VR_CreateSwapchains( void ) {
-	int64_t format = VR_PickSwapchainFormat();
-	uint32_t eye, i;
+static void VR_DestroySwapchain( vrSwapchain_t *sc ) {
+	if ( sc->handle != XR_NULL_HANDLE ) {
+		if ( sc->acquired ) {
+			qxrReleaseSwapchainImage( sc->handle, NULL );
+		}
+		qxrDestroySwapchain( sc->handle );
+	}
+	memset( sc, 0, sizeof( *sc ) );
+}
+
+static int VR_CreateSwapchain( vrSwapchain_t *sc, const char *what, uint32_t width, uint32_t height,
+	int64_t format, XrSwapchainUsageFlags usage ) {
+	XrSwapchainCreateInfo ci;
+	uint32_t i;
+	XrResult res;
+
+	memset( sc, 0, sizeof( *sc ) );
+	sc->viewFormat = VR_UnormTwin( (VkFormat)format );
+	if ( sc->viewFormat != format ) {
+		usage |= XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT;
+	}
+
+	memset( &ci, 0, sizeof( ci ) );
+	ci.type = XR_TYPE_SWAPCHAIN_CREATE_INFO;
+	ci.usageFlags = usage;
+	ci.format = format;
+	ci.sampleCount = 1;
+	ci.width = width;
+	ci.height = height;
+	ci.faceCount = 1;
+	ci.arraySize = 1;
+	ci.mipCount = 1;
+	res = qxrCreateSwapchain( vr.session, &ci, &sc->handle );
+	if ( XR_FAILED( res ) ) {
+		VR_Log( 1, "VR: xrCreateSwapchain (%s) failed: %s\n", what, VR_ResultString( res ) );
+		sc->handle = XR_NULL_HANDLE;
+		return 0;
+	}
+	sc->width = width;
+	sc->height = height;
+	sc->format = format;
+
+	if ( XR_FAILED( qxrEnumerateSwapchainImages( sc->handle, 0, &sc->imageCount, NULL ) ) ||
+		sc->imageCount == 0 || sc->imageCount > VR_MAX_SWAPCHAIN_IMAGES ) {
+		VR_Log( 1, "VR: %s swapchain has %u images (at most %d)\n", what, sc->imageCount, VR_MAX_SWAPCHAIN_IMAGES );
+		VR_DestroySwapchain( sc );
+		return 0;
+	}
+	for ( i = 0; i < sc->imageCount; i++ ) {
+		sc->images[i].type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR;
+	}
+	if ( XR_FAILED( qxrEnumerateSwapchainImages( sc->handle, sc->imageCount, &sc->imageCount,
+		(XrSwapchainImageBaseHeader *)sc->images ) ) ) {
+		VR_Log( 1, "VR: xrEnumerateSwapchainImages (%s) failed\n", what );
+		VR_DestroySwapchain( sc );
+		return 0;
+	}
+	VR_Log( 0, "VR: %s swapchain %ux%u, format %d (rendered as %d), %u images\n", what, width, height,
+		(int)format, (int)sc->viewFormat, sc->imageCount );
+	return 1;
+}
+
+static void VR_FillInfo( const vrSwapchain_t *sc, vrSwapchainInfo_t *info ) {
+	uint32_t i;
+
+	memset( info, 0, sizeof( *info ) );
+	info->width = sc->width;
+	info->height = sc->height;
+	info->imageFormat = (VkFormat)sc->format;
+	info->viewFormat = (VkFormat)sc->viewFormat;
+	info->imageCount = sc->imageCount;
+	for ( i = 0; i < sc->imageCount; i++ ) {
+		info->images[i] = sc->images[i].image;
+	}
+}
+
+static int VR_CreateEyeSwapchains( void ) {
+	static const int64_t prefs[] = {
+		VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_B8G8R8A8_SRGB,
+		VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_B8G8R8A8_UNORM,
+	};
+	const int64_t format = VR_PickFormat( prefs, sizeof( prefs ) / sizeof( prefs[0] ) );
+	uint32_t eye;
 
 	if ( format == VK_FORMAT_UNDEFINED ) {
-		VR_Log( 1, "VR: no swapchain formats\n" );
+		VR_Log( 1, "VR: the runtime has no 8-bit RGBA swapchain format\n" );
 		return 0;
+	}
+	if ( format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_B8G8R8A8_UNORM ) {
+		VR_Log( 0, "VR: no sRGB eye format; colours may look washed out\n" );
 	}
 
 	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
-		vrSwapchain_t *sc = &vr.swapchains[eye];
-		XrSwapchainCreateInfo ci;
+		const XrViewConfigurationView *cv = &vr.configViews[eye];
+		uint32_t w = (uint32_t)( cv->recommendedImageRectWidth * vr.options.resolutionScale + 0.5f );
+		uint32_t h = (uint32_t)( cv->recommendedImageRectHeight * vr.options.resolutionScale + 0.5f );
 
-		memset( &ci, 0, sizeof( ci ) );
-		ci.type = XR_TYPE_SWAPCHAIN_CREATE_INFO;
-		// the renderer blits into the image today; drawing into it directly comes later
-		ci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
-		ci.format = format;
-		ci.sampleCount = 1;
-		ci.width = vr.configViews[eye].recommendedImageRectWidth;
-		ci.height = vr.configViews[eye].recommendedImageRectHeight;
-		ci.faceCount = 1;
-		ci.arraySize = 1;
-		ci.mipCount = 1;
-		VR_CHECK( qxrCreateSwapchain( vr.session, &ci, &sc->handle ), "xrCreateSwapchain" );
+		w = ( w + 7 ) & ~7u;	// tile-friendly
+		h = ( h + 7 ) & ~7u;
+		if ( w > cv->maxImageRectWidth ) w = cv->maxImageRectWidth;
+		if ( h > cv->maxImageRectHeight ) h = cv->maxImageRectHeight;
+		if ( w < 64 ) w = 64;
+		if ( h < 64 ) h = 64;
 
-		sc->width = ci.width;
-		sc->height = ci.height;
-		sc->format = format;
-		sc->acquired = 0;
-
-		sc->imageCount = 0;
-		VR_CHECK( qxrEnumerateSwapchainImages( sc->handle, 0, &sc->imageCount, NULL ), "xrEnumerateSwapchainImages" );
-		if ( sc->imageCount > VR_MAX_SWAPCHAIN_IMAGES ) {
-			VR_Log( 1, "VR: %u swapchain images, more than %d\n", sc->imageCount, VR_MAX_SWAPCHAIN_IMAGES );
+		if ( !VR_CreateSwapchain( &vr.swapchains[eye], eye ? "right eye" : "left eye", w, h, format,
+				XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT |
+				( vr.options.debugCapture ? XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT : 0 ) ) ) {
 			return 0;
 		}
-		for ( i = 0; i < sc->imageCount; i++ ) {
-			memset( &sc->images[i], 0, sizeof( sc->images[i] ) );
-			sc->images[i].type = XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR;
-		}
-		VR_CHECK( qxrEnumerateSwapchainImages( sc->handle, sc->imageCount, &sc->imageCount,
-			(XrSwapchainImageBaseHeader *)sc->images ), "xrEnumerateSwapchainImages" );
 	}
 
-	VR_Log( 0, "VR: eye swapchains %ux%u, format %d, %u images\n", vr.swapchains[0].width,
-		vr.swapchains[0].height, (int)format, vr.swapchains[0].imageCount );
+	// the dimmer: small, filled with one colour by the renderer (vkCmdClearColorImage)
+	if ( !VR_CreateSwapchain( &vr.dimmer, "dimmer", 16, 16, format,
+			XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT ) ) {
+		VR_Log( 0, "VR: no dimmer layer\n" );
+	}
+	vr.dimmerAlpha = 0.0f;
+	vr.dimmerPending = 0.0f;
 	return 1;
 }
+
+int VR_GetEyeSwapchain( int eye, vrSwapchainInfo_t *info ) {
+	if ( eye < 0 || eye >= VR_MAX_EYES || vr.swapchains[eye].handle == XR_NULL_HANDLE ) {
+		return 0;
+	}
+	VR_FillInfo( &vr.swapchains[eye], info );
+	return 1;
+}
+
+int VR_GetDimmerSwapchain( vrSwapchainInfo_t *info ) {
+	if ( vr.dimmer.handle == XR_NULL_HANDLE ) {
+		return 0;
+	}
+	VR_FillInfo( &vr.dimmer, info );
+	return 1;
+}
+
+int VR_SetCanvas( uint32_t width, uint32_t height, VkFormat colorFormat, vrSwapchainInfo_t *info ) {
+	int64_t prefs[2];
+	int64_t format;
+
+	if ( vr.session == XR_NULL_HANDLE ) {
+		return 0;
+	}
+	prefs[0] = VR_SrgbTwin( colorFormat );
+	prefs[1] = colorFormat;
+	format = VR_PickFormat( prefs, 2 );
+
+	if ( vr.canvas.handle != XR_NULL_HANDLE ) {
+		if ( vr.canvas.width == width && vr.canvas.height == height && vr.canvas.format == format ) {
+			VR_FillInfo( &vr.canvas, info );
+			return 1;
+		}
+		VR_DestroySwapchain( &vr.canvas );
+	}
+	if ( format == VK_FORMAT_UNDEFINED ) {
+		VR_Log( 1, "VR: no swapchain format for the 2D layer (canvas format %d)\n", (int)colorFormat );
+		return 0;
+	}
+	// filled with vkCmdCopyImage, a raw copy (the bits stay the game's gamma-encoded ones)
+	if ( !VR_CreateSwapchain( &vr.canvas, "2D layer", width, height, format,
+			XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT ) ) {
+		return 0;
+	}
+	VR_FillInfo( &vr.canvas, info );
+	return 1;
+}
+
+// ---------------------------------------------------------------------------
+// session and spaces
+// ---------------------------------------------------------------------------
 
 static int VR_CreateSpace( void ) {
 	XrReferenceSpaceType types[16];
@@ -671,14 +862,40 @@ static int VR_CreateSpace( void ) {
 		VR_Log( 1, "VR: no reference space\n" );
 		return 0;
 	}
+
+	ci.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+	if ( XR_FAILED( qxrCreateReferenceSpace( vr.session, &ci, &vr.viewSpace ) ) ) {
+		vr.viewSpace = XR_NULL_HANDLE;	// head-locked layers fall back to world-locked
+	}
 	VR_Log( 0, "VR: reference space %s\n", vr.spaceType == XR_REFERENCE_SPACE_TYPE_STAGE ? "STAGE" : "LOCAL" );
 	return 1;
+}
+
+static void VR_SetRefreshRate( void ) {
+	float rates[16], best = 0.0f;
+	uint32_t n = 0, i;
+
+	if ( !qxrEnumerateDisplayRefreshRatesFB || !qxrRequestDisplayRefreshRateFB || vr.options.refreshRate <= 0.0f ) {
+		return;
+	}
+	if ( XR_FAILED( qxrEnumerateDisplayRefreshRatesFB( vr.session, 16, &n, rates ) ) || n == 0 ) {
+		return;
+	}
+	for ( i = 0; i < n; i++ ) {
+		if ( best == 0.0f || fabsf( rates[i] - vr.options.refreshRate ) < fabsf( best - vr.options.refreshRate ) ) {
+			best = rates[i];
+		}
+	}
+	if ( XR_SUCCEEDED( qxrRequestDisplayRefreshRateFB( vr.session, best ) ) ) {
+		VR_Log( 0, "VR: display refresh rate %.0f Hz requested (%u offered)\n", best, n );
+	}
 }
 
 int VR_CreateSession( VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device,
 	uint32_t queueFamilyIndex, uint32_t queueIndex ) {
 	XrGraphicsBindingVulkan2KHR binding;
 	XrSessionCreateInfo ci;
+	XrResult res;
 
 	if ( !VR_Initialized() ) {
 		return 0;
@@ -700,18 +917,23 @@ int VR_CreateSession( VkInstance instance, VkPhysicalDevice physicalDevice, VkDe
 	ci.next = &binding;
 	ci.systemId = vr.systemId;
 
-	if ( XR_FAILED( qxrCreateSession( vr.instance, &ci, &vr.session ) ) ) {
-		VR_Log( 1, "VR: xrCreateSession failed\n" );
+	res = qxrCreateSession( vr.instance, &ci, &vr.session );
+	if ( XR_FAILED( res ) ) {
+		VR_Log( 1, "VR: xrCreateSession failed: %s\n", VR_ResultString( res ) );
 		vr.session = XR_NULL_HANDLE;
 		return 0;
 	}
 	vr.sessionState = XR_SESSION_STATE_UNKNOWN;
 	vr.sessionRunning = 0;
+	vr.frozenValid = 0;
+	vr.lastQuadMode = -1;
+	memset( vr.anchors, 0, sizeof( vr.anchors ) );
 
-	if ( !VR_CreateSpace() || !VR_CreateSwapchains() ) {
+	if ( !VR_CreateSpace() || !VR_CreateEyeSwapchains() ) {
 		VR_DestroySession();
 		return 0;
 	}
+	VR_SetRefreshRate();
 
 	VR_Log( 0, "VR: session created, waiting for the runtime to start it\n" );
 	return 1;
@@ -725,16 +947,15 @@ void VR_DestroySession( void ) {
 	}
 
 	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
-		vrSwapchain_t *sc = &vr.swapchains[eye];
-		if ( sc->handle != XR_NULL_HANDLE ) {
-			if ( sc->acquired ) {
-				qxrReleaseSwapchainImage( sc->handle, NULL );
-			}
-			qxrDestroySwapchain( sc->handle );
-		}
-		memset( sc, 0, sizeof( *sc ) );
+		VR_DestroySwapchain( &vr.swapchains[eye] );
 	}
+	VR_DestroySwapchain( &vr.canvas );
+	VR_DestroySwapchain( &vr.dimmer );
 
+	if ( vr.viewSpace != XR_NULL_HANDLE ) {
+		qxrDestroySpace( vr.viewSpace );
+		vr.viewSpace = XR_NULL_HANDLE;
+	}
 	if ( vr.space != XR_NULL_HANDLE ) {
 		qxrDestroySpace( vr.space );
 		vr.space = XR_NULL_HANDLE;
@@ -749,14 +970,30 @@ void VR_DestroySession( void ) {
 	vr.sessionState = XR_SESSION_STATE_UNKNOWN;
 	vr.frameBegun = 0;
 	vr.frameActive = 0;
+	vr.frozenValid = 0;
 }
 
 // ---------------------------------------------------------------------------
 // events
 // ---------------------------------------------------------------------------
 
+static const char *VR_StateName( XrSessionState state ) {
+	switch ( state ) {
+	case XR_SESSION_STATE_IDLE: return "IDLE";
+	case XR_SESSION_STATE_READY: return "READY";
+	case XR_SESSION_STATE_SYNCHRONIZED: return "SYNCHRONIZED";
+	case XR_SESSION_STATE_VISIBLE: return "VISIBLE";
+	case XR_SESSION_STATE_FOCUSED: return "FOCUSED";
+	case XR_SESSION_STATE_STOPPING: return "STOPPING";
+	case XR_SESSION_STATE_LOSS_PENDING: return "LOSS_PENDING";
+	case XR_SESSION_STATE_EXITING: return "EXITING";
+	default: return "UNKNOWN";
+	}
+}
+
 static void VR_HandleSessionState( XrSessionState state ) {
 	vr.sessionState = state;
+	VR_Log( 0, "VR: session state %s\n", VR_StateName( state ) );
 
 	switch ( state ) {
 	case XR_SESSION_STATE_READY:
@@ -783,7 +1020,7 @@ static void VR_HandleSessionState( XrSessionState state ) {
 	case XR_SESSION_STATE_EXITING:
 	case XR_SESSION_STATE_LOSS_PENDING:
 		// the headset went away or the user quit from the system menu; stay flat until restart
-		VR_Log( 0, "VR: session ending (state %d)\n", (int)state );
+		VR_Log( 0, "VR: session ending\n" );
 		break;
 	default:
 		break;
@@ -804,7 +1041,7 @@ static void VR_PollEvents( void ) {
 			VR_HandleSessionState( ( (XrEventDataSessionStateChanged *)&ev )->state );
 			break;
 		case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
-			vr.recenterPending = 1;
+			VR_Recenter();
 			break;
 		case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
 			VR_Log( 1, "VR: OpenXR instance loss pending\n" );
@@ -819,26 +1056,33 @@ static void VR_PollEvents( void ) {
 // frames
 // ---------------------------------------------------------------------------
 
-static int VR_AcquireEyeImages( void ) {
-	int eye;
+static int VR_Acquire( vrSwapchain_t *sc ) {
+	XrSwapchainImageWaitInfo wi;
 
-	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
-		vrSwapchain_t *sc = &vr.swapchains[eye];
-		XrSwapchainImageWaitInfo wi;
+	if ( sc->handle == XR_NULL_HANDLE || sc->acquired ) {
+		return sc->acquired;
+	}
+	if ( XR_FAILED( qxrAcquireSwapchainImage( sc->handle, NULL, &sc->acquiredIndex ) ) ) {
+		return 0;
+	}
+	sc->acquired = 1;
 
-		if ( XR_FAILED( qxrAcquireSwapchainImage( sc->handle, NULL, &sc->acquiredIndex ) ) ) {
-			return 0;
-		}
-		sc->acquired = 1;
-
-		memset( &wi, 0, sizeof( wi ) );
-		wi.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
-		wi.timeout = XR_INFINITE_DURATION;
-		if ( XR_FAILED( qxrWaitSwapchainImage( sc->handle, &wi ) ) ) {
-			return 0;
-		}
+	memset( &wi, 0, sizeof( wi ) );
+	wi.type = XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO;
+	wi.timeout = XR_INFINITE_DURATION;
+	if ( XR_FAILED( qxrWaitSwapchainImage( sc->handle, &wi ) ) ) {
+		// still acquired: VR_EndFrame releases it
+		return 0;
 	}
 	return 1;
+}
+
+static void VR_Release( vrSwapchain_t *sc ) {
+	if ( sc->acquired ) {
+		qxrReleaseSwapchainImage( sc->handle, NULL );
+		sc->acquired = 0;
+		sc->released = 1;
+	}
 }
 
 static void VR_UpdateHeadOrigin( void ) {
@@ -854,15 +1098,17 @@ static void VR_UpdateHeadOrigin( void ) {
 		// midpoint of the two eyes
 		vr.headOrigin[i] = 0.5f * ( ( &vr.views[0].pose.position.x )[i] + ( &vr.views[1].pose.position.x )[i] );
 	}
+	memset( vr.anchors, 0, sizeof( vr.anchors ) );	// the layers are placed again in front
 	vr.recenterPending = 0;
 }
 
-int VR_BeginFrame( void ) {
+int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 	XrFrameWaitInfo wi;
 	XrFrameBeginInfo bi;
 	XrViewLocateInfo li;
 	uint32_t viewCount = 0;
 	int eye;
+	static int loggedViews;
 
 	vr.frameActive = 0;
 
@@ -872,7 +1118,7 @@ int VR_BeginFrame( void ) {
 
 	if ( vr.frameBegun ) {
 		// the last frame never reached VR_EndFrame (an error unwound it): close it empty
-		VR_EndFrame( 0 );
+		VR_EndFrame( NULL );
 	}
 
 	VR_PollEvents();
@@ -919,8 +1165,30 @@ int VR_BeginFrame( void ) {
 
 	VR_UpdateHeadOrigin();
 
-	if ( !VR_AcquireEyeImages() ) {
-		return 0;
+	if ( !loggedViews ) {	// once: the runtime's eye fields of view and the eye separation
+		const XrPosef *l = &vr.views[0].pose, *r = &vr.views[1].pose;
+		float dx = r->position.x - l->position.x, dy = r->position.y - l->position.y;
+		float dz = r->position.z - l->position.z;
+		loggedViews = 1;
+		for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+			const XrFovf *f = &vr.views[eye].fov;
+			VR_Log( 0, "VR: eye %d fov left %.1f right %.1f up %.1f down %.1f deg\n", eye,
+				f->angleLeft * 180.0 / M_PI, f->angleRight * 180.0 / M_PI,
+				f->angleUp * 180.0 / M_PI, f->angleDown * 180.0 / M_PI );
+		}
+		VR_Log( 0, "VR: eye separation %.1f mm\n", sqrtf( dx * dx + dy * dy + dz * dz ) * 1000.0f );
+	}
+
+	if ( wantEyes ) {
+		for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+			VR_Acquire( &vr.swapchains[eye] );
+		}
+	}
+	VR_Acquire( &vr.canvas );
+
+	vr.dimmerPending = 0.0f;
+	if ( dimAlpha > 0.0f && fabsf( dimAlpha - vr.dimmerAlpha ) > 0.005f && VR_Acquire( &vr.dimmer ) ) {
+		vr.dimmerPending = dimAlpha;
 	}
 
 	vr.frameActive = 1;
@@ -966,80 +1234,258 @@ void VR_Recenter( void ) {
 	vr.recenterPending = 1;
 }
 
-int VR_GetEyeImage( int eye, vrEyeImage_t *image ) {
-	const vrSwapchain_t *sc;
-
-	if ( !vr.frameActive || eye < 0 || eye >= VR_MAX_EYES ) {
-		return 0;
+int VR_GetEyeImageIndex( int eye ) {
+	if ( !vr.frameActive || eye < 0 || eye >= VR_MAX_EYES || !vr.swapchains[eye].acquired ) {
+		return -1;
 	}
-	sc = &vr.swapchains[eye];
-	if ( !sc->acquired ) {
-		return 0;
-	}
-	image->image = sc->images[sc->acquiredIndex].image;
-	image->format = (VkFormat)sc->format;
-	image->width = sc->width;
-	image->height = sc->height;
-	return 1;
+	return (int)vr.swapchains[eye].acquiredIndex;
 }
 
-void VR_EndFrame( int eyesWritten ) {
+int VR_GetCanvasImageIndex( void ) {
+	if ( !vr.frameActive || !vr.canvas.acquired ) {
+		return -1;
+	}
+	return (int)vr.canvas.acquiredIndex;
+}
+
+int VR_GetDimmerImageIndex( float *alpha ) {
+	if ( !vr.frameActive || !vr.dimmer.acquired || vr.dimmerPending <= 0.0f ) {
+		return -1;
+	}
+	*alpha = vr.dimmerPending;
+	return (int)vr.dimmer.acquiredIndex;
+}
+
+int VR_HaveFrozenEyes( void ) {
+	return vr.frozenValid;
+}
+
+// ---------------------------------------------------------------------------
+// layers
+// ---------------------------------------------------------------------------
+
+static void VR_YawQuat( float yaw, XrQuaternionf *q ) {
+	q->x = 0.0f;
+	q->y = sinf( yaw * 0.5f );
+	q->z = 0.0f;
+	q->w = cosf( yaw * 0.5f );
+}
+
+// the head: the eyes' midpoint and its yaw about +Y (0 = looking down -Z)
+static void VR_HeadPose( float pos[3], float *yaw ) {
+	const XrQuaternionf *q = &vr.views[0].pose.orientation;
+	const float fx = -2.0f * ( q->x * q->z + q->w * q->y );
+	const float fz = -( 1.0f - 2.0f * ( q->x * q->x + q->y * q->y ) );
+
+	pos[0] = 0.5f * ( vr.views[0].pose.position.x + vr.views[1].pose.position.x );
+	pos[1] = 0.5f * ( vr.views[0].pose.position.y + vr.views[1].pose.position.y );
+	pos[2] = 0.5f * ( vr.views[0].pose.position.z + vr.views[1].pose.position.z );
+	*yaw = ( fabsf( fx ) + fabsf( fz ) > 1e-4f ) ? atan2f( -fx, -fz ) : 0.0f;
+}
+
+static float VR_AngleDiff( float a, float b ) {
+	float d = a - b;
+	while ( d > (float)M_PI ) d -= 2.0f * (float)M_PI;
+	while ( d < -(float)M_PI ) d += 2.0f * (float)M_PI;
+	return d;
+}
+
+// where the quad goes this frame; returns the space to submit it in
+static XrSpace VR_PlaceQuad( vrQuadMode_t mode, const vrQuadPlacement_t *p, XrPosef *pose ) {
+	vrQuadAnchor_t *a = &vr.anchors[mode];
+	float head[3], headYaw;
+
+	if ( p->follow == 1 && vr.viewSpace != XR_NULL_HANDLE ) {
+		pose->orientation.x = pose->orientation.y = pose->orientation.z = 0.0f;
+		pose->orientation.w = 1.0f;
+		pose->position.x = 0.0f;
+		pose->position.y = p->height;
+		pose->position.z = -p->distance;
+		return vr.viewSpace;
+	}
+
+	VR_HeadPose( head, &headYaw );
+
+	if ( !a->placed || (int)mode != vr.lastQuadMode ) {
+		// placed in front of the head when the mode starts (a menu opens, a cutscene begins)
+		a->placed = 1;
+		a->yaw = headYaw;
+		a->turning = 0;
+		a->position[0] = head[0];
+		a->position[1] = head[1];
+		a->position[2] = head[2];
+	}
+
+	if ( p->follow == 2 ) {
+		// lazy follow: the quad keeps still while the head looks around it, and swings round
+		// (smoothly) once the head has turned more than followAngle away
+		const float diff = VR_AngleDiff( headYaw, a->yaw );
+		const float limit = p->followAngle * (float)M_PI / 180.0f;
+
+		if ( fabsf( diff ) > limit ) {
+			a->turning = 1;
+		}
+		if ( a->turning ) {
+			a->yaw += diff * 0.08f;
+			if ( fabsf( diff ) < 2.0f * (float)M_PI / 180.0f ) {
+				a->turning = 0;
+			}
+		}
+		// it moves with the head (leaning or stepping doesn't push the HUD away)
+		a->position[0] = head[0];
+		a->position[1] = head[1];
+		a->position[2] = head[2];
+	}
+
+	VR_YawQuat( a->yaw, &pose->orientation );
+	pose->position.x = a->position[0] - sinf( a->yaw ) * p->distance;
+	pose->position.y = a->position[1] + p->height;
+	pose->position.z = a->position[2] - cosf( a->yaw ) * p->distance;
+	return vr.space;
+}
+
+// a line every ~10 seconds: the frame rate the runtime paced us at, and what was shown
+static void VR_FrameStats( vrProjection_t projection, int layerCount ) {
+	static XrTime start;
+	static int frames, fresh, frozen, layers;
+
+	if ( !vr.frameActive ) {
+		return;
+	}
+	if ( frames == 0 ) {
+		start = vr.frameState.predictedDisplayTime;
+	}
+	frames++;
+	fresh += projection == VR_PROJ_FRESH;
+	frozen += projection == VR_PROJ_FROZEN;
+	layers += layerCount;
+	if ( vr.frameState.predictedDisplayTime - start >= (XrTime)10000000000LL ) {
+		const double secs = (double)( vr.frameState.predictedDisplayTime - start ) / 1e9;
+		VR_Log( 0, "VR: %.1f fps over %.0f s (display period %.1f ms); world fresh %d%%, frozen %d%%, %.1f layers\n",
+			frames / secs, secs, vr.frameState.predictedDisplayPeriod / 1e6, 100 * fresh / frames, 100 * frozen / frames,
+			(double)layers / frames );
+		frames = fresh = frozen = layers = 0;
+	}
+}
+
+void VR_EndFrame( const vrFrameLayers_t *layers ) {
 	XrCompositionLayerProjectionView projViews[VR_MAX_EYES];
-	XrCompositionLayerProjection layer;
-	const XrCompositionLayerBaseHeader *layers[1];
+	XrCompositionLayerProjection proj;
+	XrCompositionLayerQuad dimQuad, quad;
+	const XrCompositionLayerBaseHeader *list[3];
 	XrFrameEndInfo ei;
-	int eye, submit;
+	int eye, eyesAcquired, layerCount = 0;
+	vrProjection_t projection = VR_PROJ_NONE;
 
 	if ( vr.session == XR_NULL_HANDLE || !vr.frameBegun ) {
 		vr.frameActive = 0;
 		return;
 	}
 
-	submit = vr.frameActive && eyesWritten;
+	eyesAcquired = vr.swapchains[0].acquired && vr.swapchains[1].acquired;
 	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
-		vrSwapchain_t *sc = &vr.swapchains[eye];
-		if ( sc->acquired ) {
-			qxrReleaseSwapchainImage( sc->handle, NULL );
-			sc->acquired = 0;
-		} else {
-			submit = 0;
+		VR_Release( &vr.swapchains[eye] );
+	}
+	if ( vr.canvas.acquired ) {
+		VR_Release( &vr.canvas );
+	}
+	if ( vr.dimmer.acquired ) {
+		VR_Release( &vr.dimmer );
+		vr.dimmerAlpha = vr.dimmerPending;	// the renderer filled it this frame
+	}
+
+	if ( layers && vr.frameActive ) {
+		projection = layers->projection;
+		if ( projection == VR_PROJ_FRESH && !eyesAcquired ) {
+			projection = VR_PROJ_NONE;
 		}
+		if ( projection == VR_PROJ_FROZEN && !vr.frozenValid ) {
+			projection = VR_PROJ_NONE;
+		}
+	}
+	if ( eyesAcquired && projection != VR_PROJ_FRESH ) {
+		// released without being drawn: what they hold is no longer the last frame
+		vr.frozenValid = 0;
+	}
+
+	if ( projection != VR_PROJ_NONE ) {
+		const XrView *views = projection == VR_PROJ_FRESH ? vr.views : vr.frozenViews;
+
+		for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+			memset( &projViews[eye], 0, sizeof( projViews[eye] ) );
+			projViews[eye].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+			projViews[eye].pose = views[eye].pose;
+			projViews[eye].fov = views[eye].fov;
+			projViews[eye].subImage.swapchain = vr.swapchains[eye].handle;
+			projViews[eye].subImage.imageRect.extent.width = (int32_t)vr.swapchains[eye].width;
+			projViews[eye].subImage.imageRect.extent.height = (int32_t)vr.swapchains[eye].height;
+		}
+		memset( &proj, 0, sizeof( proj ) );
+		proj.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
+		proj.space = vr.space;
+		proj.viewCount = VR_MAX_EYES;
+		proj.views = projViews;
+		list[layerCount++] = (const XrCompositionLayerBaseHeader *)&proj;
+
+		if ( projection == VR_PROJ_FRESH ) {
+			memcpy( vr.frozenViews, vr.views, sizeof( vr.frozenViews ) );
+			vr.frozenValid = 1;
+		}
+
+		if ( layers->dim && vr.dimmer.released && vr.dimmerAlpha > 0.0f ) {
+			// head-locked, large enough to cover the whole field of view
+			memset( &dimQuad, 0, sizeof( dimQuad ) );
+			dimQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+			dimQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+			dimQuad.space = vr.viewSpace != XR_NULL_HANDLE ? vr.viewSpace : vr.space;
+			dimQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+			dimQuad.subImage.swapchain = vr.dimmer.handle;
+			dimQuad.subImage.imageRect.extent.width = (int32_t)vr.dimmer.width;
+			dimQuad.subImage.imageRect.extent.height = (int32_t)vr.dimmer.height;
+			dimQuad.pose.orientation.w = 1.0f;
+			dimQuad.pose.position.z = -1.0f;
+			dimQuad.size.width = 8.0f;
+			dimQuad.size.height = 8.0f;
+			list[layerCount++] = (const XrCompositionLayerBaseHeader *)&dimQuad;
+		}
+	}
+
+	if ( layers && vr.frameActive && layers->quad && vr.canvas.released ) {
+		memset( &quad, 0, sizeof( quad ) );
+		quad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+		// the canvas holds premultiplied colour (2D is drawn over transparent black)
+		quad.layerFlags = layers->quadOpaque ? 0 : XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+		quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		quad.subImage.swapchain = vr.canvas.handle;
+		quad.subImage.imageRect.extent.width = (int32_t)vr.canvas.width;
+		quad.subImage.imageRect.extent.height = (int32_t)vr.canvas.height;
+		quad.space = VR_PlaceQuad( layers->quadMode, &layers->placement, &quad.pose );
+		quad.size.width = layers->placement.width;
+		quad.size.height = layers->placement.width * (float)vr.canvas.height / (float)vr.canvas.width;
+		list[layerCount++] = (const XrCompositionLayerBaseHeader *)&quad;
+		vr.lastQuadMode = (int)layers->quadMode;
+	} else {
+		vr.lastQuadMode = -1;
 	}
 
 	memset( &ei, 0, sizeof( ei ) );
 	ei.type = XR_TYPE_FRAME_END_INFO;
 	ei.displayTime = vr.frameState.predictedDisplayTime;
 	ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	ei.layerCount = vr.frameActive ? (uint32_t)layerCount : 0;
+	ei.layers = layerCount ? list : NULL;
 
-	if ( submit ) {
-		for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
-			memset( &projViews[eye], 0, sizeof( projViews[eye] ) );
-			projViews[eye].type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
-			projViews[eye].pose = vr.views[eye].pose;
-			projViews[eye].fov = vr.views[eye].fov;
-			projViews[eye].subImage.swapchain = vr.swapchains[eye].handle;
-			projViews[eye].subImage.imageRect.offset.x = 0;
-			projViews[eye].subImage.imageRect.offset.y = 0;
-			projViews[eye].subImage.imageRect.extent.width = (int32_t)vr.swapchains[eye].width;
-			projViews[eye].subImage.imageRect.extent.height = (int32_t)vr.swapchains[eye].height;
-			projViews[eye].subImage.imageArrayIndex = 0;
+	{
+		XrResult res = qxrEndFrame( vr.session, &ei );
+		if ( XR_FAILED( res ) ) {
+			static int warned;
+			if ( warned++ < 5 ) {
+				VR_Log( 1, "VR: xrEndFrame failed: %s\n", VR_ResultString( res ) );
+			}
 		}
-		memset( &layer, 0, sizeof( layer ) );
-		layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
-		layer.space = vr.space;
-		layer.viewCount = VR_MAX_EYES;
-		layer.views = projViews;
-		layers[0] = (const XrCompositionLayerBaseHeader *)&layer;
-		ei.layerCount = 1;
-		ei.layers = layers;
-	} else {
-		ei.layerCount = 0;
-		ei.layers = NULL;
 	}
 
-	if ( XR_FAILED( qxrEndFrame( vr.session, &ei ) ) ) {
-		VR_Log( 1, "VR: xrEndFrame failed\n" );
-	}
+	VR_FrameStats( projection, layerCount );
 
 	vr.frameBegun = 0;
 	vr.frameActive = 0;

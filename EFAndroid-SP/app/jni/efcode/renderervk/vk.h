@@ -187,6 +187,9 @@ typedef enum {
 	RENDER_PASS_MAIN = 0,
 	RENDER_PASS_SCREENMAP,
 	RENDER_PASS_POST_BLOOM,
+#ifdef EF_VR
+	RENDER_PASS_VR_EYE,		// a VR eye: drawn straight into its OpenXR image (vk.c, EF_VR)
+#endif
 	RENDER_PASS_COUNT
 } renderPass_t;
 
@@ -265,7 +268,13 @@ void vk_shutdown( refShutdownCode_t code );
 void vk_resize_swapchain( void );
 #ifdef EF_VR
 qboolean vk_vr_active( void );				// OpenXR owns the instance/device and has a session
-qboolean vk_vr_take_eyes_written( void );	// were this frame's eye images filled? (clears the flag)
+qboolean vk_vr_ready( void );				// ... and the eye render targets exist
+qboolean vk_vr_set_target( int target );	// backend: -1 = the 2D canvas, 0/1 = that eye's image
+qboolean vk_vr_eyes_written( void );		// this frame drew both eyes
+qboolean vk_vr_canvas_written( void );		// this frame's canvas went into the 2D layer image
+VkSampleCountFlagBits vk_vr_samples( void );
+VkRenderPass vk_vr_eye_pass( void );
+void vk_vr_request_capture( void );			// vr_screenshot: both eyes and the canvas to TGA files
 #endif
 #if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
 qboolean vk_replace_window( void );

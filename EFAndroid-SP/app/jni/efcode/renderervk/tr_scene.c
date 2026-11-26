@@ -514,13 +514,14 @@ void RE_RenderScene( const refdef_t *fd ) {
 
 #ifdef EF_VR
 	{
-	// VR: the world view is drawn once per eye, each into its half of the frame;
-	// 2D scenes (RDF_NOWORLDMODEL: HUD heads, menu models) stay as they are
+	// VR: the world view is drawn once per eye, each into its own eye image; 2D scenes
+	// (RDF_NOWORLDMODEL: HUD heads, menu models) and cutscene cameras go to the 2D canvas,
+	// and under a menu the world isn't drawn at all (the last frame stays up, frozen)
 	const int vrEyes = R_VR_SceneEyes( fd );
 	const viewParms_t vrBase = parms;
 	int vrEye;
 
-	for ( vrEye = 0; vrEye < ( vrEyes ? vrEyes : 1 ); vrEye++ ) {
+	for ( vrEye = 0; vrEye < ( vrEyes < 0 ? 0 : vrEyes ? vrEyes : 1 ); vrEye++ ) {
 	if ( vrEyes ) {
 		R_VR_SetupEye( &parms, &vrBase, vrEye );
 	}

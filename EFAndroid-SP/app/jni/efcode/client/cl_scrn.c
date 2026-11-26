@@ -1119,6 +1119,27 @@ void SCR_UpdateScreen( void ) {
 	}
 	recursive = 1;
 
+#ifdef EF_VR
+	{
+		// for the VR renderer: 1 = a menu is up (the world is frozen behind it), 2 = a cinematic
+		// plays (it goes on the cutscene screen). Read by the renderer at its next frame.
+		static cvar_t *vr_uiState;
+		int state = 0;
+
+		if ( !vr_uiState ) {
+			vr_uiState = Cvar_Get( "vr_uiState", "0", CVAR_ROM );
+		}
+		if ( ( Key_GetCatcher() & KEYCATCH_UI ) && ( uivm || SPUI_IsActive() ) ) {
+			state = 1;
+		} else if ( clc.state == CA_CINEMATIC || CL_InGameCinematicActive() ) {
+			state = 2;
+		}
+		if ( state != vr_uiState->integer ) {
+			Cvar_Set( "vr_uiState", va( "%i", state ) );
+		}
+	}
+#endif
+
 	// If there is no VM, there are also no rendering commands issued. Stop the renderer in
 	// that case. EF1 SP: the native SP UI has NO uivm (uivm==NULL) but DOES render via SPUI_*,
 	// so SPUI_IsActive() must also enable the render path or the whole screen stays black.

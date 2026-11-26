@@ -2250,6 +2250,7 @@ static void RE_Shutdown( refShutdownCode_t code ) {
 	ri.Cmd_RemoveCommand( "modellist" );
 #ifdef EF_VR
 	ri.Cmd_RemoveCommand( "vr_recenter" );
+	ri.Cmd_RemoveCommand( "vr_screenshot" );
 #endif
 	ri.Cmd_RemoveCommand( "screenshotBMP" );
 	ri.Cmd_RemoveCommand( "screenshotJPEG" );

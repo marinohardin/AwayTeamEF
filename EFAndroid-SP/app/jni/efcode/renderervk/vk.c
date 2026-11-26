@@ -5,8 +5,12 @@
 #include "../vr/vr.h"
 // qtrue while OpenXR owns this Vulkan instance/device (vr_enable, and VR_Init found a headset)
 static qboolean vk_vr = qfalse;
-static VkExtent2D vk_vr_swapchain_extent;	// the window swapchain's size: the source of the eye copy
-static qboolean vk_vr_eyes_written = qfalse;	// this frame's eye images were filled (VR_EndFrame submits them)
+static VkSampleCountFlagBits vk_vr_eye_samples = VK_SAMPLE_COUNT_1_BIT;	// eye MSAA (vr_msaa)
+static void vk_vr_create_resources( void );
+static void vk_vr_destroy_resources( void );
+static void vk_vr_begin_frame( void );
+static void vk_vr_end_frame( void );
+static void vk_vr_capture_finish( void );
 #endif
 
 #if defined (_DEBUG)
@@ -68,6 +72,9 @@ static PFN_vkCmdClearColorImage							qvkCmdClearColorImage;
 static PFN_vkCmdCopyBuffer								qvkCmdCopyBuffer;
 static PFN_vkCmdCopyBufferToImage						qvkCmdCopyBufferToImage;
 static PFN_vkCmdCopyImage								qvkCmdCopyImage;
+#ifdef EF_VR
+static PFN_vkCmdCopyImageToBuffer						qvkCmdCopyImageToBuffer;
+#endif
 static PFN_vkCmdDraw									qvkCmdDraw;
 static PFN_vkCmdDrawIndexed								qvkCmdDrawIndexed;
 static PFN_vkCmdEndRenderPass							qvkCmdEndRenderPass;
@@ -821,13 +828,6 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 	if ( !vk.fboActive ) {
 		desc.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	}
-#ifdef EF_VR
-	if ( vk_vr ) {
-		// the finished frame is blitted from here into the eye images (vk_vr_copy_eyes)
-		desc.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-	}
-	vk_vr_swapchain_extent = image_extent;
-#endif
 	desc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	desc.queueFamilyIndexCount = 0;
 	desc.pQueueFamilyIndices = NULL;
@@ -2380,6 +2380,9 @@ static void init_vulkan_library( void )
 	INIT_DEVICE_FUNCTION(vkCmdCopyBuffer)
 	INIT_DEVICE_FUNCTION(vkCmdCopyBufferToImage)
 	INIT_DEVICE_FUNCTION(vkCmdCopyImage)
+#ifdef EF_VR
+	INIT_DEVICE_FUNCTION(vkCmdCopyImageToBuffer)
+#endif
 	INIT_DEVICE_FUNCTION(vkCmdDraw)
 	INIT_DEVICE_FUNCTION(vkCmdDrawIndexed)
 	INIT_DEVICE_FUNCTION(vkCmdEndRenderPass)
@@ -2512,6 +2515,9 @@ static void deinit_device_functions( void )
 	qvkCmdCopyBuffer							= NULL;
 	qvkCmdCopyBufferToImage						= NULL;
 	qvkCmdCopyImage								= NULL;
+#ifdef EF_VR
+	qvkCmdCopyImageToBuffer						= NULL;
+#endif
 	qvkCmdDraw									= NULL;
 	qvkCmdDrawIndexed							= NULL;
 	qvkCmdEndRenderPass							= NULL;
@@ -4112,6 +4118,9 @@ static void vk_create_framebuffers( void )
 			}
 		}
 	}
+#ifdef EF_VR
+	vk_vr_create_resources();
+#endif
 }
 
 
@@ -4200,6 +4209,10 @@ static void vk_destroy_sync_primitives( void  ) {
 
 static void vk_destroy_framebuffers( void ) {
 	uint32_t n;
+
+#ifdef EF_VR
+	vk_vr_destroy_resources();
+#endif
 
 	for ( n = 0; n < vk.swapchain_image_count; n++ ) {
 		if ( vk.framebuffers.main[n] != VK_NULL_HANDLE ) {
@@ -4642,6 +4655,9 @@ void vk_initialize( void )
 	qvkGetDeviceQueue( vk.device, vk.queue_family_index, 0, &vk.queue );
 
 #ifdef EF_VR
+	if ( vk_vr ) {
+		R_VR_SetOptions();	// resolution scale and refresh rate, from the cvars
+	}
 	if ( vk_vr && !VR_CreateSession( vk_instance, vk.physical_device, vk.device, vk.queue_family_index, 0 ) ) {
 		// the instance and device stay (they are ordinary Vulkan objects); only VR is off
 		ri.Printf( PRINT_WARNING, "VR: no OpenXR session, staying flat\n" );
@@ -4676,6 +4692,12 @@ void vk_initialize( void )
 	} else {
 		vk.fboActive = qfalse;
 	}
+#ifdef EF_VR
+	if ( vk_vr ) {
+		// the main pass only draws the 2D canvas in VR: no MSAA there (the eyes have their own)
+		vk.msaaActive = qfalse;
+	}
+#endif
 
 	// multisampling
 
@@ -4770,6 +4792,15 @@ void vk_initialize( void )
 	} else {
 		vkSamples = VK_SAMPLE_COUNT_1_BIT;
 	}
+#ifdef EF_VR
+	vk_vr_eye_samples = VK_SAMPLE_COUNT_1_BIT;
+	if ( vk_vr && vr_msaa && vr_msaa->integer > 1 ) {
+		VkSampleCountFlags mask = vkMaxSamples;
+		vk_vr_eye_samples = (VkSampleCountFlagBits)log2pad( vr_msaa->integer, 1 );
+		while ( vk_vr_eye_samples > mask )
+			vk_vr_eye_samples >>= 1;
+	}
+#endif
 
 	vk.screenMapSamples = MIN( vkMaxSamples, VK_SAMPLE_COUNT_4_BIT );
 
@@ -7244,6 +7275,10 @@ VkPipeline create_pipeline( const Vk_Pipeline_Def *def, renderPass_t renderPassI
 		multisample_state.rasterizationSamples = vk.screenMapSamples;
 	else if ( renderPassIndex == RENDER_PASS_POST_BLOOM )
 		multisample_state.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+#ifdef EF_VR
+	else if ( renderPassIndex == RENDER_PASS_VR_EYE )
+		multisample_state.rasterizationSamples = vk_vr_samples();
+#endif
 	else
 		multisample_state.rasterizationSamples = vkSamples;
 
@@ -7391,6 +7426,19 @@ VkPipeline create_pipeline( const Vk_Pipeline_Def *def, renderPass_t renderPassI
 		attachment_blend_state.dstAlphaBlendFactor = attachment_blend_state.dstColorBlendFactor;
 		attachment_blend_state.colorBlendOp = VK_BLEND_OP_ADD;
 		attachment_blend_state.alphaBlendOp = VK_BLEND_OP_ADD;
+#ifdef EF_VR
+		if ( vk_vr && renderPassIndex == RENDER_PASS_MAIN ) {
+			// the VR canvas' alpha is its coverage, so the compositor can lay it over the world:
+			// an alpha blend accumulates coverage as premultiplied alpha does (src ONE), and an
+			// additive draw adds light without covering anything (src ZERO, dst ONE)
+			if ( attachment_blend_state.srcColorBlendFactor == VK_BLEND_FACTOR_SRC_ALPHA ) {
+				attachment_blend_state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+			} else if ( attachment_blend_state.srcColorBlendFactor == VK_BLEND_FACTOR_ONE &&
+				attachment_blend_state.dstColorBlendFactor == VK_BLEND_FACTOR_ONE ) {
+				attachment_blend_state.srcAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+			}
+		}
+#endif
 
 		if ( def->allow_discard && vkSamples != VK_SAMPLE_COUNT_1_BIT ) {
 			// try to reduce pixel fillrate for transparent surfaces, this yields 1..10% fps increase when multisampling in enabled
@@ -7440,6 +7488,11 @@ VkPipeline create_pipeline( const Vk_Pipeline_Def *def, renderPass_t renderPassI
 	else
 		create_info.layout = vk.pipeline_layout;
 
+#ifdef EF_VR
+	if ( renderPassIndex == RENDER_PASS_VR_EYE )
+		create_info.renderPass = vk_vr_eye_pass();
+	else
+#endif
 	if ( renderPassIndex == RENDER_PASS_SCREENMAP )
 		create_info.renderPass = vk.render_pass.screenmap;
 	else if ( renderPassIndex == RENDER_PASS_POST_BLOOM && vk.render_pass.post_bloom != VK_NULL_HANDLE )
@@ -7653,6 +7706,29 @@ static void get_viewport(VkViewport *viewport, Vk_Depth_Range depth_range) {
 
 static void get_scissor_rect(VkRect2D *r) {
 
+#ifdef EF_VR
+	if ( vk.renderPassIndex == RENDER_PASS_VR_EYE )
+	{
+		// an eye pass: its own size, not the window's
+		if ( backEnd.viewParms.portalView != PV_NONE ) {
+			r->offset.x = backEnd.viewParms.scissorX;
+			r->offset.y = vk.renderHeight - backEnd.viewParms.scissorY - backEnd.viewParms.scissorHeight;
+			r->extent.width = backEnd.viewParms.scissorWidth;
+			r->extent.height = backEnd.viewParms.scissorHeight;
+		} else {
+			get_viewport_rect( r );
+		}
+		if ( r->offset.x < 0 )
+			r->offset.x = 0;
+		if ( r->offset.y < 0 )
+			r->offset.y = 0;
+		if ( r->offset.x + r->extent.width > vk.renderWidth )
+			r->extent.width = vk.renderWidth - r->offset.x;
+		if ( r->offset.y + r->extent.height > vk.renderHeight )
+			r->extent.height = vk.renderHeight - r->offset.y;
+		return;
+	}
+#endif
 	if ( backEnd.viewParms.portalView != PV_NONE )
 	{
 		r->offset.x = backEnd.viewParms.scissorX;
@@ -8232,6 +8308,12 @@ static void vk_begin_render_pass( VkRenderPass renderPass, VkFramebuffer frameBu
 		// destination-alpha blends should see opaque where nothing was drawn
 		clear_values[0].color.float32[3] = 1.0f;
 		clear_values[2].color.float32[3] = 1.0f;
+#ifdef EF_VR
+		if ( vk_vr && renderPass == vk.render_pass.main ) {
+			// the 2D canvas starts transparent: it is laid over the world as a quad layer
+			clear_values[0].color.float32[3] = 0.0f;
+		}
+#endif
 #ifndef USE_REVERSED_DEPTH
 		clear_values[1].depthStencil.depth = 1.0;
 #endif
@@ -8353,6 +8435,12 @@ static qboolean vk_find_screenmap_drawsurfs( void )
 	const drawBufferCommand_t *db_cmd;
 	const drawSurfsCommand_t *ds_cmd;
 
+#ifdef EF_VR
+	if ( vk_vr ) {
+		return qfalse;	// no screen-map pass in VR: the world goes to the eye passes
+	}
+#endif
+
 	for ( ;; ) {
 		curCmd = PADP( curCmd, sizeof(void *) );
 		switch ( *(const int *)curCmd ) {
@@ -8470,6 +8558,10 @@ _retry:
 
 	backEnd.screenMapDone = qfalse;
 
+#ifdef EF_VR
+	vk_vr_begin_frame();
+#endif
+
 	if ( vk_find_screenmap_drawsurfs() ) {
 		vk_begin_screenmap_render_pass();
 	} else {
@@ -8522,11 +8614,383 @@ static void vk_resize_geometry_buffer( void )
 
 #ifdef EF_VR
 /*
-The spike's eye path: the frame is drawn into the window swapchain image as usual, the 3D view
-side by side (left eye in the left half, see R_VR_SetupEye), then each half is blitted into its
-eye's OpenXR image. The HUD and menus are still drawn over the whole window (docs/vr/RENDERING.md
-has the layer plan). Drawing straight into the eye images comes next.
+VR rendering (docs/vr/RENDERING.md):
+
+- Each eye's world view is drawn straight into that eye's OpenXR image, in its own render pass
+  (vk_vr.eye_pass, pipelines under RENDER_PASS_VR_EYE: its own format and MSAA). A depth and
+  an MSAA image at the eye size are shared by both eyes, one after the other.
+- Everything else (HUD, menus, console, cinematics, RDF_NOWORLDMODEL scenes, and the world
+  itself while a cutscene camera runs) goes to the usual main pass, into vk.color_image: the
+  2D canvas. In VR it is cleared to transparent black, is single-sample, and at the end of the
+  frame it is copied raw into the 2D layer's OpenXR image (vk_vr_end_frame).
+- The backend switches targets as it meets eye and non-eye commands (vk_vr_set_target). The
+  main pass is resumed with vk_vr.main_resume, which loads what the canvas already holds.
+- The desktop window keeps showing the canvas through the gamma pass (a mirror).
 */
+
+typedef struct {
+	VkImageView		views[VR_MAX_SWAPCHAIN_IMAGES];
+	VkFramebuffer	framebuffers[VR_MAX_SWAPCHAIN_IMAGES];
+	vrSwapchainInfo_t info;
+} vkVrEye_t;
+
+static struct {
+	qboolean		ready;			// resources below exist
+	VkSampleCountFlagBits samples;	// eye MSAA
+	VkFormat		eye_format;		// the eye render target (a UNORM view of the eye images)
+	uint32_t		eye_width, eye_height;
+	vkVrEye_t		eyes[VR_MAX_EYES];
+
+	VkRenderPass	eye_pass;
+	VkRenderPass	main_resume;	// the main pass, loading the canvas instead of clearing it
+
+	VkImage			depth_image;
+	VkImageView		depth_view;
+	VkImage			msaa_image;
+	VkImageView		msaa_view;
+	VkDeviceMemory	memory[2];
+
+	qboolean		canvas_ready;
+	vrSwapchainInfo_t canvas;
+	qboolean		dimmer_ready;
+	vrSwapchainInfo_t dimmer;
+
+	// per frame
+	int				target;			// -1 the canvas (main pass), else the eye being drawn
+	qboolean		eye_written[VR_MAX_EYES];
+	qboolean		canvas_written;
+	int				eye_index[VR_MAX_EYES];	// the image each eye drew into this frame
+
+	// vr_screenshot: requested, then recorded into this frame, then written after the submit
+	int				capture;		// 0 none, 1 requested, 2 recorded
+	VkBuffer		capture_buffer;
+	VkDeviceMemory	capture_memory;
+} vk_vr_state;
+
+static VkImageView vk_vr_create_view( VkImage image, VkFormat format, VkImageAspectFlags aspect ) {
+	VkImageViewCreateInfo desc;
+	VkImageView view;
+
+	Com_Memset( &desc, 0, sizeof( desc ) );
+	desc.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	desc.image = image;
+	desc.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	desc.format = format;
+	desc.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+	desc.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+	desc.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+	desc.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+	desc.subresourceRange.aspectMask = aspect;
+	desc.subresourceRange.levelCount = 1;
+	desc.subresourceRange.layerCount = 1;
+	VK_CHECK( qvkCreateImageView( vk.device, &desc, NULL, &view ) );
+	return view;
+}
+
+static void vk_vr_create_image( uint32_t width, uint32_t height, VkFormat format, VkSampleCountFlagBits samples,
+	VkImageUsageFlags usage, VkImageAspectFlags aspect, VkImage *image, VkImageView *view, VkDeviceMemory *memory )
+{
+	VkImageCreateInfo desc;
+	VkMemoryRequirements reqs;
+	VkMemoryAllocateInfo alloc;
+
+	Com_Memset( &desc, 0, sizeof( desc ) );
+	desc.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	desc.imageType = VK_IMAGE_TYPE_2D;
+	desc.format = format;
+	desc.extent.width = width;
+	desc.extent.height = height;
+	desc.extent.depth = 1;
+	desc.mipLevels = 1;
+	desc.arrayLayers = 1;
+	desc.samples = samples;
+	desc.tiling = VK_IMAGE_TILING_OPTIMAL;
+	desc.usage = usage | VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;	// never stored: tile memory only
+	desc.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	desc.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	VK_CHECK( qvkCreateImage( vk.device, &desc, NULL, image ) );
+
+	qvkGetImageMemoryRequirements( vk.device, *image, &reqs );
+	Com_Memset( &alloc, 0, sizeof( alloc ) );
+	alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	alloc.allocationSize = reqs.size;
+	alloc.memoryTypeIndex = find_memory_type( reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT );
+	VK_CHECK( qvkAllocateMemory( vk.device, &alloc, NULL, memory ) );
+	VK_CHECK( qvkBindImageMemory( vk.device, *image, *memory, 0 ) );
+
+	*view = vk_vr_create_view( *image, format, aspect );
+}
+
+static void vk_vr_create_render_passes( void )
+{
+	VkAttachmentDescription att[3];
+	VkAttachmentReference colorRef, depthRef, resolveRef;
+	VkSubpassDescription subpass;
+	VkSubpassDependency deps[2];
+	VkRenderPassCreateInfo desc;
+	const qboolean msaa = vk_vr_state.samples > VK_SAMPLE_COUNT_1_BIT;
+
+	Com_Memset( att, 0, sizeof( att ) );
+	Com_Memset( deps, 0, sizeof( deps ) );
+
+	// [0] the eye image (resolve target with MSAA); OpenXR wants it back in COLOR_ATTACHMENT_OPTIMAL
+	att[0].format = vk_vr_state.eye_format;
+	att[0].samples = VK_SAMPLE_COUNT_1_BIT;
+	att[0].loadOp = msaa ? VK_ATTACHMENT_LOAD_OP_DONT_CARE : VK_ATTACHMENT_LOAD_OP_CLEAR;
+	att[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	att[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	att[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	att[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	att[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	// [1] depth, never stored
+	att[1].format = vk.depth_format;
+	att[1].samples = vk_vr_state.samples;
+	att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	att[1].stencilLoadOp = glConfig.stencilBits ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	att[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	att[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	// [2] multisampled colour, resolved into [0]
+	att[2].format = vk_vr_state.eye_format;
+	att[2].samples = vk_vr_state.samples;
+	att[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	att[2].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	att[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	att[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	att[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	att[2].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+	colorRef.attachment = msaa ? 2 : 0;
+	colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	depthRef.attachment = 1;
+	depthRef.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	resolveRef.attachment = 0;
+	resolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+	Com_Memset( &subpass, 0, sizeof( subpass ) );
+	subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+	subpass.colorAttachmentCount = 1;
+	subpass.pColorAttachments = &colorRef;
+	subpass.pDepthStencilAttachment = &depthRef;
+	subpass.pResolveAttachments = msaa ? &resolveRef : NULL;
+
+	// the shared depth/MSAA images go from one eye to the next; the canvas pass may precede
+	deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+	deps[0].dstSubpass = 0;
+	deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+	deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+	deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+		VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	deps[1].srcSubpass = 0;
+	deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+	deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+	deps[1].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+	deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+	deps[1].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+	Com_Memset( &desc, 0, sizeof( desc ) );
+	desc.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+	desc.attachmentCount = msaa ? 3 : 2;
+	desc.pAttachments = att;
+	desc.subpassCount = 1;
+	desc.pSubpasses = &subpass;
+	desc.dependencyCount = 2;
+	desc.pDependencies = deps;
+	VK_CHECK( qvkCreateRenderPass( vk.device, &desc, NULL, &vk_vr_state.eye_pass ) );
+	SET_OBJECT_NAME( vk_vr_state.eye_pass, "render pass - VR eye", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
+
+	// the main pass again (single-sample in VR), loading the canvas: compatible with
+	// vk.render_pass.main, so the main pipelines and framebuffer work in it
+	Com_Memset( att, 0, sizeof( att ) );
+	att[0].format = vk.color_format;
+	att[0].samples = VK_SAMPLE_COUNT_1_BIT;
+	att[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+	att[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	att[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	att[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	att[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	att[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+	att[1].format = vk.depth_format;
+	att[1].samples = VK_SAMPLE_COUNT_1_BIT;
+	att[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	att[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	att[1].stencilLoadOp = glConfig.stencilBits ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	att[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	att[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	att[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+	colorRef.attachment = 0;
+	Com_Memset( &subpass, 0, sizeof( subpass ) );
+	subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+	subpass.colorAttachmentCount = 1;
+	subpass.pColorAttachments = &colorRef;
+	subpass.pDepthStencilAttachment = &depthRef;
+
+	deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+	deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	deps[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	deps[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+	deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+
+	desc.attachmentCount = 2;
+	VK_CHECK( qvkCreateRenderPass( vk.device, &desc, NULL, &vk_vr_state.main_resume ) );
+	SET_OBJECT_NAME( vk_vr_state.main_resume, "render pass - VR canvas resume", VK_DEBUG_REPORT_OBJECT_TYPE_RENDER_PASS_EXT );
+}
+
+// after vk_create_framebuffers: everything VR needs that depends on the window or the eye size
+static void vk_vr_create_resources( void )
+{
+	VkFramebufferCreateInfo fb;
+	VkImageView attachments[3];
+	uint32_t eye, i;
+
+	if ( !vk_vr || vk_vr_state.ready ) {
+		return;
+	}
+	vk_vr_state.samples = vk_vr_eye_samples;
+
+	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+		if ( !VR_GetEyeSwapchain( eye, &vk_vr_state.eyes[eye].info ) ) {
+			ri.Printf( PRINT_WARNING, "VR: no eye swapchain\n" );
+			return;
+		}
+	}
+	vk_vr_state.eye_format = vk_vr_state.eyes[0].info.viewFormat;
+	vk_vr_state.eye_width = vk_vr_state.eyes[0].info.width;
+	vk_vr_state.eye_height = vk_vr_state.eyes[0].info.height;
+
+	vk_vr_create_render_passes();
+
+	vk_vr_create_image( vk_vr_state.eye_width, vk_vr_state.eye_height, vk.depth_format, vk_vr_state.samples,
+		VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		glConfig.stencilBits ? ( VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT ) : VK_IMAGE_ASPECT_DEPTH_BIT,
+		&vk_vr_state.depth_image, &vk_vr_state.depth_view, &vk_vr_state.memory[0] );
+	if ( vk_vr_state.samples > VK_SAMPLE_COUNT_1_BIT ) {
+		vk_vr_create_image( vk_vr_state.eye_width, vk_vr_state.eye_height, vk_vr_state.eye_format, vk_vr_state.samples,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT,
+			&vk_vr_state.msaa_image, &vk_vr_state.msaa_view, &vk_vr_state.memory[1] );
+	}
+
+	Com_Memset( &fb, 0, sizeof( fb ) );
+	fb.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+	fb.renderPass = vk_vr_state.eye_pass;
+	fb.attachmentCount = vk_vr_state.samples > VK_SAMPLE_COUNT_1_BIT ? 3 : 2;
+	fb.pAttachments = attachments;
+	fb.width = vk_vr_state.eye_width;
+	fb.height = vk_vr_state.eye_height;
+	fb.layers = 1;
+	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+		vkVrEye_t *e = &vk_vr_state.eyes[eye];
+		for ( i = 0; i < e->info.imageCount; i++ ) {
+			e->views[i] = vk_vr_create_view( e->info.images[i], e->info.viewFormat, VK_IMAGE_ASPECT_COLOR_BIT );
+			attachments[0] = e->views[i];
+			attachments[1] = vk_vr_state.depth_view;
+			attachments[2] = vk_vr_state.msaa_view;
+			VK_CHECK( qvkCreateFramebuffer( vk.device, &fb, NULL, &e->framebuffers[i] ) );
+		}
+	}
+
+	// the 2D layer, the size of the canvas
+	vk_vr_state.canvas_ready = VR_SetCanvas( glConfig.vidWidth, glConfig.vidHeight, vk.color_format, &vk_vr_state.canvas ) ? qtrue : qfalse;
+	if ( !vk_vr_state.canvas_ready ) {
+		ri.Printf( PRINT_WARNING, "VR: no 2D layer: the HUD and menus won't show in the headset\n" );
+	}
+	vk_vr_state.dimmer_ready = VR_GetDimmerSwapchain( &vk_vr_state.dimmer ) ? qtrue : qfalse;
+
+	vk_vr_state.ready = qtrue;
+	vk_vr_state.target = -1;
+	ri.Printf( PRINT_ALL, "VR: eyes %ux%u, %ix MSAA, rendered as format %i; 2D layer %ix%i\n",
+		vk_vr_state.eye_width, vk_vr_state.eye_height, (int)vk_vr_state.samples, (int)vk_vr_state.eye_format,
+		glConfig.vidWidth, glConfig.vidHeight );
+}
+
+static void vk_vr_destroy_resources( void )
+{
+	uint32_t eye, i;
+
+	if ( !vk_vr_state.ready ) {
+		return;
+	}
+	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+		vkVrEye_t *e = &vk_vr_state.eyes[eye];
+		for ( i = 0; i < VR_MAX_SWAPCHAIN_IMAGES; i++ ) {
+			if ( e->framebuffers[i] != VK_NULL_HANDLE ) {
+				qvkDestroyFramebuffer( vk.device, e->framebuffers[i], NULL );
+			}
+			if ( e->views[i] != VK_NULL_HANDLE ) {
+				qvkDestroyImageView( vk.device, e->views[i], NULL );
+			}
+		}
+	}
+	if ( vk_vr_state.depth_view ) qvkDestroyImageView( vk.device, vk_vr_state.depth_view, NULL );
+	if ( vk_vr_state.depth_image ) qvkDestroyImage( vk.device, vk_vr_state.depth_image, NULL );
+	if ( vk_vr_state.msaa_view ) qvkDestroyImageView( vk.device, vk_vr_state.msaa_view, NULL );
+	if ( vk_vr_state.msaa_image ) qvkDestroyImage( vk.device, vk_vr_state.msaa_image, NULL );
+	for ( i = 0; i < 2; i++ ) {
+		if ( vk_vr_state.memory[i] ) qvkFreeMemory( vk.device, vk_vr_state.memory[i], NULL );
+	}
+	if ( vk_vr_state.eye_pass ) qvkDestroyRenderPass( vk.device, vk_vr_state.eye_pass, NULL );
+	if ( vk_vr_state.main_resume ) qvkDestroyRenderPass( vk.device, vk_vr_state.main_resume, NULL );
+
+	Com_Memset( &vk_vr_state, 0, sizeof( vk_vr_state ) );
+	vk_vr_state.target = -1;
+}
+
+/*
+Called by the backend before it draws: target -1 = the 2D canvas (main pass), 0/1 = that eye.
+Returns qfalse when the eye has no image this frame (draw nothing).
+*/
+qboolean vk_vr_set_target( int target )
+{
+	if ( !vk_vr || !vk_vr_state.ready ) {
+		return target < 0 ? qtrue : qfalse;
+	}
+	if ( target == vk_vr_state.target ) {
+		return qtrue;
+	}
+
+	if ( target >= 0 ) {
+		const int index = VR_GetEyeImageIndex( target );
+		if ( index < 0 || (uint32_t)index >= vk_vr_state.eyes[target].info.imageCount ) {
+			return qfalse;
+		}
+		vk_end_render_pass();
+		vk.renderPassIndex = RENDER_PASS_VR_EYE;
+		vk.renderWidth = vk_vr_state.eye_width;
+		vk.renderHeight = vk_vr_state.eye_height;
+		vk.renderScaleX = vk.renderScaleY = 1.0f;
+		vk_begin_render_pass( vk_vr_state.eye_pass, vk_vr_state.eyes[target].framebuffers[index], qtrue,
+			vk.renderWidth, vk.renderHeight );
+		vk_vr_state.eye_written[target] = qtrue;
+		vk_vr_state.eye_index[target] = index;
+	} else {
+		vk_end_render_pass();
+		vk.renderPassIndex = RENDER_PASS_MAIN;
+		vk.renderWidth = glConfig.vidWidth;
+		vk.renderHeight = glConfig.vidHeight;
+		vk.renderScaleX = vk.renderScaleY = 1.0f;
+		vk_begin_render_pass( vk_vr_state.main_resume, vk.framebuffers.main[ vk.cmd->swapchain_image_index ], qtrue,
+			vk.renderWidth, vk.renderHeight );
+	}
+	// viewport, scissor and depth range are set again for the new pass
+	vk.cmd->depth_range = DEPTH_RANGE_COUNT;
+	Com_Memset( &vk.cmd->scissor_rect, 0, sizeof( vk.cmd->scissor_rect ) );
+	vk_vr_state.target = target;
+	return qtrue;
+}
+
+static void vk_vr_begin_frame( void )
+{
+	vk_vr_state.target = -1;
+	vk_vr_state.eye_written[0] = vk_vr_state.eye_written[1] = qfalse;
+	vk_vr_state.canvas_written = qfalse;
+}
+
 static void vk_vr_image_barrier( VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
 	VkPipelineStageFlags srcStage, VkAccessFlags srcAccess, VkPipelineStageFlags dstStage, VkAccessFlags dstAccess )
 {
@@ -8548,68 +9012,229 @@ static void vk_vr_image_barrier( VkImage image, VkImageLayout oldLayout, VkImage
 	qvkCmdPipelineBarrier( vk.cmd->command_buffer, srcStage, dstStage, 0, 0, NULL, 0, NULL, 1, &barrier );
 }
 
-static void vk_vr_copy_eyes( void )
+/*
+vr_screenshot (debugging, vr_debugCapture 1): the raw bytes of both eye images and of the
+canvas, copied into a host buffer in the frame's command buffer and written as TGA files
+(screenshots/vr_left.tga, vr_right.tga, vr_canvas.tga) once the frame has finished.
+*/
+void vk_vr_request_capture( void ) {
+	if ( vk_vr && vk_vr_state.ready && vk_vr_state.capture == 0 ) {
+		vk_vr_state.capture = 1;
+	}
+}
+
+static void vk_vr_capture_record( void )
 {
-	const VkImage src = vk.swapchain_images[ vk.cmd->swapchain_image_index ];
-	const int32_t halfWidth = (int32_t)vk_vr_swapchain_extent.width / 2;
-	const int32_t height = (int32_t)vk_vr_swapchain_extent.height;
-	vrEyeImage_t eyeImage;
-	VkImageBlit region;
+	const VkDeviceSize eyeBytes = (VkDeviceSize)vk_vr_state.eye_width * vk_vr_state.eye_height * 4;
+	const VkDeviceSize canvasBytes = (VkDeviceSize)glConfig.vidWidth * glConfig.vidHeight * 4;
+	VkBufferCreateInfo bdesc;
+	VkMemoryRequirements reqs;
+	VkMemoryAllocateInfo alloc;
+	VkBufferImageCopy region;
 	int eye;
 
-	if ( halfWidth <= 0 || height <= 0 ) {
+	if ( !vk_vr_eyes_written() ) {
+		return;	// try again next frame
+	}
+
+	Com_Memset( &bdesc, 0, sizeof( bdesc ) );
+	bdesc.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+	bdesc.size = eyeBytes * 2 + canvasBytes;
+	bdesc.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	bdesc.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	VK_CHECK( qvkCreateBuffer( vk.device, &bdesc, NULL, &vk_vr_state.capture_buffer ) );
+	qvkGetBufferMemoryRequirements( vk.device, vk_vr_state.capture_buffer, &reqs );
+	Com_Memset( &alloc, 0, sizeof( alloc ) );
+	alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+	alloc.allocationSize = reqs.size;
+	alloc.memoryTypeIndex = find_memory_type( reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );
+	VK_CHECK( qvkAllocateMemory( vk.device, &alloc, NULL, &vk_vr_state.capture_memory ) );
+	VK_CHECK( qvkBindBufferMemory( vk.device, vk_vr_state.capture_buffer, vk_vr_state.capture_memory, 0 ) );
+
+	Com_Memset( &region, 0, sizeof( region ) );
+	region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	region.imageSubresource.layerCount = 1;
+	region.imageExtent.depth = 1;
+
+	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+		const VkImage image = vk_vr_state.eyes[eye].info.images[ vk_vr_state.eye_index[eye] ];
+		vk_vr_image_barrier( image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT );
+		region.bufferOffset = eyeBytes * eye;
+		region.imageExtent.width = vk_vr_state.eye_width;
+		region.imageExtent.height = vk_vr_state.eye_height;
+		qvkCmdCopyImageToBuffer( vk.cmd->command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			vk_vr_state.capture_buffer, 1, &region );
+		vk_vr_image_barrier( image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT );
+	}
+
+	vk_vr_image_barrier( vk.color_image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT );
+	region.bufferOffset = eyeBytes * 2;
+	region.imageExtent.width = glConfig.vidWidth;
+	region.imageExtent.height = glConfig.vidHeight;
+	qvkCmdCopyImageToBuffer( vk.cmd->command_buffer, vk.color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		vk_vr_state.capture_buffer, 1, &region );
+	vk_vr_image_barrier( vk.color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT );
+
+	vk_vr_state.capture = 2;
+}
+
+static void vk_vr_capture_write_tga( const char *name, const byte *rgba, uint32_t width, uint32_t height,
+	VkFormat format, qboolean keepAlpha )
+{
+	const qboolean bgra = ( format == VK_FORMAT_B8G8R8A8_UNORM || format == VK_FORMAT_B8G8R8A8_SRGB );
+	const int bpp = keepAlpha ? 4 : 3;
+	const int size = 18 + width * height * bpp;
+	byte *out = ri.Hunk_AllocateTempMemory( size );
+	uint32_t x, y;
+	byte *p;
+
+	Com_Memset( out, 0, 18 );
+	out[2] = 2;		// uncompressed true colour
+	out[12] = width & 255;
+	out[13] = width >> 8;
+	out[14] = height & 255;
+	out[15] = height >> 8;
+	out[16] = bpp * 8;
+	out[17] = 0x20 | ( keepAlpha ? 8 : 0 );	// top-left origin
+	p = out + 18;
+	for ( y = 0; y < height; y++ ) {
+		const byte *row = rgba + (size_t)y * width * 4;
+		for ( x = 0; x < width; x++, row += 4 ) {
+			// TGA is BGR(A)
+			*p++ = bgra ? row[0] : row[2];
+			*p++ = row[1];
+			*p++ = bgra ? row[2] : row[0];
+			if ( keepAlpha ) {
+				*p++ = row[3];
+			}
+		}
+	}
+	ri.FS_WriteFile( name, out, size );
+	ri.Hunk_FreeTempMemory( out );
+	ri.Printf( PRINT_ALL, "Wrote %s\n", name );
+}
+
+// after the submit: wait, then write the files
+static void vk_vr_capture_finish( void )
+{
+	const VkDeviceSize eyeBytes = (VkDeviceSize)vk_vr_state.eye_width * vk_vr_state.eye_height * 4;
+	void *data;
+
+	if ( vk_vr_state.capture != 2 ) {
+		return;
+	}
+	vk_vr_state.capture = 0;
+	qvkQueueWaitIdle( vk.queue );
+	if ( qvkMapMemory( vk.device, vk_vr_state.capture_memory, 0, VK_WHOLE_SIZE, 0, &data ) == VK_SUCCESS ) {
+		vk_vr_capture_write_tga( "screenshots/vr_left.tga", (const byte *)data, vk_vr_state.eye_width, vk_vr_state.eye_height,
+			vk_vr_state.eye_format, qfalse );
+		vk_vr_capture_write_tga( "screenshots/vr_right.tga", (const byte *)data + eyeBytes, vk_vr_state.eye_width, vk_vr_state.eye_height,
+			vk_vr_state.eye_format, qfalse );
+		vk_vr_capture_write_tga( "screenshots/vr_canvas.tga", (const byte *)data + eyeBytes * 2, glConfig.vidWidth, glConfig.vidHeight,
+			vk.color_format, qtrue );
+		qvkUnmapMemory( vk.device, vk_vr_state.capture_memory );
+	}
+	qvkDestroyBuffer( vk.device, vk_vr_state.capture_buffer, NULL );
+	qvkFreeMemory( vk.device, vk_vr_state.capture_memory, NULL );
+	vk_vr_state.capture_buffer = VK_NULL_HANDLE;
+	vk_vr_state.capture_memory = VK_NULL_HANDLE;
+}
+
+// after the last render pass of the frame: the canvas into the 2D layer, and the dimmer fill
+static void vk_vr_end_frame( void )
+{
+	int index;
+	float alpha;
+
+	if ( !vk_vr || !vk_vr_state.ready ) {
 		return;
 	}
 
-	// the window image leaves its last render pass in PRESENT_SRC
-	vk_vr_image_barrier( src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT );
+	if ( vk_vr_state.capture == 1 ) {
+		vk_vr_capture_record();
+	}
 
-	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
-		if ( !VR_GetEyeImage( eye, &eyeImage ) ) {
-			continue;
-		}
+	index = VR_GetCanvasImageIndex();
+	if ( vk_vr_state.canvas_ready && index >= 0 && (uint32_t)index < vk_vr_state.canvas.imageCount ) {
+		const VkImage dst = vk_vr_state.canvas.images[ index ];
+		VkImageCopy region;
 
-		// an acquired eye image is in COLOR_ATTACHMENT_OPTIMAL; it's overwritten whole
-		vk_vr_image_barrier( eyeImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
-			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT );
+		// a raw copy: the UNORM canvas' bytes land in the sRGB layer image as they are
+		vk_vr_image_barrier( vk.color_image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT );
+		vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT );
 
 		Com_Memset( &region, 0, sizeof( region ) );
 		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		region.srcSubresource.layerCount = 1;
-		region.srcOffsets[0].x = eye * halfWidth;
-		region.srcOffsets[1].x = eye * halfWidth + halfWidth;
-		region.srcOffsets[1].y = height;
-		region.srcOffsets[1].z = 1;
-		region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		region.dstSubresource.layerCount = 1;
-		region.dstOffsets[1].x = (int32_t)eyeImage.width;
-		region.dstOffsets[1].y = (int32_t)eyeImage.height;
-		region.dstOffsets[1].z = 1;
-		qvkCmdBlitImage( vk.cmd->command_buffer, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-			eyeImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR );
+		region.dstSubresource = region.srcSubresource;
+		region.extent.width = vk_vr_state.canvas.width;
+		region.extent.height = vk_vr_state.canvas.height;
+		region.extent.depth = 1;
+		qvkCmdCopyImage( vk.cmd->command_buffer, vk.color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
 
-		vk_vr_image_barrier( eyeImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
 			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT );
-		vk_vr_eyes_written = qtrue;
+		vk_vr_image_barrier( vk.color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT );
+		vk_vr_state.canvas_written = qtrue;
 	}
 
-	vk_vr_image_barrier( src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0 );
+	index = VR_GetDimmerImageIndex( &alpha );
+	if ( vk_vr_state.dimmer_ready && index >= 0 && (uint32_t)index < vk_vr_state.dimmer.imageCount ) {
+		const VkImage dst = vk_vr_state.dimmer.images[ index ];
+		VkClearColorValue color;
+		VkImageSubresourceRange range;
+
+		// premultiplied translucent black
+		Com_Memset( &color, 0, sizeof( color ) );
+		color.float32[3] = alpha;
+		Com_Memset( &range, 0, sizeof( range ) );
+		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		range.levelCount = 1;
+		range.layerCount = 1;
+		vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT );
+		qvkCmdClearColorImage( vk.cmd->command_buffer, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range );
+		vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT );
+	}
 }
 
 qboolean vk_vr_active( void ) {
 	return vk_vr;
 }
 
-qboolean vk_vr_take_eyes_written( void ) {
-	qboolean written = vk_vr_eyes_written;
-	vk_vr_eyes_written = qfalse;
-	return written;
+qboolean vk_vr_ready( void ) {
+	return vk_vr && vk_vr_state.ready;
+}
+
+qboolean vk_vr_eyes_written( void ) {
+	return vk_vr_state.eye_written[0] && vk_vr_state.eye_written[1];
+}
+
+qboolean vk_vr_canvas_written( void ) {
+	return vk_vr_state.canvas_written;
+}
+
+VkSampleCountFlagBits vk_vr_samples( void ) {
+	return vk_vr_state.samples;
+}
+
+VkRenderPass vk_vr_eye_pass( void ) {
+	return vk_vr_state.eye_pass;
 }
 #endif // EF_VR
 
@@ -8684,9 +9309,7 @@ void vk_end_frame( void )
 	vk_end_render_pass();
 
 #ifdef EF_VR
-	if ( vk_vr && vk.cmd->swapchain_image_acquired && VR_FrameActive() ) {
-		vk_vr_copy_eyes();
-	}
+	vk_vr_end_frame();
 #endif
 
 	VK_CHECK( qvkEndCommandBuffer( vk.cmd->command_buffer ) );
@@ -8745,6 +9368,9 @@ void vk_end_frame( void )
 	}
 
 	VK_CHECK( qvkQueueSubmit( vk.queue, 1, &submit_info, vk.cmd->rendering_finished_fence ) );
+#ifdef EF_VR
+	vk_vr_capture_finish();
+#endif
 	vk.cmd->waitForFence = qtrue;
 
 	// presentation may take undefined time to complete, we can't measure it in a reliable way
@@ -9092,6 +9718,12 @@ void vk_read_pixels( byte *buffer, uint32_t width, uint32_t height )
 qboolean vk_bloom( void )
 {
 	uint32_t i;
+
+#ifdef EF_VR
+	if ( vk_vr ) {
+		return qfalse;	// no full-screen post passes in VR (the world isn't in the main pass)
+	}
+#endif
 
 	if ( vk.renderPassIndex == RENDER_PASS_SCREENMAP )
 	{

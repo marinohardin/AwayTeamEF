@@ -729,7 +729,7 @@ typedef struct {
 #ifdef EF_VR
 	// a VR eye view: the projection comes from these tangents (OpenXR's asymmetric field of
 	// view: left, right, up, down; left and down normally negative) instead of fovX/fovY
-	qboolean	vrEye;
+	int			vrEye;			// 0 = not an eye view, else the eye + 1 (1 = left, 2 = right)
 	float		vrTan[4];
 #endif
 } viewParms_t;
@@ -1396,9 +1396,11 @@ extern cvar_t	*r_stereoSeparation;			// separation of cameras for stereo renderi
 #ifdef EF_VR
 extern cvar_t	*vr_enable;						// 1 = use an OpenXR headset when there is one (latched)
 extern cvar_t	*vr_worldScale;					// game units per metre of head movement
+extern cvar_t	*vr_msaa;						// eye MSAA samples (latched)
 // tr_vr.c
 void R_VR_Register( void );
 void R_VR_Print( int isError, const char *msg );
+void R_VR_SetOptions( void );
 void R_VR_BeginFrame( void );
 void R_VR_EndFrame( void );
 int  R_VR_SceneEyes( const refdef_t *fd );
