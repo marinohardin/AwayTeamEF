@@ -18,6 +18,8 @@
 // The game sees each player's buttons once a game frame (ClientThink_real). The guest's commands
 // carry every press made since its last one, but a late packet can leave one host frame without a
 // command (no buttons): player 2's hold survives a single empty frame.
+//
+// Use with a strafe leans (bg_pangles.cpp); a press that leans does neither of the two.
 
 #include "g_local.h"
 #include "g_functions.h"
@@ -269,6 +271,24 @@ void COOP_UseButtons( gentity_t *ent, usercmd_t *ucmd )
 			}
 			u->noHold = qfalse;
 		}
+		return;
+	}
+
+	// Use with a strafe is the lean (PM_UpdateViewAngles), and while the player leans, and for a
+	// moment after, the game's own Use is off (leanStopDebounceTime). A press that leans is no tap
+	// and no teleport hold: leaning for a while must not throw player 2 to player 1.
+	if ( ent->client->ps.leanStopDebounceTime )
+	{
+		if ( !u->held )
+		{
+			u->pressTime = level.time;
+		}
+		u->held = qtrue;
+		u->gap = 0;
+		u->pressUsable = qtrue;	// not a tap
+		u->noHold = qtrue;		// not a hold, until Use is let go
+		u->lastTap = 0;
+		COOP_HoldCancel( u );
 		return;
 	}
 
