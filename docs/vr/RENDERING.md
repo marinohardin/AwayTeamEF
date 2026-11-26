@@ -1,9 +1,10 @@
 # Quest VR: rendering design
 
-Status: spike 1 (2026-11-26). The OpenXR plumbing and the renderer hooks are in the tree behind
-the CMake option `EF_VR` (off by default). It compiles for macOS and Android arm64. It has not yet run
-against an OpenXR runtime: there is no headset yet, and the Meta XR Simulator isn't installed.
-See [PLAN.md](PLAN.md) for the goal and the phases.
+Status: phase 2, eye rendering (2026-11-26). Everything is behind the CMake option `EF_VR` (off by
+default) and the latched cvar `vr_enable`. The world renders straight into the OpenXR eye images, and
+the 2D pass is a quad layer. It runs in the Meta XR Simulator on macOS (Quest 3 profile) at the
+72 Hz display rate; it has not yet run on a headset. See [PLAN.md](PLAN.md) for the goal and the phases,
+and [QUEST.md](QUEST.md) for the APK and controller input.
 
 ## Where the code is
 
@@ -12,7 +13,9 @@ See [PLAN.md](PLAN.md) for the goal and the phases.
 | OpenXR headers | `deps/openxr/include/openxr` | Khronos OpenXR-SDK `release-1.1.65`, Apache-2.0 (`deps/openxr/LICENSE`). Headers only |
 | OpenXR module | `EFAndroid-SP/app/jni/efcode/vr/` (`vr.h`, `vr_openxr.c`, `CMakeLists.txt`) | Opens the loader at runtime, then runs the instance, system, session, space, swapchain and frame loop. Knows nothing about the game |
 | Renderer glue | `renderervk/tr_vr.c` | cvars, the per-frame calls, per-eye view setup |
-| Renderer hooks | `renderervk/vk.c`, `tr_main.c`, `tr_scene.c`, `tr_cmds.c`, `tr_init.c`, `tr_local.h`, `vk.h` | All inside `#ifdef EF_VR` |
+| Renderer hooks | `renderervk/vk.c`, `tr_main.c`, `tr_scene.c`, `tr_cmds.c`, `tr_backend.c`, `tr_image.c`, `tr_init.c`, `tr_local.h`, `vk.h` | All inside `#ifdef EF_VR` |
+| UI state | `client/cl_scrn.c` | Sets the read-only cvar `vr_uiState` each frame (menu up, cinematic playing). No game-module change |
+| Desktop loader | `macos/build-openxr-loader.sh` | Builds the Khronos loader as a dylib for simulator tests |
 | Build switch | `option(EF_VR ...)` in `EFAndroid-SP/app/jni/engine/CMakeLists.txt` | Adds `efcode/vr` as the `ef_vr` library. Linking it defines `EF_VR` for the engine |
 
 Without `EF_VR`, every changed renderer file preprocesses to exactly the same translation unit as
@@ -31,8 +34,11 @@ normal create-info structs:
    to at least 1.1 and to the runtime's minimum.
 3. GPU choice. Uses `xrGetVulkanGraphicsDevice2KHR`; `r_device` is ignored in VR.
 4. `vk_create_device`. Calls `VR_CreateVulkanDevice` in place of `vkCreateDevice`.
-5. `vk_initialize`. Calls `VR_CreateSession` with the device's graphics queue, then the reference space
-   (STAGE, with LOCAL as the fallback) and one swapchain per eye at the recommended size.
+5. `vk_initialize`. Hands the cvars to the module (`VR_SetOptions`), then calls `VR_CreateSession`
+   with the device's graphics queue. That creates the reference space (STAGE, with LOCAL as the
+   fallback) plus a VIEW space, one swapchain per eye, the dimmer swapchain, and asks for
+   `vr_refreshRate` through `XR_FB_display_refresh_rate` (the closest offered rate). Once the
+   framebuffers exist, the renderer creates the 2D layer swapchain at the window size (`VR_SetCanvas`).
 6. If any later step fails, VR is switched off and the game carries on flat with the
    instance and device it already has.
 
@@ -46,77 +52,123 @@ now, because the eye images must be released after the frame has been submitted 
 
 ## Frames and stereo
 
-- `RE_BeginFrame` calls `VR_BeginFrame`. That polls the events (the session starts on READY), runs
-  `xrWaitFrame` and `xrBeginFrame`, gets both eye poses and FOVs from `xrLocateViews`, and acquires and waits
-  on both eye images.
-- `RE_RenderScene` draws a world scene (any scene without `RDF_NOWORLDMODEL`) once per eye
-  (`R_VR_SetupEye`):
-  - **Viewport:** the eye's half of the game's viewport, left eye on the left.
-  - **Orientation:** the body yaw comes from the game's view. Pitch and roll come only from the headset.
-    The engine converts OpenXR axes (+X right, +Y up, −Z forward) to the game's axes
-    (+X forward, +Y left, +Z up).
-  - **Origin:** the game's eye position plus this eye's offset from the recentred head origin,
-    multiplied by `vr_worldScale` game units per metre. `vr_recenter` resets the origin, and it is set
-    automatically on the first tracked frame.
-  - **Projection:** taken straight from the eye's `XrFovf` tangents (`R_VR_SetupProjection` in
-    `tr_main.c`). It is a true asymmetric frustum with matching cull planes. The game's `fov_x`/`fov_y`
-    and `r_stereoSeparation` aren't used.
-  - Both eyes share one draw-surface list, the same way portals do. Culling still runs per eye.
-- At the end of the frame, `vk_end_frame` blits each half of the window image into its eye's
-  swapchain image (`vk_vr_copy_eyes`). Then `RE_EndFrame` calls `VR_EndFrame`, which releases the
-  images and calls `xrEndFrame` with one projection layer. If the renderer dropped the frame (minimized, or a
-  geometry-buffer resize), it submits no layers.
-- The desktop window keeps presenting, so it doubles as a mirror.
+Each frame is one of three kinds (`R_VR_FrameKind` in `tr_vr.c`):
 
-**Why blit first?** It needs no new render passes or pipelines, it handles any eye size and format, and
-it proves the whole OpenXR round trip. Its costs: one full-screen copy per eye, eye
-resolution bounded by the window, and a second present that the Quest doesn't need. The next step
-renders straight into the eye images:
+| Kind | When | Eyes | 2D quad |
+|---|---|---|---|
+| Game | otherwise | fresh, both eyes | HUD: lazy follow, translucent |
+| Menu | `vr_uiState` 1 (a UI has the keys) | frozen, dimmed | menu: world-locked (or `vr_menuHeadLocked`), translucent |
+| Theater | `cg_cameraActive`, or `vr_uiState` 2 (Bink or in-game cinematic) | frozen, dimmed | big screen, opaque |
 
-1. Wrap each eye swapchain image in a framebuffer that is compatible with the main render pass
-   (`vk.render_pass.main`). For MSAA, also an eye-sized resolve target.
-2. Run the 3D pass once per eye into that framebuffer, with the full eye viewport (no halves).
-3. Drop the window swapchain on the Quest. No `vkAcquireNextImageKHR`/present happens in VR; the frame pacing
-   comes from `xrWaitFrame` alone.
+- `RE_BeginFrame` calls `VR_BeginFrame( wantEyes, dim )`. That polls the events, runs
+  `xrWaitFrame`/`xrBeginFrame`, locates both views, and acquires the 2D image every frame. The eye
+  images are acquired only for a Game frame; the dimmer image only when its alpha changes.
+- `RE_RenderScene` draws a world scene (no `RDF_NOWORLDMODEL`) once per eye in a Game frame
+  (`R_VR_SetupEye`), not at all in a Menu frame, and once, flat, into the 2D image in a Theater frame:
+  - **Viewport:** the whole eye image.
+  - **Orientation:** the body yaw comes from the game's view; pitch and roll come only from the headset.
+    OpenXR axes (+X right, +Y up, −Z forward) become the game's (+X forward, +Y left, +Z up).
+  - **Origin:** the game's eye plus this eye's offset from the recentred head origin, times
+    `vr_worldScale` game units per metre. The eye separation is the runtime's (its IPD). `vr_recenter`
+    resets the origin; it is set automatically on the first tracked frame and on a reference-space change.
+  - **Projection:** straight from the eye's `XrFovf` tangents (`R_VR_SetupProjection` in `tr_main.c`),
+    a true asymmetric frustum with matching cull planes. `fov_x`/`fov_y` and `r_stereoSeparation`
+    aren't used. On the simulator's Quest 3 profile the left eye is 54° left / 40° right and the right
+    eye the mirror, so the two eye images are framed about a quarter of their width apart; that is
+    expected.
+  - Both eyes share one draw-surface list, the same way portals do. Culling runs per eye.
+- `VR_EndFrame` releases the images and submits, in order: the projection layer (fresh views, or the
+  last fresh eye images with their old poses when frozen), the dimmer quad when dimming, then the 2D
+  quad. If the renderer dropped the frame it submits no layers.
+- The desktop window keeps presenting the 2D pass, so it doubles as a mirror of the menus and HUD.
+
+## Rendering into the eye images
+
+- **Render pass.** `RENDER_PASS_VR_EYE` (`vk.h`) is an extra render-pass slot, so pipelines are created
+  lazily for it like for the other passes. Its attachments: the eye image view (colour, or MSAA resolve
+  target), an eye-sized depth buffer, and with `vr_msaa` > 1 an eye-sized multisample colour image.
+  The two eyes share the depth and MSAA images; the passes run one after the other.
+- **Switching.** The backend calls `vk_vr_set_target( eye )` from `RB_DrawSurfs` (the view's `vrEye`) and
+  `vk_vr_set_target( -1 )` from `RB_SetGL2D`. The 2D target is the main pass's colour image, resumed by
+  a single-sample `main_resume` pass that loads it. `switchRenderPass` (the screen-map pass) is skipped
+  in VR.
+- **No full-screen post passes.** In VR: bloom off, `r_hdr 0`, screen map off, MSAA off on the main
+  (2D) pass, the gamma post-pass skipped for the eyes. `r_fbo 1` is forced, because the 2D image is the
+  main pass's colour image.
+- **Overbright.** The usual hardware-gamma overbright can't apply to eye images, so in VR the overbright
+  bits are folded into the lightmaps (`tr.overbrightBits = 0`, `R_SetColorMappings`).
+- **Desktop window.** It still presents the main image (the 2D pass) as a mirror. On the Quest the window
+  surface is a cheap 2D target; dropping it entirely is a later optimisation.
 
 ## Colour space
 
-The game's colours are gamma-encoded. The eye swapchain prefers `R8G8B8A8_UNORM`/`B8G8R8A8_UNORM`, so
-the blit keeps the values exactly. Runtimes treat UNORM images as linear, though, so on the headset the image may look washed out. That has to be checked on a
-device. There are two fixes, both small:
+The game's colours are gamma-encoded. Runtimes offer sRGB swapchains (the simulator offers only sRGB),
+and an sRGB image means the compositor decodes it. So:
 
-- **sRGB swapchain, with linear output from the gamma pass.** With `r_fbo`, the gamma post-pass
-  shader writes `pow(c, 2.2)`. The blit into an sRGB image then re-encodes it correctly.
-- **sRGB swapchain, written through a UNORM view.** Create the swapchain with
-  `XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT` and render through a UNORM image view. This fits the
-  direct-render step above.
+- Each eye swapchain is `R8G8B8A8_SRGB` (then `B8G8R8A8_SRGB`, then UNORM as a fallback), created with
+  `XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT`, and rendered through a UNORM view. The gamma-encoded values
+  land in the image unchanged and the compositor decodes them correctly.
+- The 2D layer swapchain uses the SRGB twin of the main colour format. `vk_vr_end_frame` copies the main
+  colour image into it with `vkCmdCopyImage` (same size, compatible formats, raw bits).
 
-## HUD, menus and 2D (plan; stub today)
+## The 2D layer (HUD, menus, console)
 
-Today the 2D draws still cover the whole window, so the HUD is split across the two halves. That's
-acceptable for the spike only. The plan is to send every 2D draw (HUD, menus, console, loading screens) into an
-offscreen 640×480-aspect image and show it as an OpenXR layer:
-
-- **2D target:** in VR, `RB_SetGL2D` and the `RE_StretchPic` family render into a separate colour
-  image of their own (about 1024×768), not into the eye frame. The 3D scenes that menus use
-  (`RDF_NOWORLDMODEL`: player models, HUD heads) are drawn mono into the same image.
-- **Layer:** an `XrCompositionLayerQuad`, submitted after the projection layer. Later, possibly
-  `XR_KHR_composition_layer_cylinder`.
-  - **Menus:** fixed in the world, about 2 m away and about 1.6 m wide, re-placed in front of the player when a menu
-    opens.
-  - **HUD:** fixed to the body at about 1.2 m, slightly below eye level, so it doesn't swim with every head turn.
-- **Pointer:** a controller ray hits the quad and gives 640×480 coordinates. Those go to the UI as mouse
-  positions (the SP UI) or as relative deltas (the Holomatch UI).
-- **Crosshair:** in SP, a 3D crosshair or laser on the hand ray, not the 2D one. For Holomatch, see PLAN.md (H1).
+- **Coverage.** In VR the main pass clears to alpha 0, and its blend states are adjusted so alpha means
+  coverage: a source-alpha blend writes alpha with (ONE, ONE_MINUS_SRC_ALPHA); an additive blend leaves
+  alpha alone (ZERO, ONE). The quad is then composited with
+  `XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT` over the world, so the HUD floats and the rest is
+  see-through. Opaque 2D (menu backgrounds) covers the quad. This is an approximation: additive-only
+  2D (some glows) can be invisible where nothing else covers it.
+- **Size.** The quad is `width` metres wide; its height follows the 2D image's aspect.
+- **HUD** (`vr_hudDistance` 1.8 m, `vr_hudWidth` 1.5 m, `vr_hudHeight` −0.1 m, `vr_hudFollow` 2,
+  `vr_hudFollowAngle` 30°): 0 = world-locked where it was placed, 1 = head-locked, 2 = lazy follow, the
+  default. Lazy follow keeps the HUD level and at the head's position; it turns only once the head
+  looks more than `vr_hudFollowAngle` away, then eases back (about 8 % of the gap per frame) until
+  within 2°. That keeps it readable without being glued to the eyes.
+- **Menus** (`vr_menuDistance` 2 m, `vr_menuWidth` 2 m, `vr_menuDim` 0.6, `vr_menuHeadLocked` 0): placed
+  in front of the head when the menu opens and then world-locked. The world behind is frozen (the last
+  eye images, resubmitted with their own poses, so it stays put when the head turns) and dimmed.
+- **Dimmer.** A 16×16 swapchain cleared to black with alpha = the dim value, shown as a head-locked
+  8 m × 8 m quad 1 m away between the projection and the 2D quad. It is cleared only when the value changes.
+  (`XR_KHR_composition_layer_color_scale_bias` would do this without a layer, but the simulator lacks it.)
+- **Detection.** `cl_scrn.c` sets `vr_uiState` to 1 while a UI owns the keys (the UI VM or the SP UI),
+  2 while a Bink or in-game cinematic plays, else 0. The renderer reads `cg_cameraActive` for scripted
+  cameras. No game-module change.
+- **No pillarbox bars on the HUD.** In play, `SCR_DrawScreenField` blacks out the sides before the
+  world is drawn over them (`cl_viewmode 1`). In VR the world isn't in the 2D image, so those bars
+  would be opaque slabs beside the HUD; the client skips them in play while the renderer reports
+  `vr_active 1` (a read-only cvar the renderer sets while frames go to the headset).
 
 ## Cutscenes: virtual screen
 
-- **Scripted cameras:** the cgame already publishes `cg_cameraActive`. While it is set, VR draws the
-  camera's view mono into an offscreen image and shows it on a quad about 3.5 m away (theater mode).
-  The head stays free, and the world camera never drives the head.
-- **Bink FMV:** `SCR_DrawCinematic` uses the same screen.
-- **Forced view angles** outside a camera (scripted turns, knockback) rotate the body yaw only. Screen
-  shake is scaled down or removed in VR.
+- **Scripted cameras** (`cg_cameraActive`) **and cinematics** (`vr_uiState` 2): the scene is drawn flat,
+  with the game's own camera and FOV, into the 2D image, and the 2D image is shown opaque on a big screen,
+  `vr_theaterWidth` 4.4 m wide at `vr_theaterDistance` 4 m, world-locked where the head faced when the
+  cutscene began. The world behind is frozen and dimmed to `vr_theaterDim` 0.85. The camera never drives
+  the head. `vr_cutsceneScreen 0` turns this off (cameras then render in stereo).
+- **Forced view angles** outside a camera rotate the body yaw only. Screen shake in VR is still to do.
+
+## Cvars
+
+| Cvar | Default | Notes |
+|---|---|---|
+| `vr_enable` | 1 Android, 0 desktop | latched |
+| `vr_worldScale` | 32 | game units per metre |
+| `vr_resolutionScale` | 1.0 | latched; 0.5 to 1.5 times the recommended eye size, rounded to a multiple of 8 |
+| `vr_msaa` | 4 | latched; eye MSAA samples |
+| `vr_refreshRate` | 72 | latched; Hz, the closest offered rate |
+| `vr_hudDistance`, `vr_hudWidth`, `vr_hudHeight`, `vr_hudFollow`, `vr_hudFollowAngle` | 1.8, 1.5, −0.1, 2, 30 | HUD quad |
+| `vr_menuDistance`, `vr_menuWidth`, `vr_menuHeadLocked`, `vr_menuDim` | 2.0, 2.0, 0, 0.6 | menu quad |
+| `vr_cutsceneScreen`, `vr_theaterDistance`, `vr_theaterWidth`, `vr_theaterDim` | 1, 4.0, 4.4, 0.85 | big screen |
+| `vr_uiState` | | read-only, set by the client |
+| `vr_active` | | read-only, set by the renderer: 1 while frames go to the headset |
+| `vr_debugCapture` | 0 | latched; lets `vr_screenshot` copy the eye images |
+
+Commands: `vr_recenter`; `vr_screenshot` writes `screenshots/vr_left.tga`, `vr_right.tga` and
+`vr_canvas.tga` (needs `vr_debugCapture 1`, which adds transfer-source usage to the eye swapchains).
+
+The module logs once per run the eye FOVs and separation, each session state, and every 10 s the frame
+rate, the share of fresh and frozen world frames, and the average layer count.
 
 ## World scale
 
@@ -134,13 +186,17 @@ At 72 Hz, the budget is about 13.9 ms for both eyes. The Quest 2's default eye b
 
 1. **Measure first.** Run the flat APK on the headset (phase 1), then this spike's stereo path, and read the
    GPU and CPU frame times with `xrWaitFrame` pacing.
-2. **Render straight to the eye images**, with no window swapchain and no blits (see above).
-3. **Skip the full-screen post passes in VR:** bloom and the gamma pass (the `r_fbo` path). On a tiled GPU, each
-   full-screen pass costs bandwidth.
-4. **Fixed foveation:** `XR_FB_foveation` plus `XR_FB_foveation_vulkan` (a fragment-density-map
-   image per swapchain), with level and dynamic settings from `XR_FB_foveation_configuration`.
-5. **Refresh rate:** 72 Hz first. `XR_FB_display_refresh_rate` exposes 80/90 Hz as an option once there is headroom.
-6. **Resolution scale:** a VR cvar on top of the recommended eye size, for example 0.9 to 1.2.
+2. **Render straight to the eye images.** Done: no eye blits, the 2D pass is one small copy.
+3. **Skip the full-screen post passes in VR.** Done: bloom, HDR, screen map and the gamma pass are off
+   for the eyes. Menus and cutscenes don't render the world in stereo at all (frozen projection).
+4. **Fixed foveation (planned):** `XR_FB_foveation` plus `XR_FB_foveation_vulkan` (the runtime hands a
+   fragment-density-map image per swapchain image), with the level from `XR_FB_foveation_configuration`.
+   The eye render pass then needs `VK_EXT_fragment_density_map` and the map as an extra attachment, so it
+   wasn't cheap enough for this phase. The simulator offers `XR_FB_foveation`.
+5. **Refresh rate:** done. `vr_refreshRate` 72 through `XR_FB_display_refresh_rate`; 80/90 Hz once there
+   is headroom.
+6. **Resolution scale:** done. `vr_resolutionScale` (0.5 to 1.5) on the recommended eye size. `vr_msaa`
+   2 is the next lever after it.
 7. **Multiview later:** only if profiling shows the CPU recording both eyes is the limit.
    - Option A: `VK_KHR_multiview` with one array swapchain, a two-layer render pass and
      per-view matrices in the shaders.
@@ -148,12 +204,36 @@ At 72 Hz, the budget is about 13.9 ms for both eyes. The Quest 2's default eye b
 
    Both touch every pipeline, so they wait for data.
 
+## Testing on the Mac with the Meta XR Simulator
+
+1. Build the Khronos loader once: `macos/build-openxr-loader.sh <OpenXR-SDK-Source-1.1.65> <build dir>`.
+2. Build an `EF_VR=ON` engine and app (with its own `APP_NAME` and `BUNDLE_ID`).
+3. Launch with `EF_OPENXR_LOADER=<build dir>/src/loader/libopenxr_loader.dylib` and
+   `XR_RUNTIME_JSON=<MetaXRSimulator.app>/Contents/Resources/MetaXRSimulator/meta_openxr_simulator.json`,
+   plus `+set vr_enable 1`. No system-wide runtime switch is needed. Use `+map` (not `+devmap`, which
+   starts Holomatch) or `+load`.
+4. The simulator's window shows one eye with the layers composited; `vr_screenshot` gives both eyes.
+
+Results so far (Quest 3 profile, 1680×1760 per eye, 4× MSAA, Apple M-series via MoltenVK): the session
+reaches FOCUSED, holds 70 to 72 fps at the 72 Hz display rate in play, and the HUD, menu and
+big-screen layers behave as described. With `EF_VR` built in and no runtime, or `vr_enable 0`, the game
+stays flat.
+
+## Known issues
+
+- Quitting while the simulator is attached can crash inside the simulator's own telemetry during
+  `xrDestroyInstance`. It happens after the game has shut down; not seen to affect anything else.
+- The 2D alpha is a coverage approximation (see The 2D layer).
+- Entering an eye pass twice in one frame (a second world scene, such as a portal camera view drawn
+  as its own scene) clears that eye again; the last scene wins. Not seen in SP so far.
+- Pipeline prewarming doesn't cover `RENDER_PASS_VR_EYE` yet, so the first frames compile pipelines.
+- `r_smp 1` still disables VR.
+
 ## Open questions for the headset
 
 - Does the Quest runtime accept the renderer's device features and extensions as they are? The
   device-create call goes through the runtime, which adds its own.
-- Swapchain format and sRGB behaviour (see Colour space).
-- Does the Android shell keep the window swapchain for the first test? Easiest is to keep it
-  as a mirror.
+- Swapchain format and sRGB behaviour on the real compositor (see Colour space).
+- GPU time per eye on the Quest 2 at the recommended size with 4× MSAA.
 - Which loader the APK carries: the Khronos loader `libopenxr_loader.so` from the Khronos release AAR.
   Meta documents that the Khronos loader 1.0.34 or newer works on Quest OS v62 or newer.

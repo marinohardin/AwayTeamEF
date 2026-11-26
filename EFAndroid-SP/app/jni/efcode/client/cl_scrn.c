@@ -946,9 +946,15 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 
 	// wide aspect ratio screens need to have the sides cleared
 	// unless they are displaying game renderings
-	if ( uiFullscreen || clc.state < CA_LOADING
+	if ( ( uiFullscreen || clc.state < CA_LOADING
 #ifdef USE_FLEXIBLE_DISPLAY
 	  || ( cl_flexibleDisplay->integer && ( clc.state != CA_ACTIVE || cl_viewmode->integer == 1 ) )
+#endif
+	  )
+#ifdef EF_VR
+	  // in VR the in-game 2D pass is the see-through HUD layer: the world is in the eyes, so
+	  // pillarbox bars would be opaque black slabs beside the HUD (vr_active: set by the renderer)
+	  && !( clc.state == CA_ACTIVE && !uiFullscreen && Cvar_VariableIntegerValue( "vr_active" ) )
 #endif
 	  ) {
 		if ( cls.screenXBias || cls.screenYBias ) {

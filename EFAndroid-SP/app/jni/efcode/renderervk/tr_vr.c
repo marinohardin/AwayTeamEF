@@ -40,6 +40,7 @@ static cvar_t	*vr_theaterWidth;
 static cvar_t	*vr_theaterDim;
 static cvar_t	*vr_uiState;		// set by the client: 1 = a menu is up, 2 = a cinematic plays
 static cvar_t	*vr_debugCapture;
+static cvar_t	*vr_active;		// read-only, for the client: 1 while frames go to the headset
 
 typedef enum {
 	VRF_GAME,		// the world in stereo, the HUD on its quad
@@ -119,6 +120,8 @@ void R_VR_Register( void ) {
 		"VR: how much the frozen world around the cutscene screen is darkened (0 none, 1 black)." );
 
 	vr_uiState = ri.Cvar_Get( "vr_uiState", "0", CVAR_ROM );
+	vr_active = ri.Cvar_Get( "vr_active", "0", CVAR_ROM );
+	ri.Cvar_Set( "vr_active", "0" );
 	vr_debugCapture = R_VR_Cvar( "vr_debugCapture", "0", CVAR_LATCH, "0", "1", CV_INTEGER,
 		"VR debugging: make the eye images readable for vr_screenshot. Requires vid_restart." );
 
@@ -169,6 +172,11 @@ void R_VR_BeginFrame( void ) {
 
 	r_vrFrame = qfalse;
 
+	if ( !vk_vr_ready() || glConfig.smpActive ) {
+		if ( vr_active && vr_active->integer ) {
+			ri.Cvar_Set( "vr_active", "0" );
+		}
+	}
 	if ( !vk_vr_ready() ) {
 		return;
 	}
@@ -182,6 +190,9 @@ void R_VR_BeginFrame( void ) {
 		return;
 	}
 
+	if ( !vr_active->integer ) {
+		ri.Cvar_Set( "vr_active", "1" );
+	}
 	r_vrKind = R_VR_FrameKind();
 	dim = r_vrKind == VRF_MENU ? vr_menuDim->value : r_vrKind == VRF_THEATER ? vr_theaterDim->value : 0.0f;
 	VR_BeginFrame( r_vrKind == VRF_GAME, dim );
