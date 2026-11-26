@@ -55,6 +55,16 @@ A native **Meta Quest 2** build of AwayTeamEF with full **6DoF**: head position 
 4. Does the co-op `leanofs` replicate to a flat partner? Tested with two flat copies on the Mac.
 5. Can the engine override the view and weapon in Holomatch without changing the game modules? Tested on a flat Mac build.
 
+## Status
+
+- **Spikes 1, 2 and 4 done** (2026-11-26): the renderer accepts an OpenXR-created Vulkan instance and device (compiles; not run against a runtime, [RENDERING.md](RENDERING.md)); a flat arm64 APK builds without Gradle and reaches the main menu in the emulator; the co-op lean replicates to a flat partner. Spike 3 (Meta XR Simulator, about 450 MB) waits for the owner's OK. Spike 5 is open.
+- **Phase 1 done** in the emulator: the flat APK (`android/make-apk.sh`). Not yet on the Quest.
+- **Phase 2 started** (2026-11-26): the Quest APK (`VR=1 android/make-apk.sh`, [QUEST.md](QUEST.md)):
+  - package `org.awayteamef.quest` with the Quest manifest, `EF_VR=ON`, and the Khronos OpenXR loader 1.1.65 built from source with the NDK;
+  - controller input through OpenXR actions (Touch controller, simple controller fallback): move, snap or smooth turn, fire, alternate fire, jump, crouch, use, menu, weapon cycling, menu cursor; head, aim and grip poses exposed for hand aiming;
+  - in the emulator (no OpenXR runtime) it stays flat with "no OpenXR runtime", no crash. **Not yet run on a headset.**
+  - Next: first run on the Quest 2, then render straight into the eye images, the 2D layer for HUD and menus, and aiming from the hand.
+
 ## Testing from a Mac
 
 - **Meta Spatial Simulator (arm64):** an Android virtual device in Android Studio. Checks that the APK installs and starts, as a flat app.

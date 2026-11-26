@@ -45,8 +45,11 @@ and loaded at runtime from the system `OpenAL.framework`; it is not bundled.
 |---|---|---|---|---|
 | Khronos OpenXR headers (`openxr.h`, `openxr_platform.h`, `openxr_platform_defines.h`, `openxr_loader_negotiation.h`) | OpenXR-SDK `release-1.1.65` | `deps/openxr/include/openxr` | Apache-2.0 OR MIT (SPDX header in each file); used under Apache-2.0 | `deps/openxr/LICENSE` |
 
-Headers only: no OpenXR loader is vendored or bundled. The Quest build uses the loader the
-headset provides.
+Headers only in the repository: no OpenXR loader source is vendored. The Quest APK
+(`VR=1 android/make-apk.sh`) bundles `libopenxr_loader.so`, the Khronos OpenXR loader, built from
+the OpenXR-SDK-Source `release-1.1.65` source tarball (downloaded and checksum-checked by the script),
+Apache-2.0, with its bundled jsoncpp (MIT or public domain), jnipp (MIT) and android-jni-wrappers
+(BSL-1.0). The license texts are in that tarball (`LICENSE`, `src/external/*/LICENSE`).
 
 ## 3. Shared libraries bundled in the macOS `.app`
 

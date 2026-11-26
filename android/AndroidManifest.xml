@@ -3,7 +3,7 @@
   AwayTeamEF for Android (flat, arm64-v8a). android/make-apk.sh fills in
   versionCode/versionName and the SDK levels with aapt2's - -version-code etc.
 
-  Quest build, later (kept here as comments so the flat build stays a plain phone app):
+  The Quest build has these in its own AndroidManifest-quest.xml (make-apk.sh VR=1):
     - in <manifest>:
         <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
         <uses-feature android:name="oculus.software.handtracking" android:required="false" />

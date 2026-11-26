@@ -1,0 +1,295 @@
+/*
+===========================================================================
+AwayTeamEF VR: the controller map, from vr_input.c's state to the engine's input (EF_VR only).
+
+This file is part of AwayTeamEF and is licensed under the GNU General
+Public License, version 2 or (at your option) any later version.
+===========================================================================
+
+Compiled into the engine target (an INTERFACE source of ef_vr), with the engine's own
+defines and headers. Everything goes through paths the engine already has, so the game
+modules need no change:
+
+  in play (no key catcher)
+    left stick           move: joystick axes j_side_axis / j_forward_axis (CL_JoystickMove)
+    right stick x        turn: snap (vr_turnMode 0, vr_snapTurnAngle degrees) or smooth
+                         (vr_turnMode 1, vr_turnSpeed degrees per second), on cl.viewangles
+    right trigger        +attack
+    left trigger         +altattack
+    A / B / X            +moveup (jump) / +movedown (crouch) / +use
+    right / left stick click   weapnext / weapprev
+    Y, left menu button  Escape (the in-game menu)
+  in menus and the console (any key catcher)
+    right stick          mouse cursor
+    right trigger        mouse button 1
+    left stick           arrow keys (with key repeat)
+    A                    Enter
+    B, Y, menu button    Escape
+
+A button held while play and menus swap is let go of in the mode it was pressed in, and it
+does nothing in the new mode until it is released.
+*/
+
+#include "../client/client.h"
+#include "vr_input.h"
+
+#define VR_KEYNUM_BASE		0x7000	// fake key numbers for +commands (kbutton_t tracks two keys)
+
+#define VR_TRIGGER_ON		0.55f
+#define VR_TRIGGER_OFF		0.45f
+#define VR_SNAP_ON			0.70f	// stick deflection that fires one snap turn
+#define VR_SNAP_REARM		0.35f
+#define VR_ARROW_ON			0.60f
+#define VR_ARROW_DELAY		400		// ms before an arrow key repeats
+#define VR_ARROW_REPEAT		120
+
+// logical digital inputs
+enum {
+	IN_ATTACK,
+	IN_ALTATTACK,
+	IN_JUMP,
+	IN_CROUCH,
+	IN_USE,
+	IN_WEAPNEXT,
+	IN_WEAPPREV,
+	NUM_INPUTS
+};
+
+static const struct {
+	const char	*gameCmd;		// "+x" holds (with "-x" on release); anything else is sent once
+	int			uiKey;			// key event in menus, 0 = nothing
+} vr_map[NUM_INPUTS] = {
+	{ "+attack",	K_MOUSE1 },
+	{ "+altattack",	0 },
+	{ "+moveup",	K_ENTER },
+	{ "+movedown",	K_ESCAPE },
+	{ "+use",		0 },
+	{ "weapnext",	0 },
+	{ "weapprev",	0 },
+};
+
+typedef enum { MODE_NONE, MODE_GAME, MODE_UI } vrMode_t;
+
+static struct {
+	qboolean	registered;
+	cvar_t		*turnMode;
+	cvar_t		*snapTurnAngle;
+	cvar_t		*turnSpeed;
+	cvar_t		*deadzone;
+	cvar_t		*cursorSpeed;
+
+	vrMode_t	mode;
+	int			lastTime;
+
+	qboolean	down[NUM_INPUTS];		// logical state, after the trigger thresholds
+	vrMode_t	heldIn[NUM_INPUTS];		// where its press went (MODE_NONE = nowhere)
+	qboolean	menuDown;				// Escape is held
+
+	qboolean	axesSet;
+	qboolean	snapArmed;
+	float		cursorFrac[2];
+
+	int			arrowKey;				// held arrow key, 0 = none
+	int			arrowNext;				// time of the next repeat
+} vrc;
+
+static void VR_RegisterCvars( void ) {
+	vrc.turnMode = Cvar_Get( "vr_turnMode", "0", CVAR_ARCHIVE );
+	Cvar_CheckRange( vrc.turnMode, 0, 1, qtrue );
+	vrc.snapTurnAngle = Cvar_Get( "vr_snapTurnAngle", "45", CVAR_ARCHIVE );
+	Cvar_CheckRange( vrc.snapTurnAngle, 5, 180, qfalse );
+	vrc.turnSpeed = Cvar_Get( "vr_turnSpeed", "150", CVAR_ARCHIVE );
+	Cvar_CheckRange( vrc.turnSpeed, 10, 720, qfalse );
+	vrc.deadzone = Cvar_Get( "vr_stickDeadzone", "0.25", CVAR_ARCHIVE );
+	Cvar_CheckRange( vrc.deadzone, 0, 0.9f, qfalse );
+	vrc.cursorSpeed = Cvar_Get( "vr_menuCursorSpeed", "500", CVAR_ARCHIVE );
+	Cvar_CheckRange( vrc.cursorSpeed, 50, 3000, qfalse );
+	vrc.snapArmed = qtrue;
+	vrc.registered = qtrue;
+}
+
+// dead zone, then rescaled so the edge of the zone is 0
+static float VR_Stick( float v ) {
+	float dz = vrc.deadzone->value;
+	float a = v < 0 ? -v : v;
+
+	if ( a <= dz ) {
+		return 0.0f;
+	}
+	a = ( a - dz ) / ( 1.0f - dz );
+	if ( a > 1.0f ) {
+		a = 1.0f;
+	}
+	return v < 0 ? -a : a;
+}
+
+static void VR_Key( int key, qboolean down, int time ) {
+	Com_QueueEvent( time, SE_KEY, key, down, 0, NULL );
+}
+
+static void VR_GameCmd( int input, qboolean down, int time ) {
+	const char *cmd = vr_map[input].gameCmd;
+
+	if ( cmd[0] == '+' ) {
+		Cbuf_AddText( va( "%c%s %d %d\n", down ? '+' : '-', cmd + 1, VR_KEYNUM_BASE + input, time ) );
+	} else if ( down ) {
+		Cbuf_AddText( va( "%s\n", cmd ) );
+	}
+}
+
+static void VR_SetAxes( float side, float forward, int time ) {
+	int s = (int)( side * 32767.0f );
+	int f = (int)( -forward * 32767.0f );	// stick up is forward; joystick axes are SDL's (up = negative)
+
+	Com_QueueEvent( time, SE_JOYSTICK_AXIS, j_side_axis->integer, s, 0, NULL );
+	Com_QueueEvent( time, SE_JOYSTICK_AXIS, j_forward_axis->integer, f, 0, NULL );
+	vrc.axesSet = ( s || f ) ? qtrue : qfalse;
+}
+
+static void VR_SetArrow( int key, int time ) {
+	if ( key == vrc.arrowKey ) {
+		if ( key && time >= vrc.arrowNext ) {
+			VR_Key( key, qtrue, time );		// a repeat, like a held keyboard key
+			vrc.arrowNext = time + VR_ARROW_REPEAT;
+		}
+		return;
+	}
+	if ( vrc.arrowKey ) {
+		VR_Key( vrc.arrowKey, qfalse, time );
+	}
+	vrc.arrowKey = key;
+	if ( key ) {
+		VR_Key( key, qtrue, time );
+		vrc.arrowNext = time + VR_ARROW_DELAY;
+	}
+}
+
+static void VR_Release( int input, int time ) {
+	if ( vrc.heldIn[input] == MODE_GAME ) {
+		VR_GameCmd( input, qfalse, time );
+	} else if ( vrc.heldIn[input] == MODE_UI && vr_map[input].uiKey ) {
+		VR_Key( vr_map[input].uiKey, qfalse, time );
+	}
+	vrc.heldIn[input] = MODE_NONE;
+}
+
+// let go of everything held in the old mode; buttons still down stay dead until released
+static void VR_LeaveMode( int time ) {
+	int i;
+
+	for ( i = 0; i < NUM_INPUTS; i++ ) {
+		VR_Release( i, time );
+	}
+	if ( vrc.axesSet ) {
+		VR_SetAxes( 0, 0, time );
+	}
+	VR_SetArrow( 0, time );
+	vrc.cursorFrac[0] = vrc.cursorFrac[1] = 0;
+	vrc.snapArmed = qfalse;
+}
+
+void VR_EngineInput( const vrInputState_t *in ) {
+	qboolean now[NUM_INPUTS];
+	vrMode_t mode;
+	int time = Sys_Milliseconds();
+	float dt, mx, my, tx;
+	int i;
+
+	if ( !vrc.registered ) {
+		VR_RegisterCvars();
+	}
+	dt = vrc.lastTime ? ( time - vrc.lastTime ) * 0.001f : 0.0f;
+	if ( dt < 0.0f || dt > 0.1f ) {
+		dt = 0.1f;	// after a load or a hitch: no big jump
+	}
+	vrc.lastTime = time;
+
+	// logical buttons (triggers with hysteresis)
+	now[IN_ATTACK] = in->attack > ( vrc.down[IN_ATTACK] ? VR_TRIGGER_OFF : VR_TRIGGER_ON );
+	now[IN_ALTATTACK] = in->altAttack > ( vrc.down[IN_ALTATTACK] ? VR_TRIGGER_OFF : VR_TRIGGER_ON );
+	now[IN_JUMP] = ( in->buttons & VR_BUTTON_JUMP ) != 0;
+	now[IN_CROUCH] = ( in->buttons & VR_BUTTON_CROUCH ) != 0;
+	now[IN_USE] = ( in->buttons & VR_BUTTON_USE ) != 0;
+	now[IN_WEAPNEXT] = ( in->buttons & VR_BUTTON_WEAPNEXT ) != 0;
+	now[IN_WEAPPREV] = ( in->buttons & VR_BUTTON_WEAPPREV ) != 0;
+
+	// Escape works the same everywhere: it opens the in-game menu and backs out of menus
+	if ( ( ( in->buttons & VR_BUTTON_MENU ) != 0 ) != vrc.menuDown ) {
+		vrc.menuDown = !vrc.menuDown;
+		VR_Key( K_ESCAPE, vrc.menuDown, time );
+	}
+
+	if ( !in->active ) {
+		mode = MODE_NONE;
+	} else if ( Key_GetCatcher() ) {
+		mode = MODE_UI;
+	} else {
+		mode = MODE_GAME;
+	}
+	if ( mode != vrc.mode ) {
+		VR_LeaveMode( time );
+		vrc.mode = mode;
+	}
+
+	for ( i = 0; i < NUM_INPUTS; i++ ) {
+		if ( now[i] && !vrc.down[i] ) {
+			// a fresh press goes to the current mode
+			if ( mode == MODE_GAME ) {
+				VR_GameCmd( i, qtrue, time );
+				vrc.heldIn[i] = vr_map[i].gameCmd[0] == '+' ? MODE_GAME : MODE_NONE;
+			} else if ( mode == MODE_UI && vr_map[i].uiKey ) {
+				VR_Key( vr_map[i].uiKey, qtrue, time );
+				vrc.heldIn[i] = MODE_UI;
+			}
+		} else if ( !now[i] && vrc.down[i] ) {
+			VR_Release( i, time );
+		}
+		vrc.down[i] = now[i];
+	}
+
+	mx = VR_Stick( in->move[0] );
+	my = VR_Stick( in->move[1] );
+	tx = VR_Stick( in->turn[0] );
+
+	if ( mode == MODE_GAME ) {
+		if ( mx || my || vrc.axesSet ) {
+			VR_SetAxes( mx, my, time );
+		}
+
+		if ( vrc.turnMode->integer == 1 ) {
+			cl.viewangles[YAW] -= tx * vrc.turnSpeed->value * dt;
+		} else if ( vrc.snapArmed && ( in->turn[0] > VR_SNAP_ON || in->turn[0] < -VR_SNAP_ON ) ) {
+			cl.viewangles[YAW] -= in->turn[0] > 0 ? vrc.snapTurnAngle->value : -vrc.snapTurnAngle->value;
+			vrc.snapArmed = qfalse;
+		}
+		if ( in->turn[0] < VR_SNAP_REARM && in->turn[0] > -VR_SNAP_REARM ) {
+			vrc.snapArmed = qtrue;
+		}
+	} else if ( mode == MODE_UI ) {
+		float ty = VR_Stick( in->turn[1] );
+		int dx, dy, key = 0;
+
+		// right stick: the mouse cursor (stick up = cursor up = negative y)
+		vrc.cursorFrac[0] += tx * vrc.cursorSpeed->value * dt;
+		vrc.cursorFrac[1] -= ty * vrc.cursorSpeed->value * dt;
+		dx = (int)vrc.cursorFrac[0];
+		dy = (int)vrc.cursorFrac[1];
+		if ( dx || dy ) {
+			Com_QueueEvent( time, SE_MOUSE, dx, dy, 0, NULL );
+			vrc.cursorFrac[0] -= dx;
+			vrc.cursorFrac[1] -= dy;
+		}
+
+		// left stick: arrow keys
+		if ( in->move[1] > VR_ARROW_ON ) {
+			key = K_UPARROW;
+		} else if ( in->move[1] < -VR_ARROW_ON ) {
+			key = K_DOWNARROW;
+		} else if ( in->move[0] > VR_ARROW_ON ) {
+			key = K_RIGHTARROW;
+		} else if ( in->move[0] < -VR_ARROW_ON ) {
+			key = K_LEFTARROW;
+		}
+		VR_SetArrow( key, time );
+	}
+}

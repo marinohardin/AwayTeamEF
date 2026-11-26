@@ -43,6 +43,8 @@ Public License, version 2 or (at your option) any later version.
 
 #include <math.h>
 
+#include "vr_local.h"	// controller input (vr_input.c)
+
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -57,7 +59,7 @@ void VR_SetPrint( vrPrintFunc_t print ) {
 	vr_print = print;
 }
 
-static void VR_Log( int isError, const char *fmt, ... ) {
+void VR_Log( int isError, const char *fmt, ... ) {	// also used by vr_input.c
 	char msg[1024];
 	va_list ap;
 
@@ -495,6 +497,9 @@ int VR_Init( PFN_vkGetInstanceProcAddr getInstanceProcAddr ) {
 		XR_VERSION_MAJOR( vr.graphicsReqs.minApiVersionSupported ), XR_VERSION_MINOR( vr.graphicsReqs.minApiVersionSupported ),
 		XR_VERSION_MAJOR( vr.graphicsReqs.maxApiVersionSupported ), XR_VERSION_MINOR( vr.graphicsReqs.maxApiVersionSupported ) );
 
+	// controllers: actions and bindings belong to the instance (no input is no reason to stay flat)
+	VR_Input_Init( vr.instance, qxrGetInstanceProcAddr );
+
 	vr.recenterPending = 1;
 	if ( vr.options.resolutionScale <= 0.0f ) {
 		vr.options.resolutionScale = 1.0f;
@@ -511,6 +516,7 @@ void VR_SetOptions( const vrOptions_t *options ) {
 
 void VR_Shutdown( void ) {
 	VR_DestroySession();
+	VR_Input_Shutdown();
 
 	if ( vr.instance != XR_NULL_HANDLE && qxrDestroyInstance ) {
 		qxrDestroyInstance( vr.instance );
@@ -934,6 +940,7 @@ int VR_CreateSession( VkInstance instance, VkPhysicalDevice physicalDevice, VkDe
 		return 0;
 	}
 	VR_SetRefreshRate();
+	VR_Input_AttachSession( vr.session );
 
 	VR_Log( 0, "VR: session created, waiting for the runtime to start it\n" );
 	return 1;
@@ -945,6 +952,7 @@ void VR_DestroySession( void ) {
 	if ( vr.session == XR_NULL_HANDLE ) {
 		return;
 	}
+	VR_Input_DetachSession();
 
 	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
 		VR_DestroySwapchain( &vr.swapchains[eye] );
@@ -1043,6 +1051,9 @@ static void VR_PollEvents( void ) {
 		case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
 			VR_Recenter();
 			break;
+		case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
+			VR_Input_ProfileChanged();
+			break;
 		case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
 			VR_Log( 1, "VR: OpenXR instance loss pending\n" );
 			break;
@@ -1124,6 +1135,7 @@ int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 	VR_PollEvents();
 
 	if ( !vr.sessionRunning ) {
+		VR_Input_Sync( XR_NULL_HANDLE, 0, 0 );	// let go of the controls
 		return 0;
 	}
 
@@ -1134,6 +1146,7 @@ int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 	if ( XR_FAILED( qxrWaitFrame( vr.session, &wi, &vr.frameState ) ) ) {
 		return 0;
 	}
+	VR_Input_Sync( vr.space, vr.frameState.predictedDisplayTime, vr.sessionState == XR_SESSION_STATE_FOCUSED );
 
 	memset( &bi, 0, sizeof( bi ) );
 	bi.type = XR_TYPE_FRAME_BEGIN_INFO;
