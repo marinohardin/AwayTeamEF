@@ -59,6 +59,7 @@ efgame/buildmac-coop/
 
 # ---- Android (android/make-apk.sh) ----
 /build-android/
+/android/build/
 *.apk
 *.keystore
 *.jks

@@ -9,6 +9,8 @@ cmake_minimum_required(VERSION 3.21)
 #                   SDLActivity calls its SDL_main()
 #   libefgame.so    the single-player game + cgame (efgame/), dlopen'd by the SP bridge
 #   libefui.so      the single-player ui (efgame/)
+#   (EF_VR=ON, the Quest build: the vr module inside libmain.so; make-apk.sh adds the
+#    Khronos libopenxr_loader.so beside it)
 #
 # Driven by android/make-apk.sh (no Gradle). Configure by hand with:
 #   cmake -S android -B build-android/native -G Ninja \
@@ -37,6 +39,9 @@ set(EF_SDL2COMPAT_SOURCE "" CACHE PATH "Unpacked sdl2-compat source (deps/versio
 # (bink_stub.c), as on a desktop build with EF_BINK=OFF.
 option(EF_BINK "Bink cinematics via FFmpeg (needs an Android FFmpeg; not wired up yet)" OFF)
 option(EF_VM_JIT "QVM JIT (vm_aarch64.c), as the old Android build used" ON)
+# The Quest build (make-apk.sh VR=1): OpenXR rendering and controllers (efcode/vr, the
+# renderer's EF_VR hooks) plus the shell's JNI hook (android/jni/quest_jni.c). OFF = the flat APK.
+option(EF_VR "Quest VR build: OpenXR (efcode/vr) and the renderer's VR hooks" OFF)
 
 if(NOT EXISTS "${EF_SDL3_SOURCE}/CMakeLists.txt" OR NOT EXISTS "${EF_SDL2COMPAT_SOURCE}/CMakeLists.txt")
   message(FATAL_ERROR "Set EF_SDL3_SOURCE and EF_SDL2COMPAT_SOURCE (android/make-apk.sh unpacks them)")
@@ -166,4 +171,12 @@ target_compile_definitions(main PRIVATE
   ANDROID_DATA_ROOT="/sdcard/Android/obb/${EF_ANDROID_PACKAGE}")
 target_compile_options(main PRIVATE ${EF_ENGINE_COPTS})
 target_link_libraries(main PRIVATE sp_game_bridge SDL2 android log dl m)
+if(EF_VR)
+  add_subdirectory(${EF}/vr ef_vr)
+  # ef_vr defines EF_VR for the engine and brings vr_input_engine.c along (an INTERFACE source);
+  # QuestActivity hands the JavaVM and activity to the vr module through quest_jni.c.
+  # libopenxr_loader.so is not linked: vr_openxr.c opens it at run time (make-apk.sh builds it).
+  target_sources(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/jni/quest_jni.c)
+  target_link_libraries(main PRIVATE ef_vr)
+endif()
 add_dependencies(main SDL3-shared efgame efui)
