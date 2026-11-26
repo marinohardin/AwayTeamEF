@@ -2082,6 +2082,9 @@ void R_Init( void ) {
 	R_NoiseInit();
 
 	R_Register();
+#ifdef EF_VR
+	R_VR_Register();
+#endif
 
 	max_polys = r_maxpolys->integer;
 	max_polyverts = r_maxpolyverts->integer;
@@ -2245,6 +2248,9 @@ static void RE_Shutdown( refShutdownCode_t code ) {
 	R_ShutdownCommandBuffers();
 
 	ri.Cmd_RemoveCommand( "modellist" );
+#ifdef EF_VR
+	ri.Cmd_RemoveCommand( "vr_recenter" );
+#endif
 	ri.Cmd_RemoveCommand( "screenshotBMP" );
 	ri.Cmd_RemoveCommand( "screenshotJPEG" );
 	ri.Cmd_RemoveCommand( "screenshot" );

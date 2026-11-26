@@ -512,6 +512,20 @@ void RE_RenderScene( const refdef_t *fd ) {
 
 	VectorCopy( fd->vieworg, parms.pvsOrigin );
 
+#ifdef EF_VR
+	{
+	// VR: the world view is drawn once per eye, each into its half of the frame;
+	// 2D scenes (RDF_NOWORLDMODEL: HUD heads, menu models) stay as they are
+	const int vrEyes = R_VR_SceneEyes( fd );
+	const viewParms_t vrBase = parms;
+	int vrEye;
+
+	for ( vrEye = 0; vrEye < ( vrEyes ? vrEyes : 1 ); vrEye++ ) {
+	if ( vrEyes ) {
+		R_VR_SetupEye( &parms, &vrBase, vrEye );
+	}
+#endif
+
 #ifdef USE_VULKAN
 	lastRenderCommand = tr.lastRenderCommand;
 	tr.drawSurfCmd = NULL;
@@ -553,6 +567,11 @@ void RE_RenderScene( const refdef_t *fd ) {
 		}
 
 		tr.needScreenMap = 0;
+	}
+#endif
+
+#ifdef EF_VR
+	} // per eye
 	}
 #endif
 

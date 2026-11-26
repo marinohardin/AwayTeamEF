@@ -1,6 +1,14 @@
 #include "tr_local.h"
 #include "vk.h"
 
+#ifdef EF_VR
+#include "../vr/vr.h"
+// qtrue while OpenXR owns this Vulkan instance/device (vr_enable, and VR_Init found a headset)
+static qboolean vk_vr = qfalse;
+static VkExtent2D vk_vr_swapchain_extent;	// the window swapchain's size: the source of the eye copy
+static qboolean vk_vr_eyes_written = qfalse;	// this frame's eye images were filled (VR_EndFrame submits them)
+#endif
+
 #if defined (_DEBUG)
 #if defined (_WIN32)
 #define USE_VK_VALIDATION
@@ -813,6 +821,13 @@ static void vk_create_swapchain( VkPhysicalDevice physical_device, VkDevice devi
 	if ( !vk.fboActive ) {
 		desc.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	}
+#ifdef EF_VR
+	if ( vk_vr ) {
+		// the finished frame is blitted from here into the eye images (vk_vr_copy_eyes)
+		desc.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+	}
+	vk_vr_swapchain_extent = image_extent;
+#endif
 	desc.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	desc.queueFamilyIndexCount = 0;
 	desc.pQueueFamilyIndices = NULL;
@@ -1613,6 +1628,22 @@ static void create_instance( void )
 	desc.enabledExtensionCount = extension_count;
 	desc.ppEnabledExtensionNames = extension_names;
 
+#ifdef EF_VR
+	res = VK_ERROR_INITIALIZATION_FAILED;
+	if ( vk_vr ) {
+		// OpenXR creates the instance: it adds the extensions its compositor needs
+		desc.enabledLayerCount = 0;
+		desc.ppEnabledLayerNames = NULL;
+		res = VR_CreateVulkanInstance( &desc, &vk_instance );
+		if ( res != VK_SUCCESS ) {
+			ri.Printf( PRINT_WARNING, "VR: OpenXR could not create the Vulkan instance (%s), staying flat\n", vk_result_string( res ) );
+			VR_Shutdown();
+			vk_vr = qfalse;
+			vk_instance = VK_NULL_HANDLE;
+		}
+	}
+	if ( !vk_vr ) {
+#endif
 #ifdef USE_VK_VALIDATION
 	desc.enabledLayerCount = 1;
 	desc.ppEnabledLayerNames = &validation_layer_name;
@@ -1642,6 +1673,9 @@ static void create_instance( void )
 	desc.ppEnabledLayerNames = NULL;
 
 	res = qvkCreateInstance( &desc, NULL, &vk_instance );
+#endif
+#ifdef EF_VR
+	}
 #endif
 
 	ri.Free( (void*)extension_names );
@@ -2109,6 +2143,18 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 			pNextPtr = (const void **)&storage_8bit_features.pNext;
 		}
 #endif
+#ifdef EF_VR
+		if ( vk_vr ) {
+			// OpenXR creates the device on the GPU it named; it adds the extensions it needs
+			res = VR_CreateVulkanDevice( physical_device, &device_desc, &vk.device );
+			if ( res < 0 ) {
+				ri.Printf( PRINT_WARNING, "VR: OpenXR could not create the Vulkan device (%s), staying flat\n", vk_result_string( res ) );
+				VR_Shutdown();
+				vk_vr = qfalse;
+				res = qvkCreateDevice( physical_device, &device_desc, NULL, &vk.device );
+			}
+		} else
+#endif
 		res = qvkCreateDevice( physical_device, &device_desc, NULL, &vk.device );
 		if ( res < 0 ) {
 			ri.Printf( PRINT_ERROR, "vkCreateDevice returned %s\n", vk_result_string( res ) );
@@ -2141,6 +2187,12 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 
 
 static void vk_destroy_instance( void ) {
+#ifdef EF_VR
+	if ( vk_vr ) {
+		VR_Shutdown();	// the XR instance goes before the VkInstance it made
+		vk_vr = qfalse;
+	}
+#endif
 	if ( vk_surface != VK_NULL_HANDLE ) {
 		if ( qvkDestroySurfaceKHR != NULL ) {
 			qvkDestroySurfaceKHR( vk_instance, vk_surface, NULL );
@@ -2184,6 +2236,20 @@ static void init_vulkan_library( void )
 		// Get functions that do not depend on VkInstance (vk_instance == nullptr at this point).
 		INIT_INSTANCE_FUNCTION( vkCreateInstance )
 		INIT_INSTANCE_FUNCTION( vkEnumerateInstanceExtensionProperties )
+
+#ifdef EF_VR
+		vk_vr = qfalse;
+		if ( vr_enable && vr_enable->integer ) {
+			PFN_vkGetInstanceProcAddr gipa;
+
+			// the loader's own vkGetInstanceProcAddr, for the OpenXR runtime to create through
+			gipa = (PFN_vkGetInstanceProcAddr) ri.VK_GetInstanceProcAddr( VK_NULL_HANDLE, "vkGetInstanceProcAddr" );
+			if ( gipa ) {
+				VR_SetPrint( R_VR_Print );
+				vk_vr = VR_Init( gipa ) ? qtrue : qfalse;
+			}
+		}
+#endif
 
 		// Get instance level functions.
 		create_instance();
@@ -2245,6 +2311,24 @@ static void init_vulkan_library( void )
 
 	// initial physical device index
 	device_index = r_device->integer;
+#ifdef EF_VR
+	if ( vk_vr ) {
+		// the runtime decides the GPU; r_device does not apply
+		VkPhysicalDevice xrDevice = VR_GetVulkanPhysicalDevice( vk_instance );
+		device_index = -3;
+		for ( i = 0; i < device_count; i++ ) {
+			if ( physical_devices[ i ] == xrDevice ) {
+				device_index = i;
+			}
+		}
+		if ( device_index == -3 ) {
+			ri.Printf( PRINT_WARNING, "VR: the OpenXR GPU is not in the device list, staying flat\n" );
+			VR_Shutdown();
+			vk_vr = qfalse;
+			device_index = r_device->integer;
+		}
+	}
+#endif
 
 	ri.Printf( PRINT_ALL, ".......................\nAvailable physical devices:\n" );
 	for ( i = 0; i < device_count; i++ ) {
@@ -4557,6 +4641,15 @@ void vk_initialize( void )
 
 	qvkGetDeviceQueue( vk.device, vk.queue_family_index, 0, &vk.queue );
 
+#ifdef EF_VR
+	if ( vk_vr && !VR_CreateSession( vk_instance, vk.physical_device, vk.device, vk.queue_family_index, 0 ) ) {
+		// the instance and device stay (they are ordinary Vulkan objects); only VR is off
+		ri.Printf( PRINT_WARNING, "VR: no OpenXR session, staying flat\n" );
+		VR_Shutdown();
+		vk_vr = qfalse;
+	}
+#endif
+
 	qvkGetPhysicalDeviceProperties( vk.physical_device, &props );
 	vk_saved_props = props; // keep a copy for the device-loss crash report
 
@@ -5402,6 +5495,14 @@ void vk_shutdown( refShutdownCode_t code )
 	qvkDestroyShaderModule(vk.device, vk.modules.gamma_fs, NULL);
 
 __cleanup:
+#ifdef EF_VR
+	if ( vk_vr ) {
+		if ( vk.device != VK_NULL_HANDLE ) {
+			qvkDeviceWaitIdle( vk.device );
+		}
+		VR_DestroySession();	// its swapchains belong to this device
+	}
+#endif
 	if ( vk.device != VK_NULL_HANDLE ) {
 		qvkDestroyDevice( vk.device, NULL );
 	}
@@ -8419,6 +8520,100 @@ static void vk_resize_geometry_buffer( void )
 }
 
 
+#ifdef EF_VR
+/*
+The spike's eye path: the frame is drawn into the window swapchain image as usual, the 3D view
+side by side (left eye in the left half, see R_VR_SetupEye), then each half is blitted into its
+eye's OpenXR image. The HUD and menus are still drawn over the whole window (docs/vr/RENDERING.md
+has the layer plan). Drawing straight into the eye images comes next.
+*/
+static void vk_vr_image_barrier( VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout,
+	VkPipelineStageFlags srcStage, VkAccessFlags srcAccess, VkPipelineStageFlags dstStage, VkAccessFlags dstAccess )
+{
+	VkImageMemoryBarrier barrier;
+
+	Com_Memset( &barrier, 0, sizeof( barrier ) );
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.srcAccessMask = srcAccess;
+	barrier.dstAccessMask = dstAccess;
+	barrier.oldLayout = oldLayout;
+	barrier.newLayout = newLayout;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.layerCount = 1;
+
+	qvkCmdPipelineBarrier( vk.cmd->command_buffer, srcStage, dstStage, 0, 0, NULL, 0, NULL, 1, &barrier );
+}
+
+static void vk_vr_copy_eyes( void )
+{
+	const VkImage src = vk.swapchain_images[ vk.cmd->swapchain_image_index ];
+	const int32_t halfWidth = (int32_t)vk_vr_swapchain_extent.width / 2;
+	const int32_t height = (int32_t)vk_vr_swapchain_extent.height;
+	vrEyeImage_t eyeImage;
+	VkImageBlit region;
+	int eye;
+
+	if ( halfWidth <= 0 || height <= 0 ) {
+		return;
+	}
+
+	// the window image leaves its last render pass in PRESENT_SRC
+	vk_vr_image_barrier( src, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT );
+
+	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+		if ( !VR_GetEyeImage( eye, &eyeImage ) ) {
+			continue;
+		}
+
+		// an acquired eye image is in COLOR_ATTACHMENT_OPTIMAL; it's overwritten whole
+		vk_vr_image_barrier( eyeImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT );
+
+		Com_Memset( &region, 0, sizeof( region ) );
+		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.srcSubresource.layerCount = 1;
+		region.srcOffsets[0].x = eye * halfWidth;
+		region.srcOffsets[1].x = eye * halfWidth + halfWidth;
+		region.srcOffsets[1].y = height;
+		region.srcOffsets[1].z = 1;
+		region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		region.dstSubresource.layerCount = 1;
+		region.dstOffsets[1].x = (int32_t)eyeImage.width;
+		region.dstOffsets[1].y = (int32_t)eyeImage.height;
+		region.dstOffsets[1].z = 1;
+		qvkCmdBlitImage( vk.cmd->command_buffer, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			eyeImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region, VK_FILTER_LINEAR );
+
+		vk_vr_image_barrier( eyeImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT );
+		vk_vr_eyes_written = qtrue;
+	}
+
+	vk_vr_image_barrier( src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+		VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0 );
+}
+
+qboolean vk_vr_active( void ) {
+	return vk_vr;
+}
+
+qboolean vk_vr_take_eyes_written( void ) {
+	qboolean written = vk_vr_eyes_written;
+	vk_vr_eyes_written = qfalse;
+	return written;
+}
+#endif // EF_VR
+
+
 void vk_end_frame( void )
 {
 #ifdef USE_UPLOAD_QUEUE
@@ -8487,6 +8682,12 @@ void vk_end_frame( void )
 	}
 
 	vk_end_render_pass();
+
+#ifdef EF_VR
+	if ( vk_vr && vk.cmd->swapchain_image_acquired && VR_FrameActive() ) {
+		vk_vr_copy_eyes();
+	}
+#endif
 
 	VK_CHECK( qvkEndCommandBuffer( vk.cmd->command_buffer ) );
 

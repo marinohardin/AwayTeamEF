@@ -35,6 +35,10 @@ option(EF_VM_JIT "QVM JIT (aarch64: needs MAP_JIT work on macOS; x86_64: vm_x86.
 # macos/make-app.sh, the Windows/Linux releases by the windows-x64 / linux-x64 presets
 # (CMakePresets.json); without EF_COOP the launchers never show the Co-op button (LC_COOP_BUILT).
 option(EF_COOP "Single-player co-op (experimental)" OFF)
+# VR (Meta Quest, OpenXR + Vulkan): the OpenXR module (efcode/vr) and the renderer's VR hooks.
+# OFF by default: no desktop release builds it, and without it the engine is unchanged.
+# A desktop build with it ON still renders flat unless vr_enable 1 finds an OpenXR runtime.
+option(EF_VR "VR rendering through OpenXR (Quest build, desktop VR dev builds)" OFF)
 # GOG installer extraction (sys_osx_gog.c + liblzma). On macOS the Mac launcher calls it; on
 # Windows/Linux the launcher core (efcode/launcher, target eflauncher) compiles it and links liblzma.
 if(APPLE)
@@ -352,6 +356,10 @@ endif()
 target_compile_options(efsp PRIVATE ${EF_ENGINE_COPTS})
 
 target_link_libraries(efsp PRIVATE sp_game_bridge ${EF_SDL_TARGET})
+if(EF_VR)
+  add_subdirectory(${EF}/vr ef_vr)
+  target_link_libraries(efsp PRIVATE ef_vr)	# also defines EF_VR for the engine sources
+endif()
 if(APPLE)
   target_link_libraries(efsp PRIVATE
     "-framework Cocoa" "-framework IOKit" "-framework WebKit" dl m)
