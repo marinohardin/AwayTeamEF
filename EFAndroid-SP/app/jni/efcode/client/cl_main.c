@@ -23,6 +23,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "client.h"
 #include <float.h>
+#ifdef EF_VR
+#include "../vr/vr_hm.h"
+#endif
 #include "../../sp/sp_ui.h"   // EF1 SP native UI (libefui.so) drive hooks
 #include <limits.h>
 
@@ -1448,6 +1451,10 @@ void CL_Disconnect( qboolean showMainMenu ) {
 	if ( !com_cl_running || !com_cl_running->integer ) {
 		return;
 	}
+
+#ifdef EF_VR
+	VR_HM_Restore();	// VR in Holomatch: the player's own cgame cvars back
+#endif
 
 	// shutting down the client so enter full screen ui mode
 	Cvar_Set("r_uiFullScreen", "1");
@@ -4759,6 +4766,10 @@ void CL_Shutdown(char *finalmsg, qboolean disconnect, qboolean quit)
 		return;
 	}
 	recursive = qtrue;
+
+#ifdef EF_VR
+	VR_HM_Restore();
+#endif
 
 	noGameRestart = quit;
 

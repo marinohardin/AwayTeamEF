@@ -1488,6 +1488,22 @@ unsigned VR_GetRecenterCount( void ) {
 	return vr.recenterCount;
 }
 
+// Holomatch H1 (vr_hm_aim.c): the body's yaw apart from the aim the game's view follows
+static float	vr_bodyYaw;
+static int		vr_bodyYawValid;
+
+void VR_SetBodyYaw( float yawDegrees, int valid ) {
+	vr_bodyYaw = yawDegrees;
+	vr_bodyYawValid = valid;
+}
+
+int VR_GetBodyYaw( float *yawDegrees ) {
+	if ( vr_bodyYawValid && yawDegrees ) {
+		*yawDegrees = vr_bodyYaw;
+	}
+	return vr_bodyYawValid;
+}
+
 void VR_SetDebugHeadTurn( const float quat[4] ) {
 	if ( quat ) {
 		vr.debugTurn[0] = quat[0];

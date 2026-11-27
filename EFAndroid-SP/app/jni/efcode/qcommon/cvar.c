@@ -924,6 +924,10 @@ Appends lines containing "set variable value" for all variables
 with the archive flag set to qtrue.
 ============
 */
+#ifdef EF_VR
+const char *VR_HM_ArchiveValue( const char *name, const char *resetString );	// vr/vr_hm.c
+#endif
+
 void Cvar_WriteVariables(fileHandle_t f)
 {
 	cvar_t	*var;
@@ -935,6 +939,15 @@ void Cvar_WriteVariables(fileHandle_t f)
 			continue;
 
 		if( var->flags & CVAR_ARCHIVE ) {
+#ifdef EF_VR
+			// VR in Holomatch forces a few cgame cvars: the config keeps the player's own values
+			const char *own = VR_HM_ArchiveValue( var->name, var->resetString );
+			if ( own ) {
+				Com_sprintf( buffer, sizeof( buffer ), "seta %s \"%s\"\n", var->name, own );
+				FS_Write( buffer, strlen( buffer ), f );
+				continue;
+			}
+#endif
 			// write the latched value, even if it hasn't taken effect yet
 			if ( var->latchedString ) {
 				if( strlen( var->name ) + strlen( var->latchedString ) + 10 > sizeof( buffer ) ) {

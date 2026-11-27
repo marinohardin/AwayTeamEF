@@ -363,8 +363,11 @@ void R_VR_SetupEye( viewParms_t *parms, const viewParms_t *base, int eye ) {
 	}
 	VR_GetEyeOffset( eye, offsetXr );
 
-	// body yaw; when the game looks straight up or down, the view's up vector gives it
-	if ( fabs( base->or.axis[0][0] ) + fabs( base->or.axis[0][1] ) > 0.001f ) {
+	// body yaw; when the game looks straight up or down, the view's up vector gives it. In
+	// Holomatch H1 the view follows the gun's aim, and the client says what the body's yaw is.
+	if ( VR_GetBodyYaw( &yaw ) ) {
+		yaw = DEG2RAD( yaw );
+	} else if ( fabs( base->or.axis[0][0] ) + fabs( base->or.axis[0][1] ) > 0.001f ) {
 		yaw = atan2( base->or.axis[0][1], base->or.axis[0][0] );
 	} else if ( base->or.axis[0][2] < 0 ) {
 		yaw = atan2( base->or.axis[2][1], base->or.axis[2][0] );

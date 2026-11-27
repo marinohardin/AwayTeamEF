@@ -180,6 +180,10 @@ void		VR_GetEyeOffset( int eye, float offset[3] );
 void		VR_GetHeadOrigin( float origin[3] );
 void		VR_SetHeadOrigin( const float origin[3] );
 unsigned	VR_GetRecenterCount( void );
+// Holomatch H1 (vr_hm_aim.c): the world yaw of the body, in degrees, when the game's view follows
+// the gun's aim instead. The eyes turn with it, not with the view. valid = 0: use the view's yaw.
+void		VR_SetBodyYaw( float yawDegrees, int valid );
+int			VR_GetBodyYaw( float *yawDegrees );
 // debugging (vr_debugHead): a fixed offset added to the located views, OpenXR axes, metres
 void		VR_SetDebugHeadOffset( const float offset[3] );
 // debugging (vr_debugHeadTurn): a rotation (x y z w, OpenXR axes) applied to the located views

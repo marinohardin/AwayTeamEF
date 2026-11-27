@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "client.h"
 #ifdef EF_VR
 #include "../vr/vr_move.h"
+#include "../vr/vr_hm.h"
 #endif
 #include "../../sp/sp_ui.h"   // EF1 SP native UI (libefui.so) drive hooks
 
@@ -623,6 +624,11 @@ usercmd_t CL_CreateCmd( void ) {
 
 	// store out the final values
 	CL_FinishMove( &cmd );
+
+#ifdef EF_VR
+	// VR in Holomatch: the angles aim where the hand points, the movement turned to match
+	VR_HM_Cmd( &cmd );
+#endif
 
 	// regression harness (qcommon/regress.c): scripted input in place of the keyboard and mouse
 	if ( Regress_Active() ) {

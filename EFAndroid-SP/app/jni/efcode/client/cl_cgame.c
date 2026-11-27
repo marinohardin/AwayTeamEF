@@ -22,6 +22,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cl_cgame.c  -- client system interaction with client game
 
 #include "client.h"
+#ifdef EF_VR
+#include "../vr/vr_hm.h"
+#endif
 
 #include "../botlib/botlib.h"
 
@@ -802,6 +805,9 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 #endif
 	case CG_R_RENDERSCENE:
+#ifdef EF_VR
+		VR_HM_Scene( VMA(1) );	// VR in Holomatch: the view for the aim, the laser and the dot
+#endif
 #ifdef USE_FLEXIBLE_DISPLAY
 		if ( CL_FLEX_CGAME ) {
 			refdef_t fd;
