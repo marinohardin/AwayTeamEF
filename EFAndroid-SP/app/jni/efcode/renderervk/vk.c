@@ -9096,6 +9096,27 @@ static void vk_vr_capture_record( void )
 	vk_vr_image_barrier( vk.color_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT );
 
+	{
+		// where the eyes and the 2D quad were, so a capture can be put together as the
+		// headset showed it (the quad is composited by the runtime, not in the eye images;
+		// the quad as submitted last frame)
+		vrEyeView_t v;
+		vrQuadMode_t mode;
+		float centre[3], yaw, size[2];
+		int eye;
+
+		for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+			if ( VR_GetEyeView( eye, &v ) ) {
+				ri.Printf( PRINT_ALL, "vr_screenshot eye %d: pos %.4f %.4f %.4f quat %.5f %.5f %.5f %.5f fov %.5f %.5f %.5f %.5f\n",
+					eye, v.position[0], v.position[1], v.position[2], v.orientation[0], v.orientation[1],
+					v.orientation[2], v.orientation[3], v.angleLeft, v.angleRight, v.angleUp, v.angleDown );
+			}
+		}
+		if ( VR_GetLastQuad( &mode, centre, &yaw, size ) ) {
+			ri.Printf( PRINT_ALL, "vr_screenshot quad: mode %d centre %.4f %.4f %.4f yaw %.5f size %.4f %.4f\n",
+				(int)mode, centre[0], centre[1], centre[2], yaw, size[0], size[1] );
+		}
+	}
 	vk_vr_state.capture = 2;
 }
 

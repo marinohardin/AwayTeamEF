@@ -10,6 +10,7 @@
 #include "vr_shared.h"
 
 extern int (*syscall)( int arg, ... );
+qboolean CG_WeaponSelectable( int i );	// cg_weapons.cpp
 
 vrGamePose_t	cg_vrPose;
 
@@ -49,6 +50,42 @@ void CG_VR_RefreshPose( void ) {
 	cgi_Cvar_Update( &cg_vrGunAdjust );
 	cgi_Cvar_Update( &cg_vrGunInfo );
 	cgi_Cvar_Update( &vr_leftHanded );
+	CG_VR_ReportWeapons();
+}
+
+/*
+The weapon wheel is the engine's (efcode/vr/vr_wheel.c): it is drawn on the 2D layer and picks
+with the hand in every mode, Holomatch included. Single player tells it here what the player
+may switch to, the same weapons weapnext steps through, with their HUD icons. A pick comes
+back as an ordinary "weapon <n>" command.
+*/
+void CG_VR_ReportWeapons( void ) {
+	vrWheelWeapons_t w;
+	int i;
+
+	if ( !cg.snap ) {
+		return;
+	}
+	memset( &w, 0, sizeof( w ) );
+	w.current = cg.weaponSelect;
+	w.locked = ( cg.snap->ps.pm_flags & PMF_FOLLOW ) || cg.weaponSelect == WP_BLUE_HYPO || cg.weaponSelect == WP_RED_HYPO;
+	w.dead = cg.snap->ps.stats[STAT_HEALTH] <= 0;
+	w.noAmmoIcon = cgs.media.noammoShader;
+	for ( i = FIRST_WEAPON; i <= MAX_PLAYER_WEAPONS && w.count < VR_WHEEL_MAX_WEAPONS; i++ ) {
+		if ( !( cg.snap->ps.stats[STAT_WEAPONS] & ( 1 << i ) ) ) {
+			continue;
+		}
+		w.weapon[w.count] = i;
+		w.icon[w.count] = weaponData[i].weaponIcon[0] ? cgi_R_RegisterShaderNoMip( weaponData[i].weaponIcon ) : 0;
+		w.noAmmo[w.count] = !CG_WeaponSelectable( i );
+		if ( cg_weapons[i].item && cg_weapons[i].item->pickup_name && cg_weapons[i].item->pickup_name[0] ) {
+			Q_strncpyz( w.name[w.count], cg_weapons[i].item->pickup_name, sizeof( w.name[0] ) );
+		} else if ( i == WP_IMOD ) {
+			Q_strncpyz( w.name[w.count], "I-MOD", sizeof( w.name[0] ) );	// its item has no name
+		}
+		w.count++;
+	}
+	syscall( CG_VR_SETWEAPONS, &w );
 }
 
 // body frame -> world: turn by the body's yaw, then add to the eye

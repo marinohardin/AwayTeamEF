@@ -282,8 +282,10 @@ static struct {
 	int					frozenValid;
 	XrView				frozenViews[VR_MAX_EYES];
 
-	vrQuadAnchor_t		anchors[3];		// by vrQuadMode_t
+	vrQuadAnchor_t		anchors[VR_NUM_QUAD_MODES];	// by vrQuadMode_t
 	int					lastQuadMode;	// -1 = no quad last frame
+	int					lastQuadLocal;	// it went out in vr.space (not head-locked)
+	float				lastQuadCentre[3], lastQuadYaw, lastQuadSize[2];
 
 	// head origin for VR_GetEyeOffset
 	int					recenterPending;
@@ -1656,6 +1658,20 @@ static XrSpace VR_PlaceQuad( vrQuadMode_t mode, const vrQuadPlacement_t *p, XrPo
 	return vr.space;
 }
 
+int VR_GetLastQuad( vrQuadMode_t *mode, float centre[3], float *yaw, float size[2] ) {
+	if ( vr.lastQuadMode < 0 || !vr.lastQuadLocal ) {
+		return 0;
+	}
+	*mode = (vrQuadMode_t)vr.lastQuadMode;
+	centre[0] = vr.lastQuadCentre[0];
+	centre[1] = vr.lastQuadCentre[1];
+	centre[2] = vr.lastQuadCentre[2];
+	*yaw = vr.lastQuadYaw;
+	size[0] = vr.lastQuadSize[0];
+	size[1] = vr.lastQuadSize[1];
+	return 1;
+}
+
 // a line every ~10 seconds: the frame rate the runtime paced us at, and what was shown
 static void VR_FrameStats( vrProjection_t projection, int layerCount ) {
 	static XrTime start;
@@ -1800,6 +1816,13 @@ void VR_EndFrame( const vrFrameLayers_t *layers ) {
 		quad.size.height = layers->placement.width * (float)vr.canvas.height / (float)vr.canvas.width;
 		list[layerCount++] = (const XrCompositionLayerBaseHeader *)&quad;
 		vr.lastQuadMode = (int)layers->quadMode;
+		vr.lastQuadLocal = quad.space == vr.space;
+		vr.lastQuadCentre[0] = quad.pose.position.x;
+		vr.lastQuadCentre[1] = quad.pose.position.y;
+		vr.lastQuadCentre[2] = quad.pose.position.z;
+		vr.lastQuadYaw = 2.0f * atan2f( quad.pose.orientation.y, quad.pose.orientation.w );
+		vr.lastQuadSize[0] = quad.size.width;
+		vr.lastQuadSize[1] = quad.size.height;
 	} else {
 		vr.lastQuadMode = -1;
 	}

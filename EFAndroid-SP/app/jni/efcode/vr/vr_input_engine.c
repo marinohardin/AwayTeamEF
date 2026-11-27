@@ -18,7 +18,8 @@ modules need no change:
     right trigger        +attack
     left trigger         +altattack
     A / B / X            +moveup (jump) / crouch (vr_move.c) / +use
-    right stick click    weapnext
+    right stick click    weapnext when tapped; held VR_WHEEL_HOLD ms: the weapon wheel (vr_wheel.c)
+                         until released, which picks; fire and turning wait while it's open
     left stick click     weapprev when tapped; held VR_RECENTER_HOLD ms: recentre the head
     Y, left menu button  Escape (the in-game menu)
   in play in Holomatch (VR_HM_Active; docs/vr/HOLOMATCH-H1.md §6.1), different from the above:
@@ -26,7 +27,7 @@ modules need no change:
     left grip, held      +info (the scoreboard)
     Y                    +analysis (the objectives); the left menu button is still Escape
     right stick y        weapnext (up) / weapprev (down)
-    right stick click    the last weapon (weapon <n>)
+    right stick click    tapped: the last weapon (weapon <n>); held: the weapon wheel
     left stick click     tapped: walk/run toggle (+speed); held: recentre
     vr_leftHanded swaps the grips with the hands
   in menus and the console (any key catcher)
@@ -44,6 +45,7 @@ does nothing in the new mode until it is released.
 #include "vr.h"
 #include "vr_input.h"
 #include "vr_move.h"
+#include "vr_wheel.h"
 
 #define VR_KEYNUM_BASE		0x7000	// fake key numbers for +commands (kbutton_t tracks two keys)
 
@@ -55,6 +57,7 @@ does nothing in the new mode until it is released.
 #define VR_ARROW_DELAY		400		// ms before an arrow key repeats
 #define VR_ARROW_REPEAT		120
 #define VR_RECENTER_HOLD	700		// ms the left stick is held in for a recentre
+#define VR_WHEEL_HOLD		250		// ms the right stick is held in for the weapon wheel
 
 // logical digital inputs
 enum {
@@ -99,6 +102,7 @@ static struct {
 	cvar_t		*leftHanded;
 	cvar_t		*debugHand;
 	cvar_t		*debugHandPose;
+	cvar_t		*debugWheel;
 
 	vrMode_t	mode;
 	int			lastTime;
@@ -110,6 +114,8 @@ static struct {
 	qboolean	snapArmed;
 	int			prevHeldSince;			// when the left stick click went down (in play), 0 = up
 	qboolean	prevRecentered;			// that hold already recentred
+	int			nextHeldSince;			// when the right stick click went down (in play), 0 = up
+	qboolean	fireBlocked[NUM_INPUTS];	// a trigger held across the wheel: dead until let go
 	float		cursorFrac[2];
 
 	int			arrowKey;				// held arrow key, 0 = none
@@ -144,6 +150,9 @@ static void VR_RegisterCvars( void ) {
 	vrc.debugHandPose = Cvar_Get( "vr_debugHandPose", "0.40 0.20 -0.30 0 0 0", CVAR_TEMP );
 	Cvar_SetDescription( vrc.debugHandPose, "VR debugging (vr_debugHand 2): the weapon hand as "
 		"\"forward right up pitch yaw roll\", metres from the head and degrees from the body's facing." );
+	vrc.debugWheel = Cvar_Get( "vr_debugWheel", "0", CVAR_TEMP );
+	Cvar_SetDescription( vrc.debugWheel, "VR debugging: 1 = hold the weapon wheel button (the right thumbstick "
+		"click), 0 = let go of it." );
 	vrc.snapArmed = qtrue;
 	vrc.registered = qtrue;
 }
@@ -193,10 +202,22 @@ static void VR_GameCmd( int input, qboolean down, int time ) {
 		}
 		return;
 	}
-	if ( input == IN_WEAPNEXT && vrc.hm ) {
-		// Holomatch: the last weapon
-		if ( down && vrc.lastWeapon > 0 ) {
-			Cbuf_AddText( va( "weapon %d\n", vrc.lastWeapon ) );
+	if ( input == IN_WEAPNEXT ) {
+		// a tap (on release) is weapnext, Holomatch: the last weapon; a hold opens the weapon
+		// wheel (VR_EngineInput) and letting go picks
+		if ( down ) {
+			vrc.nextHeldSince = time ? time : 1;
+		} else {
+			if ( VR_Wheel_IsOpen() ) {
+				VR_Wheel_Close( qtrue, "released" );
+			} else if ( vrc.nextHeldSince ) {
+				if ( !vrc.hm ) {
+					Cbuf_AddText( "weapnext\n" );
+				} else if ( vrc.lastWeapon > 0 ) {
+					Cbuf_AddText( va( "weapon %d\n", vrc.lastWeapon ) );
+				}
+			}
+			vrc.nextHeldSince = 0;
 		}
 		return;
 	}
@@ -239,6 +260,8 @@ static void VR_LeaveMode( int time ) {
 	int i;
 
 	vrc.prevHeldSince = 0;	// a held left stick click let go by a mode change: neither a tap nor a hold
+	vrc.nextHeldSince = 0;	// the same for the right one; an open wheel shuts without a pick
+	VR_Wheel_Reset( "left play" );
 
 	for ( i = 0; i < NUM_INPUTS; i++ ) {
 		VR_Release( i, time );
@@ -275,7 +298,7 @@ void VR_EngineInput( const vrInputState_t *in ) {
 	now[IN_JUMP] = ( in->buttons & VR_BUTTON_JUMP ) != 0;
 	now[IN_CROUCH] = ( in->buttons & VR_BUTTON_CROUCH ) != 0;
 	now[IN_USE] = ( in->buttons & VR_BUTTON_USE ) != 0;
-	now[IN_WEAPNEXT] = ( in->buttons & VR_BUTTON_WEAPNEXT ) != 0;
+	now[IN_WEAPNEXT] = ( in->buttons & VR_BUTTON_WEAPNEXT ) != 0 || vrc.debugWheel->integer;
 	now[IN_WEAPPREV] = ( in->buttons & VR_BUTTON_WEAPPREV ) != 0;
 
 	// Holomatch H1's own controller map (grips, Y, weapon cycling on the right stick)
@@ -321,12 +344,32 @@ void VR_EngineInput( const vrInputState_t *in ) {
 		vrc.mode = mode;
 	}
 
+	// the weapon wheel: the pointer and the reasons to shut it, before a release picks below.
+	// While it's open the triggers do nothing, and one still held when it shuts stays dead
+	// until let go: no shot on the release, none from a trigger pulled to pick.
+	{
+		const float stick[2] = { in->turn[0], in->turn[1] };
+		VR_Wheel_Update( stick, mode == MODE_GAME );
+	}
+	for ( i = IN_ATTACK; i <= IN_ALTATTACK; i++ ) {
+		if ( VR_Wheel_IsOpen() ) {
+			vrc.fireBlocked[i] = qtrue;
+			now[i] = qfalse;
+		} else if ( vrc.fireBlocked[i] ) {
+			if ( now[i] ) {
+				now[i] = qfalse;
+			} else {
+				vrc.fireBlocked[i] = qfalse;
+			}
+		}
+	}
+
 	for ( i = 0; i < NUM_INPUTS; i++ ) {
 		if ( now[i] && !vrc.down[i] ) {
 			// a fresh press goes to the current mode
 			if ( mode == MODE_GAME ) {
 				VR_GameCmd( i, qtrue, time );
-				vrc.heldIn[i] = ( vr_map[i].gameCmd[0] == '+' || i == IN_WEAPPREV ) ? MODE_GAME : MODE_NONE;
+				vrc.heldIn[i] = ( vr_map[i].gameCmd[0] == '+' || i == IN_WEAPPREV || i == IN_WEAPNEXT ) ? MODE_GAME : MODE_NONE;
 			} else if ( mode == MODE_UI && vr_map[i].uiKey ) {
 				VR_Key( vr_map[i].uiKey, qtrue, time );
 				vrc.heldIn[i] = MODE_UI;
@@ -350,6 +393,27 @@ void VR_EngineInput( const vrInputState_t *in ) {
 			VR_Recenter();
 			vrc.prevRecentered = qtrue;
 			Com_Printf( "VR: recentred\n" );
+		}
+
+		if ( vrc.nextHeldSince && !VR_Wheel_IsOpen() && time - vrc.nextHeldSince >= VR_WHEEL_HOLD ) {
+			// a hold, never also a tap: if the wheel can't open now the release does nothing
+			if ( VR_Wheel_Open() ) {
+				for ( i = IN_ATTACK; i <= IN_ALTATTACK; i++ ) {
+					if ( vrc.down[i] ) {
+						VR_Release( i, time );	// stop firing
+						vrc.down[i] = qfalse;
+					}
+					vrc.fireBlocked[i] = qtrue;
+				}
+			}
+			vrc.nextHeldSince = 0;
+		}
+		if ( VR_Wheel_IsOpen() ) {
+			// the right stick picks on the wheel: no turning, no Holomatch weapon cycling, and
+			// a stick still pushed when it shuts must come back to the middle first
+			vrc.snapArmed = qfalse;
+			vrc.weapArmed = qfalse;
+			tx = 0.0f;
 		}
 
 		// turning changes the body yaw only; vr_move.c turns the head origin about the head with it
