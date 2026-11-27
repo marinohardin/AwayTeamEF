@@ -43,7 +43,7 @@ DIST="$ROOT/dist"
 FINAL="$DIST/$APP_NAME.app"
 APP="$DIST/.assembling-$$.app"
 # the macOS port's own version (not the Android app's versionName)
-VERSION="${VERSION:-1.5.0}"
+VERSION="${VERSION:-1.5.1}"
 BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
 
 # ---- 1. build ---------------------------------------------------------------
@@ -58,7 +58,7 @@ if [ -z "${NO_BUILD:-}" ]; then
 		MIN_MACOS="$MIN_MACOS_TARGET" "$ROOT/macos/build-ffmpeg.sh"
 	[ -f "$DEPS/lib/pkgconfig/sdl2.pc" ] && [ "$(otool -l "$DEPS/lib/libSDL3.0.dylib" | awk '/minos/{print $2; exit}')" = "$MIN_MACOS_TARGET" ] ||
 		MIN_MACOS="$MIN_MACOS_TARGET" "$ROOT/macos/build-deps.sh"
-	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_COOP=$COOP_FLAG
+	cmake -S "$ROOT/efgame" -B "$GAME_BUILD" -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_APP_VERSION="$VERSION" -DEF_COOP=$COOP_FLAG
 	cmake --build "$GAME_BUILD" -j"$(sysctl -n hw.ncpu)"
 	cmake -S "$ROOT/EFAndroid-SP/app/jni/macos" -B "$ENGINE_BUILD" -DEF_FFMPEG_PREFIX="$FFMPEG" \
 		-DEF_DEPS_PREFIX="$DEPS" -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN_MACOS_TARGET" -DEF_APP_VERSION="$VERSION" -DEF_COOP=$COOP_FLAG

@@ -27,6 +27,7 @@ enum {
 	IDC_NAME = 240, IDC_NAMEHINT, IDC_MASTERSUM, IDC_SERVERS, IDC_LOOPBACK, IDC_LOOPHINT, IDC_CMOD, IDC_HUD, IDC_MODLABEL, IDC_NAMELABEL, IDC_INETLABEL,
 	IDC_PATH = 260, IDC_STATUS, IDC_EXPANSION, IDC_SHOW, IDC_ADD, IDC_CHANGE, IDC_VERSION,
 	IDC_GEAR = 270, IDC_DOWNLOAD, IDC_BADGE1, IDC_BADGE2, IDC_BRAND,
+	IDC_CTLRECOMMENDED = 290, IDC_CTLORIGINAL, IDC_CTLHINT, IDC_CTLLABEL,
 	IDC_SRVLAB0 = 280,	/* 280..285 server summary captions (they were IDC_SRV0 + 20 + i: 250 is IDC_INETLABEL) */
 	IDM_ABOUT = 0x8010, IDM_UPDATE, IDM_AUTOUPDATE, IDM_QUIT
 };
@@ -224,8 +225,8 @@ struct Launcher : Wnd {
 	int computeHeight( )
 	{
 		/* kept in step with build() */
-		int graphics = 18 + 256, hm = 18 + 154, files = 18 + 100;
-		return 30 + 62 + 20 + 120 + 14 + graphics + 14 + hm + 14 + files + 18 + 30 + 18;
+		int graphics = 18 + 256, controls = 18 + 72, hm = 18 + 154, files = 18 + 100;
+		return 30 + 62 + 20 + 120 + 14 + graphics + 14 + controls + 14 + hm + 14 + files + 18 + 30 + 18;
 	}
 
 	void build( )
@@ -336,6 +337,21 @@ struct Launcher : Wnd {
 			label( cx, sy, 400, 44, tip.c_str( ), 11, 400, R_TEXT2, DT_WORDBREAK, 320 );
 		}
 		y = gfxBoxTop + gfxBoxH + 14;
+
+		/* controls group: key bindings for both modes */
+		{
+			int cTop = y + 18, cH = 72;
+			addGroup( MX, cTop, CW, cH, "CONTROLS" );
+			int gy = cTop + 10;
+			label( lx, gy + 4, lw, 18, "Key bindings:", 13, 400, R_TEXT, DT_RIGHT | DT_SINGLELINE, IDC_CTLLABEL );
+			button( cx, gy, 140, 24, "Use Recommended", IDC_CTLRECOMMENDED, false, 12 );
+			button( cx + 140 + 8, gy, 130, 24, "Restore Original", IDC_CTLORIGINAL, false, 12 );
+			setTooltip( hwnd, ctl( IDC_CTLRECOMMENDED ), "WASD to move, the mouse to aim and fire, E to use, Space/X to jump, F5 quicksave, etc., in single player and Holomatch" );
+			setTooltip( hwnd, ctl( IDC_CTLORIGINAL ), "The key bindings the game came with, in single player and Holomatch" );
+			gy += 24 + 5;
+			label( cx, gy, 400, 30, "", 11, 400, R_TEXT2, DT_WORDBREAK, IDC_CTLHINT );
+			y = cTop + cH + 14;
+		}
 
 		/* holomatch group */
 		int hbTop = y + 18, hbH = 154;
@@ -450,6 +466,7 @@ struct Launcher : Wnd {
 		EnableWindow( ctl( IDC_CMOD ), cm );
 		setRole( ctl( IDC_MODLABEL ), cm ? R_TEXT : R_TEXT3 );
 		syncHud( );
+		syncControls( );
 		str hint = mode == 1 ? "Shown to other players in Holomatch." : mode == 2 ? fmt( "Your name when you use Play on This %s.", PLATFORM_NOUN ) : "Used when you play Holomatch.";
 		setText( ctl( IDC_NAMEHINT ), hint );
 		setText( ctl( IDOK ), mode == 0 ? "Play" : mode == 1 ? "Play Holomatch" : "Start Server" );
@@ -464,6 +481,33 @@ struct Launcher : Wnd {
 	{
 		for ( int i = 0; i < 8; i++ ) showCtl( 300 + i, on );
 		showCtl( 320, !on );
+	}
+
+	void syncControls( )
+	{
+		setText( ctl( IDC_CTLHINT ), lc_controls_recommended_in_use( G.homeBase.c_str( ) ) ?
+			"The recommended key bindings are in use, in single player and Holomatch. Change them in the game's Controls menu." :
+			"Sets the keys of single player and Holomatch alike. Your other settings stay as they are." );
+	}
+
+	void applyControls( lc_controls_set set, bool ask )
+	{
+		const bool rec = set == LC_CONTROLS_RECOMMENDED;
+		char err[512];
+		if ( ask && Alert( hwnd, rec ? "Use the recommended key bindings?" : "Restore the game's original key bindings?",
+				rec ? "WASD to move, the mouse to aim and fire, E to use, Space/X to jump, F5 quicksave, etc. "
+					"They replace your key bindings in single player and Holomatch; your other settings stay as they are."
+					: "The keys the game came with replace your key bindings in single player and Holomatch; "
+					"your other settings stay as they are.",
+				{ rec ? "Use Recommended" : "Restore Original", "Cancel" }, 0, 1 ) != 0 )
+			return;
+		if ( lc_controls_apply( G.homeBase.c_str( ), set, err, sizeof err ) )
+			lc_log( "Launcher: %s key bindings in both configs", rec ? "recommended" : "original" );
+		else if ( ask )
+			Alert( hwnd, "The key bindings couldn't be changed.", err, { "OK" }, 1 );
+		else
+			lc_log( "Launcher: %s", err );
+		syncControls( );
 	}
 
 	void syncHud( )
@@ -536,7 +580,7 @@ struct Launcher : Wnd {
 			if ( nMissing > 0 ) {
 				str nm = names[0]; if ( nMissing > 1 ) nm += str( " and " ) + names[1];
 				statusText = fmt( "Patch 1.2 missing \xC2\xB7 add %s with Add Game Files\xE2\x80\xA6", nm.c_str( ) );
-				statusTip = fmt( "These game files are from the original CD (version 1.0). The game also needs %s from the 1.1 and 1.2 patches: copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) with Add Game Files\xE2\x80\xA6.", nm.c_str( ) );
+				statusTip = fmt( "These game files are from the original CD (version 1.0). The game also needs %s from the 1.1 and 1.2 patches: copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) or the Expansion Pack's CD or its image with Add Game Files\xE2\x80\xA6.", nm.c_str( ) );
 				stGlyph = G_TRIANGLE; stRole = R_ORANGE;
 				lc_log( "Launcher: patch files missing (%s) in \"%s\"", nm.c_str( ), G.dataFolder.c_str( ) );
 			} else {
@@ -548,7 +592,7 @@ struct Launcher : Wnd {
 			expText = exp ? "Expansion Pack found \xC2\xB7 Virtual Voyager and its Holomatch maps" : "No Expansion Pack \xC2\xB7 add its files to play Virtual Voyager and its maps";
 		} else {
 			folderPathText = "No game files yet";
-			statusText = "Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe.";
+			statusText = "Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso.";
 			statusTip.clear(); stGlyph = G_TRIANGLE; stRole = R_ORANGE; exGlyph = -1;
 		}
 		setText( ctl( IDC_PATH ), folderPathText ); setTooltip( hwnd, ctl( IDC_PATH ), G.dataFolder.c_str( ) );
@@ -861,6 +905,8 @@ struct Launcher : Wnd {
 		case IDC_SERVERS: showMasters( hwnd ); syncMasters( ); break;
 		case IDC_LOOPBACK: setLoopbackFix( SendMessageW( ctl( IDC_LOOPBACK ), BM_GETCHECK, 0, 0 ) == BST_CHECKED ); break;
 		case IDC_CMOD: syncHud( ); break;
+		case IDC_CTLRECOMMENDED: applyControls( LC_CONTROLS_RECOMMENDED, true ); break;
+		case IDC_CTLORIGINAL: applyControls( LC_CONTROLS_ORIGINAL, true ); break;
 		case IDC_HUD:
 			if ( hudSheet( hwnd, &cmod ) ) lc_cmod_save_store( &cmod, st ), lc_store_save( st );
 			break;
@@ -939,6 +985,7 @@ struct Launcher : Wnd {
 	void runTestHooks( )
 	{
 		const char *p;
+		if ( ( p = testEnv( "VOYAGERSP_TEST_LAUNCHER_CONTROLS" ) ) ) applyControls( !_stricmp( p, "original" ) ? LC_CONTROLS_ORIGINAL : LC_CONTROLS_RECOMMENDED, false );
 		if ( ( p = testEnv( "VOYAGERSP_TEST_MASTERS_SNAPSHOT" ) ) ) { g_snapPath = p; showMasters( hwnd ); }
 		if ( ( p = testEnv( "VOYAGERSP_TEST_LAUNCHER_HUD" ) ) ) { g_snapPath = p; hudSheet( hwnd, &cmod ); }
 		if ( ( p = testEnv( "VOYAGERSP_TEST_LAUNCHER_ABOUT" ) ) ) { g_snapPath = p; showAbout( hwnd ); }

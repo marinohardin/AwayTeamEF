@@ -23,6 +23,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "q_shared.h"
 #include "qcommon.h"
+#include "cfg_overlay.h"
 #include <setjmp.h>
 #ifndef _WIN32
 #include <netinet/in.h>
@@ -564,6 +565,7 @@ void Com_StartupVariable( const char *match ) {
 		
 		if(!match || !strcmp(s, match))
 		{
+			Cvar_DropPending(s);	// the command line beats the main config's value too (cfg_overlay.h)
 			if(Cvar_Flags(s) == CVAR_NONEXISTENT)
 				Cvar_Get(s, Cmd_ArgsFrom(2), CVAR_USER_CREATED);
 			else
@@ -2440,18 +2442,225 @@ For controlling environment variables
 
 static qboolean com_hmNetDefaultsApplied;	// a one-time config fix ran: write the config
 
+/*
+==================
+The main Holomatch config over a mod folder's (cfg_overlay.h)
+
+Joining a server that runs a mod restarts the game into that folder, which
+keeps its own hmconfig.cfg: an old snapshot of the player's keys and graphics.
+So the main one (baseEF/hmconfig.cfg) goes on top: its keys, and its values for
+the engine's settings; the mod's own settings keep the mod folder's values.
+Keys and engine settings changed while in the mod are saved into the main
+config as well.
+==================
+*/
+static qboolean com_hmOverlay;	// in a mod folder, with the main config over its own
+
+static qboolean Com_HmOverlayApplies( void )
+{
+	return Com_Holomatch() && !Com_DedicatedServer() && !Cvar_VariableIntegerValue( "dedicated" ) &&
+		com_basegame && Q_stricmp( FS_GetCurrentGameDir(), com_basegame->string );
+}
+
+// The main config's text (Z_Malloc'd), from the home folder or else the install; NULL if none
+static char *Com_HmReadMainConfig( void )
+{
+	const char *roots[2];
+	int i;
+
+	roots[0] = Cvar_VariableString( "fs_homepath" );
+	roots[1] = Cvar_VariableString( "fs_basepath" );
+	for ( i = 0; i < 2; i++ ) {
+		FILE *f;
+		long len;
+		char *text;
+		size_t n;
+
+		if ( !roots[i][0] )
+			continue;
+		f = Sys_FOpen( FS_BuildOSPath( roots[i], com_basegame->string, Q3CONFIG_CFG ), "rb" );
+		if ( !f )
+			continue;
+		if ( fseek( f, 0, SEEK_END ) || ( len = ftell( f ) ) < 0 || len > 4 * 1024 * 1024 || fseek( f, 0, SEEK_SET ) ) {
+			fclose( f );
+			continue;
+		}
+		text = Z_Malloc( len + 1 );
+		n = fread( text, 1, len, f );
+		text[n] = 0;
+		fclose( f );
+		return text;
+	}
+	return NULL;
+}
+
+static void Com_HmOverlayLine( const cfgovLine_t *l, const char *raw, size_t rawLen, void *ctx )
+{
+	int flags, exists;
+
+	switch ( l->kind ) {
+	case CFGOV_BIND:
+		Cmd_ExecuteString( va( "bind %s \"%s\"", l->name, l->value ) );
+		break;
+	case CFGOV_SET:
+		flags = Cvar_Flags( l->name );
+		exists = flags != CVAR_NONEXISTENT;
+		switch ( CfgOv_SetAction( exists, exists && ( flags & CVAR_USER_CREATED ), exists && ( flags & CVAR_VM_CREATED ) ) ) {
+		case CFGOV_APPLY_NOW:
+			Cmd_ExecuteString( va( "%s %s \"%s\"", l->archive ? "seta" : "set", l->name, l->value ) );
+			break;
+		case CFGOV_APPLY_ON_REGISTER:
+			Cvar_SetPending( l->name, l->value );
+			break;
+		default:
+			break;
+		}
+		break;
+	default:	// unbindall would drop the mod's own keys; other commands ran already in base play
+		break;
+	}
+}
+
+// After the game folder's config ran
+static void Com_HmConfigOverlay( void )
+{
+	char *text;
+
+	Cvar_ClearPending();
+	com_hmOverlay = qfalse;
+	if ( !Com_HmOverlayApplies() )
+		return;
+	text = Com_HmReadMainConfig();
+	if ( !text )
+		return;		// never played outside a mod: the folder's own config is all there is
+	Com_Printf( "%s: keys and engine settings from %s/%s\n", FS_GetCurrentGameDir(), com_basegame->string, Q3CONFIG_CFG );
+	CfgOv_ForEachLine( text, Com_HmOverlayLine, NULL );
+	Z_Free( text );
+	Key_SnapshotBindings();		// changes from here on go into the main config too
+	com_hmOverlay = qtrue;
+}
+
+/*
+==================
+Com_HmQueueOverlay
+
+exec of the game's config: qtrue = queue hm_mainconfig right behind its text, so the
+main config goes on top whenever the text runs (a wait in the command buffer
+can hold it back for frames; FS_Restart queues one of its own as well).
+==================
+*/
+qboolean Com_HmQueueOverlay( const char *filename )
+{
+	if ( Com_Holomatch() && !Com_DedicatedServer() && !Cvar_VariableIntegerValue( "dedicated" ) &&
+		!Q_stricmp( filename, Q3CONFIG_CFG ) ) {
+		com_hmOverlay = qfalse;		// the folder's own values are about to run: nothing to write until then
+		return qtrue;
+	}
+	return qfalse;
+}
+
+static void Com_HmMainConfig_f( void )
+{
+	Com_HmConfigOverlay();
+}
+
+typedef struct {
+	cfgovBind_t	*binds;
+	int			numBinds, maxBinds;
+	cfgovCvar_t	*cvars;
+	int			numCvars, maxCvars;
+} hmChanges_t;
+
+static void Com_HmAddBind( const char *key, const char *binding, void *ctx )
+{
+	hmChanges_t *c = ctx;
+
+	if ( c->numBinds == c->maxBinds ) {
+		cfgovBind_t *nb = realloc( c->binds, sizeof( *nb ) * ( c->maxBinds = c->maxBinds * 2 + 16 ) );
+		if ( !nb )
+			return;
+		c->binds = nb;
+	}
+	c->binds[c->numBinds].key = CopyString( key );		// Key_KeynumToString may reuse its buffer
+	c->binds[c->numBinds].binding = CopyString( binding );
+	c->numBinds++;
+}
+
+static void Com_HmAddCvar( const char *name, const char *value, void *ctx )
+{
+	hmChanges_t *c = ctx;
+
+	if ( c->numCvars == c->maxCvars ) {
+		cfgovCvar_t *nc = realloc( c->cvars, sizeof( *nc ) * ( c->maxCvars = c->maxCvars * 2 + 64 ) );
+		if ( !nc )
+			return;
+		c->cvars = nc;
+	}
+	c->cvars[c->numCvars].name = CopyString( name );
+	c->cvars[c->numCvars].value = CopyString( value );
+	c->numCvars++;
+}
+
+// While in a mod folder, after its own config was written: the keys and engine settings into the main one
+static void Com_HmWriteMainConfig( void )
+{
+	hmChanges_t c;
+	char *text, *merged, path[MAX_OSPATH];
+	const char *home = Cvar_VariableString( "fs_homepath" );
+	FILE *f;
+	int i;
+
+	if ( !home[0] )
+		return;
+	text = Com_HmReadMainConfig();
+	if ( !text )
+		return;
+	Com_Memset( &c, 0, sizeof( c ) );
+	Key_ForEachChangedBinding( Com_HmAddBind, &c );
+	Cvar_ForEachEngineArchived( Com_HmAddCvar, &c );
+	merged = CfgOv_MergeBase( text, c.binds, c.numBinds, c.cvars, c.numCvars );
+	Z_Free( text );
+
+	Q_strncpyz( path, FS_BuildOSPath( home, com_basegame->string, Q3CONFIG_CFG ), sizeof( path ) );
+	if ( merged && !FS_CreatePath( path ) && ( f = Sys_FOpen( path, "wb" ) ) != NULL ) {
+		size_t len = strlen( merged );
+		if ( fwrite( merged, 1, len, f ) != len )
+			Com_Printf( "Couldn't write %s.\n", path );
+		fclose( f );
+		Key_SnapshotBindings();		// written: from here on, changes since now
+	} else {
+		Com_Printf( "Couldn't write %s.\n", path );
+	}
+
+	free( merged );
+	for ( i = 0; i < c.numBinds; i++ ) {
+		Z_Free( (void *)c.binds[i].key );
+		Z_Free( (void *)c.binds[i].binding );
+	}
+	for ( i = 0; i < c.numCvars; i++ ) {
+		Z_Free( (void *)c.cvars[i].name );
+		Z_Free( (void *)c.cvars[i].value );
+	}
+	free( c.binds );
+	free( c.cvars );
+}
+
 void Com_ExecuteCfg(void)
 {
-	Cbuf_ExecuteText(EXEC_NOW, "exec default.cfg\n");
-	Cbuf_Execute(); // Always execute after exec to prevent text buffer overflowing
+	// nothing goes into the main config until the folder's config ran with it on top
+	// (hm_mainconfig, queued behind the config's text: see Cmd_Exec_f)
+	com_hmOverlay = qfalse;
+	Cvar_ClearPending();
+
+	// each file runs now, in order, even with a wait pending in the buffer (a script's,
+	// or commands queued behind a connect): see Cbuf_ExecuteFront
+	Cbuf_ExecuteFront("exec default.cfg\n");
 
 	if(!Com_SafeMode())
 	{
 		// skip the q3config.cfg and autoexec.cfg if "safe" is on the command line
-		Cbuf_ExecuteText(EXEC_NOW, va("exec %s\n", Q3CONFIG_CFG));
-		Cbuf_Execute();
-		Cbuf_ExecuteText(EXEC_NOW, "exec autoexec.cfg\n");
-		Cbuf_Execute();
+		Cbuf_ExecuteFront(va("exec %s\n", Q3CONFIG_CFG));
+		Cbuf_ExecuteFront("exec autoexec.cfg\n");
 
 		// Holomatch network defaults, applied once per version over an existing
 		// hmconfig.cfg: earlier builds archived this port's old defaults
@@ -2991,6 +3200,7 @@ void Com_Init( char *commandLine ) {
 		Cmd_AddCommand ("freeze", Com_Freeze_f);
 	}
 	Cmd_AddCommand ("quit", Com_Quit_f);
+	Cmd_AddCommand ("hm_mainconfig", Com_HmMainConfig_f );	// cfg_overlay.h: queued by exec of the config
 	Cmd_AddCommand ("changeVectors", MSG_ReportChangeVectors_f );
 	Cmd_AddCommand ("writeconfig", Com_WriteConfig_f );
 	Cmd_SetCommandCompletionFunc( "writeconfig", Cmd_CompleteCfgName );
@@ -3260,6 +3470,9 @@ void Com_WriteConfiguration( void ) {
 	cvar_modifiedFlags &= ~CVAR_ARCHIVE;
 
 	Com_WriteConfigToFile( Q3CONFIG_CFG );
+	if ( com_hmOverlay && Com_HmOverlayApplies() ) {
+		Com_HmWriteMainConfig();
+	}
 
 	// not needed for dedicated or standalone
 #if !defined(DEDICATED) && !defined(STANDALONE)

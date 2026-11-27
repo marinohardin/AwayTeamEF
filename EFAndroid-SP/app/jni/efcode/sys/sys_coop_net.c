@@ -1098,7 +1098,7 @@ static void CoopHostReject( int sock, const struct sockaddr_in *from, const char
 
 static void CoopHostConnect( int sock, const char *request, const struct sockaddr_in *from )
 {
-	char	protocol[16], version[64], paks[256], rawName[128], name[32], password[128], ourPassword[128], nonce[24];
+	char	protocol[16], version[64], shown[64], paks[256], rawName[128], name[32], password[128], ourPassword[128], nonce[24];
 	char	sex[16], look[64], why[512], hostWhy[512];
 	int		pakMatch;
 	char	info[MAX_INFO_STRING];
@@ -1115,6 +1115,9 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 
 	CoopGetInfo( request, "coopProtocol", protocol, sizeof( protocol ) );
 	CoopGetInfo( request, "version", version, sizeof( version ) );
+	CoopGetInfo( request, "appVersion", shown, sizeof( shown ) );	// (a guest from before 1.5.1: none)
+	if ( !shown[0] )
+		Q_strncpyz( shown, version[0] ? version : "?", sizeof( shown ) );
 	CoopGetInfo( request, "paks", paks, sizeof( paks ) );
 	CoopGetInfo( request, "name", rawName, sizeof( rawName ) );
 	CoopCleanName( rawName, name, sizeof( name ) );
@@ -1137,7 +1140,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 		return;
 	}
 
-	if ( atoi( protocol ) != VSP_COOP_PROTOCOL || strcmp( version, EF_APP_VERSION ) )
+	if ( !protocol[0] || atoi( protocol ) != VSP_COOP_PROTOCOL || strcmp( version, VSP_COOP_COMPAT ) )
 	{
 #ifdef __APPLE__
 		CoopHostReject( sock, from, va( "The host runs Elite Force for Mac %s (co-op version %d), and you run %s "
@@ -1146,7 +1149,7 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 		CoopHostReject( sock, from, va( "The host runs Elite Force %s (co-op version %d), and you run %s "
 			"(co-op version %s). Both need the same version.", EF_APP_VERSION, VSP_COOP_PROTOCOL,
 #endif
-			version[0] ? version : "?", protocol[0] ? protocol : "?" ) );
+			shown, protocol[0] ? protocol : "?" ) );
 		return;
 	}
 	if ( coopHost.active && !CoopSameAddress( from, &coopHost.addr ) )
@@ -1820,7 +1823,8 @@ static void CoopGuestSendConnect( void )
 	CoopOwnName( name, sizeof( name ) );
 	info[0] = 0;
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
-	CoopSetInfo( info, "version", EF_APP_VERSION );
+	CoopSetInfo( info, "version", VSP_COOP_COMPAT );
+	CoopSetInfo( info, "appVersion", EF_APP_VERSION );
 	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	CoopSetInfo( info, "name", name[0] ? name : "Player 2" );
 	if ( sex[0] )

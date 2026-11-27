@@ -37,7 +37,7 @@ int lc_data_find( int argc, char **argv, lc_data *out );
 #define LC_DATA_OVERRIDDEN_PATH		"Set on the command line"
 #define LC_DATA_OVERRIDDEN_STATUS	"fs_basepath / fs_homepath given on the command line"
 #define LC_DATA_NONE_PATH			"No game files yet"
-#define LC_DATA_NONE_STATUS			"Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe."
+#define LC_DATA_NONE_STATUS			"Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso."
 /* path with the home folder shown as "~" (Linux; Windows: unchanged) */
 void lc_data_display_path( const char *path, char *out, size_t size );
 /* BaseEF of the remembered in-place folder (the "external" base of lc_plan_add_files), "" if none */
@@ -66,10 +66,15 @@ int lc_pak_checksum( const char *pk3, unsigned *checksum );
 #else
 #	define LC_MSG_USE_BASEEF	"Run GOG's installer with Wine instead, then choose the folder it installed to."
 #endif
+#define LC_MSG_USE_DISC	"Choose an image of the Elite Force CD or the Expansion Pack's CD (.iso, or .bin with its .cue), or the folder of the CD or of an installation."
 #define LC_MSG_PAK0_NOT_COPIED	"pak0.pk3 did not end up in the destination folder."
 
 /* ---- the chooser (§4.2) ------------------------------------------------------------ */
-int lc_is_installer( const char *path );		/* a file ending ".exe" (GOG setup) */
+/* a file the launcher unpacks rather than copies: GOG's setup .exe, or a CD image
+   (lc_is_disc_image: .iso/.bin/.img/.cue/.cdr). lc_plan_unpack_installer and
+   lc_installer_error_alert take either. */
+int lc_is_installer( const char *path );
+int lc_is_disc_image( const char *path );
 /* 0 ok (base filled); else nonzero and problem = the sentence to show */
 int lc_validate_choice( const char *chosen, int inPlace, char *base, size_t baseSize,
 	char *problem, size_t problemSize );
@@ -90,8 +95,11 @@ typedef struct lc_copyjob_s lc_copyjob;
    Next the UI checks the disk (lc_copyjob_check_space), runs the job on a worker thread
    behind a progress panel (lc_copyjob_title / lc_copyjob_progress_text), and on 0 shows
    lc_copyjob_failure_texts (not on -1, a cancel). For a copy, run also checks that pak0.pk3
-   arrived (else returns 0 with LC_MSG_PAK0_NOT_COPIED). Picked .exe files are never added by
-   lc_plan_add_files: the UI sends each one to lc_plan_unpack_installer (onlyNew = 1). */
+   arrived (else returns 0 with LC_MSG_PAK0_NOT_COPIED). Picked installers and disc images
+   (lc_is_installer) are never added by lc_plan_add_files: the UI sends each one to
+   lc_plan_unpack_installer (onlyNew = 1). For a disc image it plans a copy out of the image
+   (sys_iso.c; logged "Disc image: …"); with onlyNew = 0 (the chooser) an image without
+   pak0.pk3 (the Expansion Pack's) is refused with err set. */
 lc_copyjob *lc_plan_copy_game_files( const char *srcBase, const char *homeBase,
 	int *pk3s, int *saves, int *kept );
 lc_copyjob *lc_plan_add_files( const char *const *picked, int n, const char *homeBase,
@@ -106,13 +114,14 @@ int lc_copyjob_is_unpack( const lc_copyjob *j );
 int lc_copyjob_run( lc_copyjob *j, volatile unsigned long long *progress,
 	volatile signed char *cancel, char *err, size_t errSize );
 void lc_copyjob_free( lc_copyjob *j );
-int lc_have_gog( void );		/* 0: built without GOG unpacking (lc_plan_unpack_installer fails) */
+int lc_have_gog( void );		/* 0: built without GOG unpacking (lc_plan_unpack_installer fails for .exe; disc images always work) */
 /* 1 enough free space; else 0 with the "Not enough disk space" alert texts (creates HomeBase) */
 int lc_copyjob_check_space( const lc_copyjob *j, char *title, size_t titleSize, char *text, size_t textSize );
 void lc_copyjob_failure_texts( const lc_copyjob *j, const char *err, char *title, size_t titleSize,
 	char *text, size_t textSize );
 void lc_installer_error_alert( const char *exe, const char *phrase, char *title, size_t titleSize,
 	char *text, size_t textSize );
+/* unpackInstaller: 0 picked files/folders, 1 GOG's installer, 2 a disc image */
 void lc_nothing_to_add_alert( int unpackInstaller, int present, char *title, size_t titleSize,
 	char *text, size_t textSize );
 /* the progress panel's texts (§4.4) */

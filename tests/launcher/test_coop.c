@@ -65,6 +65,38 @@ static void test_describe( void )
 	CHECK( strlen( out ) < 20 );
 }
 
+/* co-op pairs copies by protocol and co-op compat version, never by app version (docs/coop-compat.md) */
+static void test_compat( void )
+{
+	char info[256], v[64];
+
+	CHECK_STR( lc_coop_compat_version( ), LC_COOP_COMPAT );
+	/* a patch release: its own appVersion, the same compat version */
+	lc_snprintf( info, sizeof( info ), "\\coopProtocol\\%d\\version\\%s\\appVersion\\9.9.9", LC_COOP_PROTOCOL, LC_COOP_COMPAT );
+	CHECK( lc_coop_compatible( info ) );
+	lc_coop_shown_version( info, v, sizeof( v ) );
+	CHECK_STR( v, "9.9.9" );
+	/* a copy from before 1.5.1 sends no appVersion: "version" is its app version, to show and to compare */
+	lc_snprintf( info, sizeof( info ), "\\coopProtocol\\%d\\version\\%s", LC_COOP_PROTOCOL, LC_COOP_COMPAT );
+	CHECK( lc_coop_compatible( info ) );
+	lc_coop_shown_version( info, v, sizeof( v ) );
+	CHECK_STR( v, LC_COOP_COMPAT );
+	/* another compat version, another protocol, or either missing: not compatible */
+	lc_snprintf( info, sizeof( info ), "\\coopProtocol\\%d\\version\\0.0.1\\appVersion\\%s", LC_COOP_PROTOCOL, LC_COOP_COMPAT );
+	CHECK( !lc_coop_compatible( info ) );
+	lc_snprintf( info, sizeof( info ), "\\coopProtocol\\%d\\version\\%s", LC_COOP_PROTOCOL + 1, LC_COOP_COMPAT );
+	CHECK( !lc_coop_compatible( info ) );
+	lc_snprintf( info, sizeof( info ), "\\version\\%s", LC_COOP_COMPAT );
+	CHECK( !lc_coop_compatible( info ) );
+	lc_snprintf( info, sizeof( info ), "\\coopProtocol\\%d", LC_COOP_PROTOCOL );
+	CHECK( !lc_coop_compatible( info ) );
+	lc_coop_shown_version( info, v, sizeof( v ) );
+	CHECK_STR( v, "?" );
+	/* the description shows the app version */
+	lc_coop_describe( "\\coopProtocol\\8\\version\\1.5.0\\appVersion\\1.5.1\\state\\menu\\skill\\0", info, sizeof( info ) );
+	CHECK( strstr( info, "Elite Force 1.5.1 \xc2\xb7 co-op version 8" ) != NULL );
+}
+
 static void test_choice( void )
 {
 	struct lc_launch_coop_fields f;
@@ -139,7 +171,7 @@ typedef struct {
 	int port;
 	volatile int stop;
 	lc_thread *thr;
-	char protocol[8], version[32], paks[128];
+	char protocol[8], version[32], appVersion[32], paks[128];
 	int ignoreChallenge, badChallenge, silent;
 	int hidden;					/* like a host with coop_lanVisible 0: silent to " lan" queries */
 	char player[32], state[16], guest[4];
@@ -180,8 +212,9 @@ static void host_run( void *u )
 			if ( ( sp = strchr( chal, ' ' ) ) != NULL )
 				*sp = 0;
 		}
-		lc_snprintf( reply, sizeof( reply ), OOB "coopInfoResponse\n\\coopProtocol\\%s\\version\\%s\\hostname\\Fake\\paks\\%s\\state\\%s\\map\\borg1\\mission\\Assimilation\\skill\\1\\players\\1\\maxPlayers\\2\\needPassword\\0\\guest\\%s%s%s%s%s",
+		lc_snprintf( reply, sizeof( reply ), OOB "coopInfoResponse\n\\coopProtocol\\%s\\version\\%s\\hostname\\Fake\\paks\\%s\\state\\%s\\map\\borg1\\mission\\Assimilation\\skill\\1\\players\\1\\maxPlayers\\2\\needPassword\\0\\guest\\%s%s%s%s%s%s%s",
 			h->protocol, h->version, h->paks, h->state[0] ? h->state : "menu", h->guest[0] ? h->guest : "0",
+			h->appVersion[0] ? "\\appVersion\\" : "", h->appVersion,
 			h->player[0] ? "\\player\\" : "", h->player, h->ignoreChallenge ? "" : "\\challenge\\", h->ignoreChallenge ? "" : h->badChallenge ? "wrong" : chal );
 		sendto( h->s, reply, (int)strlen( reply ), 0, (struct sockaddr *)&from, fl );
 	}
@@ -194,7 +227,8 @@ static host_t *host_start_on( int anyAddress )
 	socklen_t al = sizeof( a );
 
 	lc_snprintf( h->protocol, sizeof( h->protocol ), "%d", LC_COOP_PROTOCOL );
-	lc_strlcpy( h->version, lc_coop_app_version( ), sizeof( h->version ) );
+	lc_strlcpy( h->version, lc_coop_compat_version( ), sizeof( h->version ) );
+	lc_strlcpy( h->appVersion, lc_coop_app_version( ), sizeof( h->appVersion ) );
 	h->s = socket( AF_INET, SOCK_DGRAM, 0 );
 	memset( &a, 0, sizeof( a ) );
 	a.sin_family = AF_INET;
@@ -258,7 +292,23 @@ static void test_query( void )
 	lc_strlcpy( h->version, "0.0.1-other", sizeof( h->version ) );
 	lc_coop_query_run( addr, 1.5, &q );
 	CHECK_STR( q.status, "mismatch" );
-	lc_strlcpy( h->version, lc_coop_app_version( ), sizeof( h->version ) );
+	lc_strlcpy( h->version, lc_coop_compat_version( ), sizeof( h->version ) );
+	/* another patch release of the same co-op (its own app version, the same compat version): joinable */
+	lc_strlcpy( h->appVersion, "9.9.9-patch", sizeof( h->appVersion ) );
+	lc_coop_query_run( addr, 1.5, &q );
+	CHECK_STR( q.status, "ok" );
+	/* a host from before 1.5.1 (no appVersion: its version is its app version) of the same co-op: joinable */
+	h->appVersion[0] = 0;
+	lc_coop_query_run( addr, 1.5, &q );
+	CHECK_STR( q.status, "ok" );
+	/* another co-op compat version: mismatch, and the sentence names the host's app version */
+	lc_strlcpy( h->version, "0.0.1-other", sizeof( h->version ) );
+	lc_strlcpy( h->appVersion, "9.9.9-shown", sizeof( h->appVersion ) );
+	lc_coop_query_run( addr, 1.5, &q );
+	CHECK_STR( q.status, "mismatch" );
+	CHECK( strstr( q.error, "The host runs Elite Force 9.9.9-shown (co-op version " ) == q.error );
+	lc_strlcpy( h->version, lc_coop_compat_version( ), sizeof( h->version ) );
+	lc_strlcpy( h->appVersion, lc_coop_app_version( ), sizeof( h->appVersion ) );
 	/* a wrong challenge, or a missing challenge on a host that echoes one: answers are ignored / accepted as the Mac does */
 	h->badChallenge = 1;
 	lc_coop_query_run( addr, 0.9, &q );
@@ -433,15 +483,15 @@ static void test_lan_take( void )
 	memset( &r, 0, sizeof( r ) );
 	CHECK( !lc_coop_lan_take( &r, "192.168.1.20:29760", 0, "junk", 4, "abc" ) );
 	CHECK( !lc_coop_lan_take( &r, "192.168.1.20:29760", 0, OOB "coopInfoResponse\nnot-info", 25, "abc" ) );
-	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_app_version( ), "1", "0", "other" );
+	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_compat_version( ), "1", "0", "other" );
 	CHECK( lc_coop_lan_take( &r, "192.168.1.20:29760", 0, pkt, (int)strlen( pkt ), "abc" ) == 0 );	/* someone else's search */
 	CHECK( r.count == 0 );
-	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_app_version( ), "1", "0", "abc" );
+	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_compat_version( ), "1", "0", "abc" );
 	CHECK( lc_coop_lan_take( &r, "192.168.1.20:29760", 0, pkt, (int)strlen( pkt ), "abc" ) == 1 );
 	CHECK( lc_coop_lan_take( &r, "192.168.1.20:29760", 0, pkt, (int)strlen( pkt ), "abc" ) == 1 );	/* asked twice: one row */
 	CHECK( r.count == 1 );
 	/* a copy on this computer answers by loopback and by its network address: one row, the network address kept */
-	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_app_version( ), "0", "0", "abc" );
+	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_compat_version( ), "0", "0", "abc" );
 	CHECK( lc_coop_lan_take( &r, "127.0.0.1:29791", 1, pkt, (int)strlen( pkt ), "abc" ) );
 	CHECK( lc_coop_lan_take( &r, "10.0.0.5:29791", 1, pkt, (int)strlen( pkt ), "abc" ) );
 	CHECK( lc_coop_lan_take( &r, "127.0.0.1:29791", 1, pkt, (int)strlen( pkt ), "abc" ) );
@@ -455,11 +505,11 @@ static void test_lan_take( void )
 	lc_snprintf( pkt, sizeof( pkt ), OOB "coopInfoResponse\n\\coopProtocol\\7\\version\\1.4.0\\hostname\\Old Mac\\state\\menu\\skill\\2" );
 	CHECK( lc_coop_lan_take( &r, "192.168.1.30:29760", 0, pkt, (int)strlen( pkt ), "abc" ) );
 	/* full */
-	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_app_version( ), "0", "1", "abc" );
+	lc_snprintf( pkt, sizeof( pkt ), ok, LC_COOP_PROTOCOL, lc_coop_compat_version( ), "0", "1", "abc" );
 	CHECK( lc_coop_lan_take( &r, "192.168.1.40:29760", 0, pkt, (int)strlen( pkt ), "abc" ) );
 	/* other paks */
 	lc_snprintf( pkt, sizeof( pkt ), OOB "coopInfoResponse\n\\coopProtocol\\%d\\version\\%s\\hostname\\Paks\\paks\\pak0.pk3:3376297517\\state\\menu\\skill\\1\\guest\\0",
-		LC_COOP_PROTOCOL, lc_coop_app_version( ) );
+		LC_COOP_PROTOCOL, lc_coop_compat_version( ) );
 	CHECK( lc_coop_lan_take( &r, "192.168.1.50:29760", 0, pkt, (int)strlen( pkt ), "abc" ) );
 	CHECK( r.count == 6 );
 
@@ -579,6 +629,7 @@ int main( void )
 	lc_net_init( );
 	test_info( );
 	test_describe( );
+	test_compat( );
 	test_choice( );
 	test_invite( );
 	test_paks( );

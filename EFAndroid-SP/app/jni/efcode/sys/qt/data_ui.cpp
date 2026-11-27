@@ -138,7 +138,7 @@ void failureAlert( QWidget *parent, lc_copyjob *job, const QString &err )
 	coreAlert( parent, title, text );
 }
 
-/* GOG installer unpack (LDC §4.3): returns files unpacked, 0 nothing to do, -1 failed */
+/* GOG installer unpack (LDC §4.3), or a copy out of a CD image: returns files unpacked, 0 nothing to do, -1 failed */
 int unpackInstaller( QWidget *parent, const QString &exe, bool onlyNew )
 {
 	char err[512] = "";
@@ -153,7 +153,7 @@ int unpackInstaller( QWidget *parent, const QString &exe, bool onlyNew )
 			coreAlert( parent, title, text );
 			return -1;
 		}
-		lc_nothing_to_add_alert( 1, present, title, sizeof title, text, sizeof text );
+		lc_nothing_to_add_alert( lc_is_disc_image( B( exe ).constData() ) ? 2 : 1, present, title, sizeof title, text, sizeof text );
 		coreAlert( parent, title, text );
 		return 0;
 	}
@@ -195,15 +195,15 @@ class ChooserPanel : public QDialog {
 public:
 	ChooserPanel( QWidget *parent ) : QDialog( parent )
 	{
-		setWindowTitle( "Choose your Elite Force folder, or GOG's installer" );
+		setWindowTitle( "Choose your game folder, GOG installer or CD image" );
 		setModal( true );
 		setFixedWidth( px( 520 ) );
 		QVBoxLayout *v = new QVBoxLayout( this );
 		v->setContentsMargins( px( 20 ), px( 18 ), px( 20 ), px( 16 ) );
 		v->setSpacing( px( 12 ) );
-		v->addWidget( label( "Choose your Elite Force folder, or GOG's installer", 15, QFont::DemiBold ) );
+		v->addWidget( label( "Choose your game folder, GOG installer or CD image", 15, QFont::DemiBold ) );
 		v->addWidget( label( "Select the folder where Star Trek: Voyager \xe2\x80\x93 Elite Force is installed (the one containing BaseEF with "
-			"pak0.pk3), the BaseEF folder itself, or GOG's Windows installer (the setup .exe). By default the game files are copied into "
+			"pak0.pk3), the BaseEF folder itself, GOG's Windows installer (the setup .exe), or an image of the game's CD (.iso, or .bin/.cue). By default the game files are copied into "
 			"the app's own folder, so the original folder or CD is no longer needed.", 12, QFont::Normal, QColor(), 480 ) );
 		m_inPlace = new QCheckBox( "Use BaseEF files in place rather than copy" );
 		v->addWidget( m_inPlace );
@@ -213,7 +213,7 @@ public:
 		refresh();
 		QHBoxLayout *h = new QHBoxLayout;
 		QPushButton *folder = new QPushButton( QString::fromUtf8( "Choose Folder\xe2\x80\xa6" ) );
-		QPushButton *gog = new QPushButton( QString::fromUtf8( "Choose GOG Installer\xe2\x80\xa6" ) );
+		QPushButton *gog = new QPushButton( QString::fromUtf8( "Choose Installer or ISO\xe2\x80\xa6" ) );
 		QPushButton *cancel = new QPushButton( "Cancel" );
 		folder->setDefault( true );
 		h->addWidget( folder );
@@ -223,7 +223,7 @@ public:
 		v->addLayout( h );
 		connect( cancel, &QPushButton::clicked, this, &QDialog::reject );
 		connect( folder, &QPushButton::clicked, this, [this]() {
-			const QString p = QFileDialog::getExistingDirectory( this, "Choose your Elite Force folder, or GOG's installer",
+			const QString p = QFileDialog::getExistingDirectory( this, "Choose your Elite Force folder",
 				startDir(), QFileDialog::ShowDirsOnly | fileOptions() );
 			if ( !p.isEmpty() ) {
 				path = p;
@@ -231,8 +231,8 @@ public:
 			}
 		} );
 		connect( gog, &QPushButton::clicked, this, [this]() {
-			const QString p = QFileDialog::getOpenFileName( this, "Choose GOG's installer", startDir(),
-				"GOG installer (*.exe);;All files (*)", nullptr, fileOptions() );
+			const QString p = QFileDialog::getOpenFileName( this, "Choose GOG's installer or a CD image", startDir(),
+				"GOG installer or CD image (*.exe *.iso *.bin *.cue *.img);;All files (*)", nullptr, fileOptions() );
 			if ( !p.isEmpty() ) {
 				path = p;
 				accept();
@@ -339,7 +339,7 @@ int addGameFiles( QWidget *parent, const QString &testPath )
 		v->setContentsMargins( px( 20 ), px( 18 ), px( 20 ), px( 16 ) );
 		v->setSpacing( px( 12 ) );
 		v->addWidget( label( QString::fromUtf8( "Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), "
-			"or GOG's installer (setup_\xe2\x80\xa6.exe)" ), 13, QFont::Normal, QColor(), 460 ) );
+			"an image of the CD (.iso), or GOG's installer (setup_\xe2\x80\xa6.exe)" ), 13, QFont::Normal, QColor(), 460 ) );
 		QHBoxLayout *h = new QHBoxLayout;
 		QPushButton *files = new QPushButton( QString::fromUtf8( "Choose Files\xe2\x80\xa6" ) );
 		QPushButton *folder = new QPushButton( QString::fromUtf8( "Choose Folder\xe2\x80\xa6" ) );
@@ -354,7 +354,7 @@ int addGameFiles( QWidget *parent, const QString &testPath )
 		QObject::connect( cancel, &QPushButton::clicked, &d, &QDialog::reject );
 		QObject::connect( files, &QPushButton::clicked, &d, [&]() {
 			const QStringList l = QFileDialog::getOpenFileNames( &d, "Add", start,
-				"Game files (*.pk3 *.exe);;All files (*)", nullptr, fileOptions() );
+				"Game files (*.pk3 *.exe *.iso *.bin *.cue *.img);;All files (*)", nullptr, fileOptions() );
 			if ( !l.isEmpty() ) {
 				picks = l;
 				d.accept();

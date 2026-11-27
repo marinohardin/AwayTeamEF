@@ -61,6 +61,21 @@ void Cmd_Wait_f( void ) {
 
 
 /*
+============
+Cmd_FrontDone_f
+
+The end marker of Cbuf_ExecuteFront's text
+============
+*/
+static qboolean cmd_frontDone;
+
+static void Cmd_FrontDone_f( void ) {
+	cmd_frontDone = qtrue;
+	cmd_wait = 1;		// stop Cbuf_Execute here: what follows was queued before
+}
+
+
+/*
 =============================================================================
 
 						COMMAND BUFFER
@@ -251,6 +266,31 @@ void Cbuf_Execute (void)
 
 
 /*
+============
+Cbuf_ExecuteFront
+
+Runs text now, ahead of anything already in the buffer, and everything it
+queues in front (an exec's file), whatever waits are pending. Com_ExecuteCfg:
+default.cfg, the config and autoexec.cfg must run in that order before the rest;
+with a wait pending (a script's, a connect followed by waits), plain
+EXEC_NOW + Cbuf_Execute left them in the buffer, where each later exec went in
+front of the earlier files and default.cfg's unbindall ran last.
+============
+*/
+void Cbuf_ExecuteFront( const char *text ) {
+	int wait = cmd_wait;
+
+	cmd_frontDone = qfalse;
+	Cbuf_InsertText( "cmd_frontdone\n" );
+	Cbuf_InsertText( text );
+	do {
+		cmd_wait = 0;		// a wait in the text itself doesn't hold the rest back
+		Cbuf_Execute();
+	} while ( !cmd_frontDone && cmd_text.cursize );
+	cmd_wait = wait;
+}
+
+/*
 ==============================================================================
 
 						SCRIPT COMMANDS
@@ -289,7 +329,10 @@ void Cmd_Exec_f( void ) {
 	}
 	if (!quiet)
 		Com_Printf ("execing %s\n", filename);
-	
+
+	// the main Holomatch config over a mod folder's (cfg_overlay.h): right behind this text
+	if ( Com_HmQueueOverlay( filename ) )
+		Cbuf_InsertText( "hm_mainconfig\n" );
 	Cbuf_InsertText (f.c);
 
 	FS_FreeFile (f.v);
@@ -860,6 +903,7 @@ Cmd_Init
 void Cmd_Init (void) {
 	Cmd_AddCommand ("cmdlist",Cmd_List_f);
 	Cmd_AddCommand ("exec",Cmd_Exec_f);
+	Cmd_AddCommand ("cmd_frontdone",Cmd_FrontDone_f);	// Cbuf_ExecuteFront's end marker
 	Cmd_AddCommand ("execq",Cmd_Exec_f);
 	Cmd_SetCommandCompletionFunc( "exec", Cmd_CompleteCfgName );
 	Cmd_SetCommandCompletionFunc( "execq", Cmd_CompleteCfgName );
