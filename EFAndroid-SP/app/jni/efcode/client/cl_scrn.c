@@ -22,6 +22,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cl_scrn.c -- master for refresh, status bar, console, chat, notify, etc
 
 #include "client.h"
+#ifdef EF_VR
+#include "../vr/vr_hm.h"
+#endif
 #include "../../sp/sp_ui.h"   // EF1 SP native UI (libefui.so) drive hooks
 
 qboolean	scr_initialized;		// ready to draw
@@ -1139,6 +1142,14 @@ void SCR_UpdateScreen( void ) {
 			state = 1;
 		} else if ( clc.state == CA_CINEMATIC || CL_InGameCinematicActive() ) {
 			state = 2;
+		}
+		if ( VR_HM_Active() ) {
+			// Holomatch H1: the live world behind menus, the theater screen when following a
+			// player or at the intermission (3 and 4)
+			const int hm = VR_HM_UiState( state == 1 );
+			if ( hm ) {
+				state = hm;
+			}
 		}
 		if ( state != vr_uiState->integer ) {
 			Cvar_Set( "vr_uiState", va( "%i", state ) );

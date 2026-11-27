@@ -74,6 +74,7 @@ typedef enum {
 	ACT_MENU,
 	ACT_WEAPNEXT,
 	ACT_WEAPPREV,
+	ACT_YBUTTON,
 	ACT_AIM,			// pose, per hand
 	ACT_GRIP,			// pose, per hand
 	NUM_ACTIONS
@@ -97,6 +98,7 @@ static const struct {
 	{ "menu",		"Menu",					XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_MENU },
 	{ "weapnext",	"Next weapon",			XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_WEAPNEXT },
 	{ "weapprev",	"Previous weapon",		XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_WEAPPREV },
+	{ "ybutton",	"Menu or objectives",	XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_Y },
 	{ "aim",		"Aim pose",				XR_ACTION_TYPE_POSE_INPUT,		1, 0 },
 	{ "grip",		"Grip pose",			XR_ACTION_TYPE_POSE_INPUT,		1, 0 },
 };
@@ -121,7 +123,7 @@ static const vrBinding_t vr_touchBindings[] = {
 	{ ACT_JUMP,			R "a/click" },
 	{ ACT_CROUCH,		R "b/click" },
 	{ ACT_USE,			L "x/click" },
-	{ ACT_MENU,			L "y/click" },
+	{ ACT_YBUTTON,		L "y/click" },
 	{ ACT_MENU,			L "menu/click" },
 	{ ACT_WEAPNEXT,		R "thumbstick/click" },
 	{ ACT_WEAPPREV,		L "thumbstick/click" },

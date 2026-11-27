@@ -43,7 +43,8 @@ typedef struct {
 #define VR_BUTTON_JUMP		0x0001	// A
 #define VR_BUTTON_CROUCH	0x0002	// B
 #define VR_BUTTON_USE		0x0004	// X
-#define VR_BUTTON_MENU		0x0008	// Y, and the left menu button
+#define VR_BUTTON_MENU		0x0008	// the left menu button
+#define VR_BUTTON_Y			0x0040	// Y: the menu in single player, the objectives in Holomatch
 #define VR_BUTTON_WEAPNEXT	0x0010	// right thumbstick click
 #define VR_BUTTON_WEAPPREV	0x0020	// left thumbstick click
 
@@ -54,7 +55,7 @@ typedef struct {
 	float		turn[2];		// right thumbstick: x right, y up (-1..1)
 	float		attack;			// right trigger (0..1)
 	float		altAttack;		// left trigger (0..1)
-	float		squeeze[VR_HANDS];	// grips (0..1); not mapped yet
+	float		squeeze[VR_HANDS];	// grips (0..1); Holomatch maps them
 	unsigned	buttons;		// VR_BUTTON_*
 	vrPose_t	head;			// the VIEW space: between the eyes
 	vrPose_t	aim[VR_HANDS];	// pointing ray: origin and -Z along the controller

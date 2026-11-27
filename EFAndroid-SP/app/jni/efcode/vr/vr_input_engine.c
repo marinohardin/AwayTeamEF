@@ -21,6 +21,14 @@ modules need no change:
     right stick click    weapnext
     left stick click     weapprev when tapped; held VR_RECENTER_HOLD ms: recentre the head
     Y, left menu button  Escape (the in-game menu)
+  in play in Holomatch (VR_HM_Active; docs/vr/HOLOMATCH-H1.md §6.1), different from the above:
+    right grip           +button2 (use the holdable item)
+    left grip, held      +info (the scoreboard)
+    Y                    +analysis (the objectives); the left menu button is still Escape
+    right stick y        weapnext (up) / weapprev (down)
+    right stick click    the last weapon (weapon <n>)
+    left stick click     tapped: walk/run toggle (+speed); held: recentre
+    vr_leftHanded swaps the grips with the hands
   in menus and the console (any key catcher)
     right stick          mouse cursor
     right trigger        mouse button 1
@@ -57,6 +65,9 @@ enum {
 	IN_USE,
 	IN_WEAPNEXT,
 	IN_WEAPPREV,
+	IN_ITEM,		// Holomatch only
+	IN_SCORES,
+	IN_ANALYSIS,
 	NUM_INPUTS
 };
 
@@ -71,6 +82,9 @@ static const struct {
 	{ "+use",		0 },
 	{ "weapnext",	0 },
 	{ "weapprev",	0 },
+	{ "+button2",	0 },
+	{ "+info",		0 },
+	{ "+analysis",	0 },
 };
 
 typedef enum { MODE_NONE, MODE_GAME, MODE_UI } vrMode_t;
@@ -100,7 +114,14 @@ static struct {
 
 	int			arrowKey;				// held arrow key, 0 = none
 	int			arrowNext;				// time of the next repeat
+
+	qboolean	hm;						// Holomatch H1 is active (its controller map)
+	qboolean	weapArmed;				// right stick y back in the middle (Holomatch weapon cycling)
+	int			curWeapon, lastWeapon;	// Holomatch: the weapon now and the one before
+	qboolean	walkToggle;				// Holomatch: +speed held by the left stick click
 } vrc;
+
+int VR_HM_Active( void );	// vr_hm.c
 
 static void VR_RegisterCvars( void ) {
 	vrc.turnMode = Cvar_Get( "vr_turnMode", "0", CVAR_ARCHIVE );
@@ -154,15 +175,28 @@ static void VR_GameCmd( int input, qboolean down, int time ) {
 		return;
 	}
 	if ( input == IN_WEAPPREV ) {
-		// a tap is weapprev (on release), a long hold recentres (VR_EngineInput)
+		// a tap is weapprev (on release; Holomatch: the walk/run toggle), a long hold recentres
+		// (VR_EngineInput)
 		if ( down ) {
 			vrc.prevHeldSince = time ? time : 1;
 			vrc.prevRecentered = qfalse;
 		} else {
 			if ( vrc.prevHeldSince && !vrc.prevRecentered ) {
-				Cbuf_AddText( "weapprev\n" );
+				if ( vrc.hm ) {
+					vrc.walkToggle = !vrc.walkToggle;
+					Cbuf_AddText( va( "%cspeed %d %d\n", vrc.walkToggle ? '+' : '-', VR_KEYNUM_BASE + NUM_INPUTS, time ) );
+				} else {
+					Cbuf_AddText( "weapprev\n" );
+				}
 			}
 			vrc.prevHeldSince = 0;
+		}
+		return;
+	}
+	if ( input == IN_WEAPNEXT && vrc.hm ) {
+		// Holomatch: the last weapon
+		if ( down && vrc.lastWeapon > 0 ) {
+			Cbuf_AddText( va( "weapon %d\n", vrc.lastWeapon ) );
 		}
 		return;
 	}
@@ -244,8 +278,33 @@ void VR_EngineInput( const vrInputState_t *in ) {
 	now[IN_WEAPNEXT] = ( in->buttons & VR_BUTTON_WEAPNEXT ) != 0;
 	now[IN_WEAPPREV] = ( in->buttons & VR_BUTTON_WEAPPREV ) != 0;
 
-	// Escape works the same everywhere: it opens the in-game menu and backs out of menus
-	if ( ( ( in->buttons & VR_BUTTON_MENU ) != 0 ) != vrc.menuDown ) {
+	// Holomatch H1's own controller map (grips, Y, weapon cycling on the right stick)
+	vrc.hm = VR_HM_Active() ? qtrue : qfalse;
+	{
+		const int weaponHand = vrc.leftHanded->integer ? VR_HAND_LEFT : VR_HAND_RIGHT;
+		const float item = vrc.hm ? in->squeeze[weaponHand] : 0.0f;
+		const float scores = vrc.hm ? in->squeeze[!weaponHand] : 0.0f;
+
+		now[IN_ITEM] = item > ( vrc.down[IN_ITEM] ? VR_TRIGGER_OFF : VR_TRIGGER_ON );
+		now[IN_SCORES] = scores > ( vrc.down[IN_SCORES] ? VR_TRIGGER_OFF : VR_TRIGGER_ON );
+		now[IN_ANALYSIS] = vrc.hm && ( in->buttons & VR_BUTTON_Y ) != 0;
+	}
+	if ( vrc.hm ) {
+		const int w = cl.snap.ps.weapon;
+		if ( w != vrc.curWeapon ) {
+			if ( vrc.curWeapon > 0 ) {
+				vrc.lastWeapon = vrc.curWeapon;
+			}
+			vrc.curWeapon = w;
+		}
+	} else if ( vrc.walkToggle ) {
+		vrc.walkToggle = qfalse;
+		Cbuf_AddText( va( "-speed %d %d\n", VR_KEYNUM_BASE + NUM_INPUTS, time ) );
+	}
+
+	// Escape works the same everywhere: it opens the in-game menu and backs out of menus (Y too,
+	// outside Holomatch)
+	if ( ( ( in->buttons & VR_BUTTON_MENU ) != 0 || ( !vrc.hm && ( in->buttons & VR_BUTTON_Y ) != 0 ) ) != vrc.menuDown ) {
 		vrc.menuDown = !vrc.menuDown;
 		VR_Key( K_ESCAPE, vrc.menuDown, time );
 	}
@@ -305,6 +364,16 @@ void VR_EngineInput( const vrInputState_t *in ) {
 		cl.viewangles[YAW] += turn;
 		if ( in->turn[0] < VR_SNAP_REARM && in->turn[0] > -VR_SNAP_REARM ) {
 			vrc.snapArmed = qtrue;
+		}
+
+		// Holomatch: the right stick's y cycles the weapons, once per push
+		if ( vrc.hm ) {
+			if ( vrc.weapArmed && ( in->turn[1] > VR_SNAP_ON || in->turn[1] < -VR_SNAP_ON ) ) {
+				Cbuf_AddText( in->turn[1] > 0 ? "weapnext\n" : "weapprev\n" );
+				vrc.weapArmed = qfalse;
+			} else if ( in->turn[1] < VR_SNAP_REARM && in->turn[1] > -VR_SNAP_REARM ) {
+				vrc.weapArmed = qtrue;
+			}
 		}
 	} else if ( mode == MODE_UI ) {
 		float ty = VR_Stick( in->turn[1] );

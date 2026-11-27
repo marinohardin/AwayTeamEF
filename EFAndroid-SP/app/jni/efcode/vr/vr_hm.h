@@ -41,8 +41,20 @@ struct usercmd_s;
 void	VR_HM_Cmd( struct usercmd_s *cmd );
 
 // before the cgame's refdef (a refdef_t *) is rendered: records the world view, adds the laser
-// and the dot
-void	VR_HM_Scene( const void *refdef );
+// and the dot; laserStart: where the drawn gun's flash point is (NULL: the hand's muzzle)
+void	VR_HM_Scene( const void *refdef, const float *laserStart );
+
+// ---- vr_hm_scene.c, the first-person gun at the hand (from cl_cgame.c) ----
+// CG_R_CLEARSCENE: a new scene
+void	VR_HM_SceneClear( void );
+// CG_R_ADDREFENTITYTOSCENE / CG_R_ADDLIGHTTOSCENE: 1 = kept back for the re-pose (don't pass it on)
+int		VR_HM_SceneAddEntity( const void *refEntity );
+int		VR_HM_SceneAddLight( const float *org, float intensity, float r, float g, float b );
+void	VR_HM_ScenePoly( int numVerts, const void *verts );
+// CG_R_RENDERSCENE: the re-pose, the kept-back entities, the laser and the dot
+void	VR_HM_SceneRender( const void *refdef );
+// CG_S_RESPATIALIZE: the listener at the rendered head
+void	VR_HM_Respatialize( int entityNum, const float *origin, float axis[3][3], int inwater );
 
 // put the player's own cgame cvars back (a disconnect, shutdown)
 void	VR_HM_Restore( void );
@@ -76,8 +88,31 @@ typedef struct {
 void	VR_HM_Trace( vrHmTrace_t *out, const float start[3], const float end[3],
 				const float *mins, const float *maxs, int skip, int mask );
 
-// ---- vr_hm_aim.c, for vr_hm.c ----
+// ---- vr_hm_aim.c, for the other vr_hm files ----
+#define HM_WP_COUNT		13		// the Holomatch weapons, none included
 void	VR_HM_AimReset( void );
+// the weapon hand of the newest command in the world, placed from this frame's view origin
+// (filtered, roll included): 0 when the hand doesn't aim (not in play, no tracked hand)
+int		VR_HM_HandPose( const float viewOrg[3], float origin[3], float axis[3][3] );
+int		VR_HM_DebugLevel( void );
+// where the server's shot is expected to start (its muzzle, from the angles sent), 0 if unknown
+int		VR_HM_ServerMuzzle( float out[3] );
+// the cgame's last world view origin (its eye), 0 before the first
+int		VR_HM_ViewOrigin( float out[3] );
+
+// ---- vr_hm_head.c: the head (from vr_move.c) and its steps (from VR_HM_Cmd) ----
+// each frame while active: head = the tracked head (room metres), anchor = the head origin over
+// the body (moved here as the body follows); returns the head origin for the renderer and the fade
+void	VR_HM_Head( const float head[3], float anchor[3], int stickActive, int gameInput, float dt,
+			float originOut[3], float *fadeOut );
+// the step debt into the command's movement (body frame; VR_HM_Cmd turns it into the aim's)
+void	VR_HM_HeadCmd( struct usercmd_s *cmd, float bodyYaw );
+void	VR_HM_HeadReset( void );
+
+// ---- the frame kind for the renderer (cl_scrn.c sets vr_uiState) ----
+// 3 = a menu over the live, dimmed world (vr_menuLiveWorld), 4 = the theater screen (following
+// a player, intermission), 0 = nothing special
+int		VR_HM_UiState( int menuUp );
 
 #ifdef __cplusplus
 }

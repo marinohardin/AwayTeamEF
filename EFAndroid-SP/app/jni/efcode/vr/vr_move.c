@@ -34,6 +34,7 @@ docs/vr/MOVEMENT.md; in short:
 #include "vr.h"
 #include "vr_input.h"
 #include "vr_move.h"
+#include "vr_hm.h"
 
 extern kbutton_t	in_speed;			// cl_input.c
 extern int			SP_IsActive( void );	// sp_bridge.cpp: a single-player game is running
@@ -310,6 +311,18 @@ void VR_Move_Frame( const void *inState, int game, float dt ) {
 		}
 	} else {
 		vm.headCrouch = qfalse;
+	}
+
+	// Holomatch H1: a small lean, then the body walks after the head through the usercmd, or
+	// the view fades where it can't (vr_hm_head.c)
+	if ( VR_HM_Active() ) {
+		float origin[3], moving;
+		VR_HM_Head( vm.head, vm.anchor, vm.stickMag > 0.0f, vm.gameInput, dt, origin, &vm.fade );
+		VR_SetHeadOrigin( origin );
+		moving = vm.stickMag > vm.turning ? vm.stickMag : vm.turning;
+		VR_SetComfort( vm.fade, vm.vignette->value * moving );
+		vm.turning = 0.0f;
+		return;
 	}
 
 	// room-scale: past the lean radius, the body follows the head

@@ -8675,6 +8675,8 @@ static struct {
 
 	// vr_screenshot: requested, then recorded into this frame, then written after the submit
 	int				capture;		// 0 none, 1 requested, 2 recorded
+	qboolean		capture_eyes;	// the eyes were drawn in the recorded frame (else the canvas only:
+									// a frozen menu or the theater screen draws no eye images)
 	VkBuffer		capture_buffer;
 	VkDeviceMemory	capture_memory;
 } vk_vr_state;
@@ -9048,9 +9050,7 @@ static void vk_vr_capture_record( void )
 	VkBufferImageCopy region;
 	int eye;
 
-	if ( !vk_vr_eyes_written() ) {
-		return;	// try again next frame
-	}
+	vk_vr_state.capture_eyes = vk_vr_eyes_written();
 
 	Com_Memset( &bdesc, 0, sizeof( bdesc ) );
 	bdesc.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -9071,7 +9071,7 @@ static void vk_vr_capture_record( void )
 	region.imageSubresource.layerCount = 1;
 	region.imageExtent.depth = 1;
 
-	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+	for ( eye = 0; eye < VR_MAX_EYES && vk_vr_state.capture_eyes; eye++ ) {
 		const VkImage image = vk_vr_state.eyes[eye].info.images[ vk_vr_state.eye_index[eye] ];
 		vk_vr_image_barrier( image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
 			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
@@ -9147,10 +9147,14 @@ static void vk_vr_capture_finish( void )
 	vk_vr_state.capture = 0;
 	qvkQueueWaitIdle( vk.queue );
 	if ( qvkMapMemory( vk.device, vk_vr_state.capture_memory, 0, VK_WHOLE_SIZE, 0, &data ) == VK_SUCCESS ) {
-		vk_vr_capture_write_tga( "screenshots/vr_left.tga", (const byte *)data, vk_vr_state.eye_width, vk_vr_state.eye_height,
-			vk_vr_state.eye_format, qfalse );
-		vk_vr_capture_write_tga( "screenshots/vr_right.tga", (const byte *)data + eyeBytes, vk_vr_state.eye_width, vk_vr_state.eye_height,
-			vk_vr_state.eye_format, qfalse );
+		if ( vk_vr_state.capture_eyes ) {
+			vk_vr_capture_write_tga( "screenshots/vr_left.tga", (const byte *)data, vk_vr_state.eye_width, vk_vr_state.eye_height,
+				vk_vr_state.eye_format, qfalse );
+			vk_vr_capture_write_tga( "screenshots/vr_right.tga", (const byte *)data + eyeBytes, vk_vr_state.eye_width, vk_vr_state.eye_height,
+				vk_vr_state.eye_format, qfalse );
+		} else {
+			ri.Printf( PRINT_ALL, "vr_screenshot: no eye images this frame (a frozen menu or the theater screen), the canvas only\n" );
+		}
 		vk_vr_capture_write_tga( "screenshots/vr_canvas.tga", (const byte *)data + eyeBytes * 2, glConfig.vidWidth, glConfig.vidHeight,
 			vk.color_format, qtrue );
 		qvkUnmapMemory( vk.device, vk_vr_state.capture_memory );

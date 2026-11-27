@@ -752,6 +752,10 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		S_UpdateEntityPosition( args[1], VMA(2) );
 		return 0;
 	case CG_S_RESPATIALIZE:
+#ifdef EF_VR
+		VR_HM_Respatialize( args[1], VMA(2), VMA(3), args[4] );	// VR in Holomatch: hear from the head
+		return 0;
+#endif
 		S_Respatialize( args[1], VMA(2), VMA(3), args[4] );
 		return 0;
 	case CG_S_REGISTERSOUND:
@@ -781,12 +785,23 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return 0;
 #endif
 	case CG_R_CLEARSCENE:
+#ifdef EF_VR
+		VR_HM_SceneClear();
+#endif
 		re.ClearScene();
 		return 0;
 	case CG_R_ADDREFENTITYTOSCENE:
+#ifdef EF_VR
+		if ( VR_HM_SceneAddEntity( VMA(1) ) ) {
+			return 0;	// VR in Holomatch: the view weapon and its beams, moved to the hand
+		}
+#endif
 		re.AddRefEntityToScene( VMA(1) );
 		return 0;
 	case CG_R_ADDPOLYTOSCENE:
+#ifdef EF_VR
+		VR_HM_ScenePoly( args[2], VMA(3) );
+#endif
 		re.AddPolyToScene( args[1], args[2], VMA(3), 1 );
 		return 0;
 #ifndef ELITEFORCE
@@ -797,6 +812,11 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 		return re.LightForPoint( VMA(1), VMA(2), VMA(3), VMA(4) );
 #endif
 	case CG_R_ADDLIGHTTOSCENE:
+#ifdef EF_VR
+		if ( VR_HM_SceneAddLight( VMA(1), VMF(2), VMF(3), VMF(4), VMF(5) ) ) {
+			return 0;
+		}
+#endif
 		re.AddLightToScene( VMA(1), VMF(2), VMF(3), VMF(4), VMF(5) );
 		return 0;
 #ifndef ELITEFORCE
@@ -806,7 +826,7 @@ intptr_t CL_CgameSystemCalls( intptr_t *args ) {
 #endif
 	case CG_R_RENDERSCENE:
 #ifdef EF_VR
-		VR_HM_Scene( VMA(1) );	// VR in Holomatch: the view for the aim, the laser and the dot
+		VR_HM_SceneRender( VMA(1) );	// VR in Holomatch: the gun at the hand, the view for the aim, the laser and the dot
 #endif
 #ifdef USE_FLEXIBLE_DISPLAY
 		if ( CL_FLEX_CGAME ) {

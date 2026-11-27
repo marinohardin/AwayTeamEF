@@ -41,13 +41,15 @@ server won't give.
 
 #define VR_HM_RANGE			8192.0f
 #define VR_HM_PITCH_LIMIT	87.0f		// the game clamps view pitch at 16000 short units (87.9)
+#define VR_HM_SNAP_MIN		5.0f		// a turn larger than this in one command is a snap turn ...
+#define VR_HM_SNAP_STEP		15.0f		// ... sent at most this much per command
 #define VR_HM_MASK_SHOT		( CONTENTS_SOLID | CONTENTS_BODY | CONTENTS_CORPSE | CONTENTS_SHOTCLIP )
 
 // The Holomatch weapon numbers used below
 #define HM_WP_GRENADE_LAUNCHER	6
 #define HM_WP_VOYAGER_HYPO		10
 #define HM_WP_BORG_ASSIMILATOR	11
-#define HM_WP_NUM_WEAPONS		13
+#define HM_WP_NUM_WEAPONS		HM_WP_COUNT
 
 // Per-weapon muzzle offsets (forward, right, up), in game units from the player's eye: forward
 // and right along the view, up on the world's Z. This mirrors the Holomatch game module's own
@@ -96,6 +98,7 @@ static struct {
 	float		bodyYaw;		// world body yaw, degrees
 	vec3_t		handOfs;		// hand origin - aim eye, world axes
 	vec3_t		handFwd;		// the hand's ray, world
+	vec3_t		handAxis[3];	// the hand's frame (filtered), world
 	vec3_t		rayStart;		// where the laser starts: the hand muzzle, or where the eye-to-muzzle check stopped
 	qboolean	muzzleBlocked;
 	vec3_t		P;				// first hit along the hand's ray
@@ -106,6 +109,9 @@ static struct {
 	int			weapon;
 	vec3_t		eye;			// the aim eye used
 	short		sent[3];		// the command's angles
+	qboolean	haveTurnYaw;
+	float		lastTurnYaw;	// cl.viewangles[YAW] at the last command
+	float		snapLag;		// degrees of a snap turn not sent yet (spread over a few commands)
 	int			lastPrint;
 } vha;
 
@@ -136,7 +142,10 @@ void VR_HM_AimReset( void ) {
 	vha.haveView = qfalse;
 	vha.filterValid = qfalse;
 	vha.aimValid = qfalse;
+	vha.snapLag = 0.0f;
+	vha.haveTurnYaw = qfalse;
 	VR_SetBodyYaw( 0.0f, 0 );
+	VR_HM_HeadReset();
 }
 
 // body frame (forward, left, up) -> world, turned by the body yaw
@@ -297,12 +306,21 @@ void VR_HM_Cmd( usercmd_t *cmd ) {
 	}
 
 	bodyYaw = AngleNormalize360( cl.viewangles[YAW] + SHORT2ANGLE( ps->delta_angles[YAW] ) );
+	{
+		const float turned = vha.haveTurnYaw ? AngleNormalize180( cl.viewangles[YAW] - vha.lastTurnYaw ) : 0.0f;
+		if ( turned > VR_HM_SNAP_MIN || turned < -VR_HM_SNAP_MIN ) {
+			vha.snapLag += turned;		// a snap turn: spread what is sent
+		}
+		vha.lastTurnYaw = cl.viewangles[YAW];
+		vha.haveTurnYaw = qtrue;
+	}
 	vha.bodyYaw = bodyYaw;
 	VR_SetBodyYaw( bodyYaw, 1 );
 
 	state = VR_HM_State();
 	vha.aimValid = qfalse;
 	if ( !vha.haveView || state == VR_HM_FOLLOW || state == VR_HM_INTERMISSION ) {
+		vha.snapLag = 0.0f;
 		return;		// the server doesn't take the angles (or there is no view yet): as before
 	}
 
@@ -332,6 +350,9 @@ void VR_HM_Cmd( usercmd_t *cmd ) {
 		VR_HM_Filter( &hand );
 		VR_HM_ToWorld( bodyYaw, hand.origin, vha.handOfs );
 		VR_HM_ToWorld( bodyYaw, hand.axis[0], vha.handFwd );
+		for ( i = 0; i < 3; i++ ) {
+			VR_HM_ToWorld( bodyYaw, hand.axis[i], vha.handAxis[i] );
+		}
 		VectorAdd( eye, vha.handOfs, muzzle );
 		VectorMA( muzzle, vha.muzzleDist->value, vha.handFwd, muzzle );
 
@@ -354,6 +375,14 @@ void VR_HM_Cmd( usercmd_t *cmd ) {
 		vha.aimValid = qtrue;
 	}
 
+	// a snap turn (the body's yaw jumps by our own turn, not the server's) is sent over a few
+	// commands, at most VR_HM_SNAP_STEP degrees each: others see a quick turn, not a jump
+	if ( vha.snapLag != 0.0f ) {
+		const float step = vha.snapLag > VR_HM_SNAP_STEP ? VR_HM_SNAP_STEP : vha.snapLag < -VR_HM_SNAP_STEP ? -VR_HM_SNAP_STEP : vha.snapLag;
+		vha.snapLag -= step;
+		worldAim[YAW] -= vha.snapLag;
+	}
+
 	// the pitch stays inside the game's clamp, so the server never rewrites the delta angles
 	worldAim[PITCH] = AngleNormalize180( worldAim[PITCH] );
 	if ( worldAim[PITCH] > VR_HM_PITCH_LIMIT ) {
@@ -368,6 +397,11 @@ void VR_HM_Cmd( usercmd_t *cmd ) {
 		vha.sent[i] = (short)cmd->angles[i];
 		// what the server will make of it (PM_UpdateViewAngles: command plus delta, as shorts)
 		viewAngles[i] = SHORT2ANGLE( (short)( cmd->angles[i] + ps->delta_angles[i] ) );
+	}
+
+	// the room-scale step debt (vr_hm_head.c), in the body's frame like the stick
+	if ( state == VR_HM_PLAY ) {
+		VR_HM_HeadCmd( cmd, bodyYaw );
 	}
 
 	// the game moves the player relative to the command's yaw: turn the movement from the
@@ -461,7 +495,40 @@ static void VR_HM_Dot( qhandle_t shader, const vec3_t at, const vec3_t head, flo
 	re.AddPolyToScene( shader, 4, v, 1 );
 }
 
-void VR_HM_Scene( const void *refdefPtr ) {
+int VR_HM_ViewOrigin( float out[3] ) {
+	if ( !vha.registered || !vha.haveView ) {
+		return 0;
+	}
+	VectorCopy( vha.viewOrg, out );
+	return 1;
+}
+
+int VR_HM_ServerMuzzle( float out[3] ) {
+	if ( !vha.registered || !vha.aimValid ) {
+		return 0;
+	}
+	VectorCopy( vha.M, out );
+	return 1;
+}
+
+int VR_HM_DebugLevel( void ) {
+	return vha.registered ? vha.debug->integer : 0;
+}
+
+int VR_HM_HandPose( const float viewOrg[3], float origin[3], float axis[3][3] ) {
+	int i;
+
+	if ( !vha.registered || !vha.aimValid || VR_HM_State() != VR_HM_PLAY ) {
+		return 0;
+	}
+	VectorAdd( viewOrg, vha.handOfs, origin );
+	for ( i = 0; i < 3; i++ ) {
+		VectorCopy( vha.handAxis[i], axis[i] );
+	}
+	return 1;
+}
+
+void VR_HM_Scene( const void *refdefPtr, const float *laserStart ) {
 	const refdef_t *fd = (const refdef_t *)refdefPtr;
 	static const byte red[4] = { 255, 40, 25, 255 }, redDim[4] = { 120, 20, 12, 255 };
 	static const byte blocked[4] = { 255, 170, 0, 255 }, laserRgb[4] = { 150, 25, 15, 255 };
@@ -486,7 +553,9 @@ void VR_HM_Scene( const void *refdefPtr ) {
 		VR_HM_ToWorld( vha.bodyYaw, h.origin, headOfs );
 	}
 	VectorAdd( fd->vieworg, headOfs, head );
-	{
+	if ( laserStart && !vha.muzzleBlocked ) {
+		VectorCopy( laserStart, start );
+	} else {
 		vec3_t shift;
 		VectorSubtract( fd->vieworg, vha.eye, shift );
 		VectorAdd( vha.rayStart, shift, start );

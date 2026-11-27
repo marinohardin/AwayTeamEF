@@ -54,6 +54,8 @@ static vrHmCvar_t vr_hmCvars[] = {
 
 static qboolean	vr_hmApplied;
 static qboolean	vr_hmWasActive;
+static cvar_t	*vr_menuLiveWorld;
+static cvar_t	*vr_hmTheater;
 
 int VR_HM_Active( void ) {
 	if ( !Com_Holomatch() || !cgvm || clc.state != CA_ACTIVE || clc.demoplaying ) {
@@ -168,6 +170,27 @@ void VR_HM_Restore( void ) {
 		vr_hmWasActive = qfalse;
 		VR_HM_AimReset();
 	}
+}
+
+int VR_HM_UiState( int menuUp ) {
+	vrHmState_t st;
+
+	if ( !vr_menuLiveWorld ) {
+		vr_menuLiveWorld = Cvar_Get( "vr_menuLiveWorld", "1", CVAR_ARCHIVE );
+		Cvar_CheckRange( vr_menuLiveWorld, 0, 1, qtrue );
+		Cvar_SetDescription( vr_menuLiveWorld, "VR, Holomatch: behind a menu the match goes on, dimmed (1), or the world freezes (0)." );
+		vr_hmTheater = Cvar_Get( "vr_hmTheater", "1", CVAR_ARCHIVE );
+		Cvar_CheckRange( vr_hmTheater, 0, 1, qtrue );
+		Cvar_SetDescription( vr_hmTheater, "VR, Holomatch: following another player and the intermission on a big screen (1), or in stereo (0)." );
+	}
+	if ( menuUp ) {
+		return vr_menuLiveWorld->integer ? 3 : 0;
+	}
+	st = VR_HM_State();
+	if ( ( st == VR_HM_FOLLOW || st == VR_HM_INTERMISSION ) && vr_hmTheater->integer ) {
+		return 4;
+	}
+	return 0;
 }
 
 const char *VR_HM_ArchiveValue( const char *name, const char *resetString ) {

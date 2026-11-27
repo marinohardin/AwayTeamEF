@@ -667,3 +667,117 @@ Not covered yet (round 2, or a later run):
 - The eye-to-muzzle check (§3.6) traces a point, not the projectile's size: for hitscan that is what
   the server does; for projectiles a gun touching a wall may differ by a few units.
 - `vr_hmDebug` (TEMP, default 0) prints the aim and the events for these tests. It is off unless set.
+
+---
+
+## 11. Round 2: the gun at the hand, the head, the controls and the UI (2026-11-27)
+
+Round 2 built steps 5–8 and ran spikes S3 and S5. Same setup as round 1: the Meta XR Simulator,
+a local dedicated server on 127.0.0.1 (`hm_voy1`, `sv_floodProtect 0` so that scripted commands
+aren't dropped), scripted `vr_debugHand`/`vr_debugHead`/`vr_debugTurn` input, and both cgames.
+
+### 11.1 What was built
+
+- **Scene interception (step 5, `vr/vr_hm_scene.c`).** While H1 is active, `CG_R_CLEARSCENE`,
+  `ADDREFENTITYTOSCENE`, `ADDLIGHTTOSCENE`, `RENDERSCENE` and `S_RESPATIALIZE` go through the
+  engine as in §4.1. Kept back and re-posed at render time:
+  - every `RF_FIRST_PERSON` entity, moved by one rigid move T = G'·G⁻¹. G' puts the gun's barrel
+    (its `tag_flash` to a point 512 units ahead) along the hand's ray, the grip (behind and below
+    the middle of the model's bounds) in the controller, wrist roll included. `RF_DEPTHHACK` is
+    cleared;
+  - beams (`RT_LINE`, `RT_ORIENTEDLINE`, `RT_LINE2`, `RT_BEZIER`, `RT_CYLINDER`, `RT_ELECTRICITY`)
+    that start at a flash point of the last 700 ms (within 2 units), at the server's muzzle (within 6:
+    cMod's event beams start at the rounded server muzzle), or failing those within 12 units of
+    either (the arc welder's beam starts at the player model's gun). Their start moves to the drawn
+    flash point; a bezier's control points are sheared with it;
+  - sprites (`RT_SPRITE`, `RT_ORIENTEDSPRITE`, `RT_ALPHAVERTPOLY`) within 12 units of a recent
+    flash point or muzzle: flashes, puffs and smoke move by as much as that point did;
+  - lights within 6 units of a flash point or 12 of a muzzle, the same way.
+  Models other than the view weapon are never moved (missiles start at the server's muzzle and
+  must stay on their path). The listener for sounds is the rendered head.
+  Tuning: `vr_hmGun` (0 = the game's own placement), `vr_hmGunAdjust`, `vr_hmGunAlign`, and a
+  per-weapon fit table (all zeros for now).
+- **Head (step 6, `vr/vr_hm_head.c`).** The eye moves freely within `vr_hmLeanRadius` (4 units)
+  of the game's eye. Past that the excess becomes step debt, walked off through the usercmd at
+  gain 8/s, at most 64 with the walk button set, in the body's frame. A ledge check (box trace
+  26 units down) and a wall check (a player-sized box) stop the walk; the eye then stays at the
+  clamp and the view fades from 0.03 m past it to black at 0.15 m. Crouching lowers the eye by the
+  real height, never above the game's eye (`min(0, h + duck)`), and the duck follows the server's
+  view height. `vr_hmRoomScale 0` turns walking off (clamp and fade only).
+- **Controls (step 7, `vr/vr_input_engine.c`).** In play in Holomatch, changed from single
+  player's map: right grip uses the holdable item (`+button2`), the left grip held shows the
+  scores (`+info`), Y shows the objectives (`+analysis`; the left menu button is still Escape),
+  right stick up/down next/previous weapon, right stick click the last weapon, left stick click
+  tapped toggles walk and run (held still recentres). The triggers fire and alt-fire as before.
+  Snap turns are spread at 15° per command (a change above 5° per command counts as a snap).
+- **UI (step 8).** A menu over a live match keeps the world drawn behind it (`vr_menuLiveWorld`,
+  `vr_uiState` 3). Following another player, and the intermission, show the cgame's flat view on
+  the theater screen (`vr_hmTheater`, `vr_uiState` 4). `vr_screenshot` used to wait for eye
+  images that a frozen menu or the theater never draws; it now writes the canvas alone then.
+
+### 11.2 S3: how the re-posed gun looks
+
+- All nine Holomatch weapons sit in the hand with the wrist roll, in both cgames (round-2
+  captures `r2-gun-*`). The barrel points along the laser.
+- A first try kept the game's own turn of the gun towards the screen's middle: the guns pointed
+  7.5–20° inwards. Aligning the flash-to-aim-point line with the hand's ray fixes that for every
+  weapon.
+- The I-MOD's beam is an `RT_LINE` in the stock cgame and an `RT_BEZIER` in cMod's; both start
+  at the drawn barrel. cMod's I-MOD also draws a large sprite at the server's muzzle, about 15
+  units from the flat flash point. The first build left it floating beside the gun; sprites at the
+  muzzle now move with it. Every moved sprite in the runs was within 1.7 units of the flash point
+  or muzzle.
+- Kept (not moved): zero-length lines and small sparks at impact points, and the player model's
+  own body and third-person gun (not drawn in first person).
+
+### 11.3 S5 and the head tests
+
+| Test | Result |
+|---|---|
+| Clamp | Max eye offset 4.0 units horizontally, never above the game's eye, over 1292 frames with leans up to 3 m. |
+| Walking | A 1.2 m lean walked the body about 34 units, and the debt went to 0. A 0.3 m lean moved the body 5.6 units (0.3 m = 9.6 units, less the 4-unit radius). |
+| Ledge | Leaning 3 m towards the upper level's edge: the body stopped at the edge (ledge check), the view faded to 1.0. |
+| Wall | Leaning 0.3 m into the corridor wall: the body didn't move (wall check), fade 0.97. |
+| Crouch | 0.45 m down: duck 14, view height 114 → 100, eye offset −0.40; flat observers see a crouching model. |
+| Snap turn | 45°: the angles sent went 86.3 → 101.3 → 116.7 → 131.7, 15° per command. |
+
+### 11.4 What flat observers see
+
+From a flat cMod client 150 units away (`r2-observer-*`): the model faces the aim (a 60° hand
+yaw turns it), no roll is ever visible (70° wrist roll), a 0.3 m lean to the left steps it out,
+a lean into a wall doesn't move it, a real crouch crouches it, and a snap turn looks like a quick
+turn. The stock-cgame observer was placed facing a wall in the last run, so its pictures show
+nothing; round 1 and the first observer run showed that it joins the cMod server normally, and what
+it sees comes from the same player state.
+
+### 11.5 Hits on a still flat player
+
+- **200 units, `cg_predictWeapons 1`:** phaser, compression rifle, I-MOD, tetryon disruptor and arc
+  welder, three hand poses each (two of them rolled ±20–30°): **15 of 15 shots hit** (server
+  `g_debugDamage`).
+- **580 units:** inconclusive. The aim points landed about 140 units past the target's scripted
+  spot, so the target wasn't on the line; not an aim result.
+- **Lag compensation:** this cMod build has no `g_unlagged` cvar (unknown command, nothing in
+  `cvarlist *unlag*`), so the `g_unlagged` 0/1/2 matrix couldn't be run as planned.
+
+### 11.6 The 20-minute session
+
+A 20-minute match with one flat player and two bots: no drops, no timeouts and no new warnings
+on the server or either client (only the usual missing bot voice files and slow-frame hitch
+notices while three copies shared the machine). Captures of the live-world menu, scores,
+objectives and console (`r2-ui-*`). Chat lines are hidden in the captures by `cl_noprint`, so the
+chat itself isn't pictured.
+
+### 11.7 Gates and deviations
+
+- Flat gates `base-1_4_0` (`EF_COOP=0`) and `coop-m2-base`: **ALL IDENTICAL**.
+- Everything new sits behind `EF_VR` and acts only while `VR_HM_Active()`.
+- `vr_hmDebug` 4 lists the scene's moves (TEMP, default 0).
+
+### 11.8 Still unverified
+
+- The intermission on the theater screen: a 20-minute run reached it, but its capture was lost
+  (before the `vr_screenshot` fix), and a short rerun didn't reach the timelimit.
+- Shots beyond 580 units at players, and the lag compensation matrix.
+- The comfort of the fade and of walking, real controller input and the per-weapon fit: on a
+  headset.

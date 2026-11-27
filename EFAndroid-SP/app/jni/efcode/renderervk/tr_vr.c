@@ -38,7 +38,8 @@ static cvar_t	*vr_cutsceneScreen;
 static cvar_t	*vr_theaterDistance;
 static cvar_t	*vr_theaterWidth;
 static cvar_t	*vr_theaterDim;
-static cvar_t	*vr_uiState;		// set by the client: 1 = a menu is up, 2 = a cinematic plays
+static cvar_t	*vr_uiState;		// set by the client: 1 = a menu is up, 2 = a cinematic plays,
+								// 3 = a menu over the live world, 4 = the theater screen (Holomatch)
 static cvar_t	*vr_debugCapture;
 static cvar_t	*vr_active;		// read-only, for the client: 1 while frames go to the headset
 static cvar_t	*vr_debugHeadTurn;	// "yaw pitch roll": a pretend head turn, for testing
@@ -46,6 +47,7 @@ static cvar_t	*vr_debugHeadTurn;	// "yaw pitch roll": a pretend head turn, for t
 typedef enum {
 	VRF_GAME,		// the world in stereo, the HUD on its quad
 	VRF_MENU,		// a menu over the frozen, dimmed world
+	VRF_MENU_LIVE,	// a menu over the live, dimmed world (Holomatch: the match goes on)
 	VRF_THEATER		// a cutscene camera or a cinematic on a big screen
 } vrFrameKind_t;
 
@@ -169,6 +171,12 @@ static vrFrameKind_t R_VR_FrameKind( void ) {
 	if ( ui == 1 ) {
 		return VRF_MENU;
 	}
+	if ( ui == 3 ) {
+		return VRF_MENU_LIVE;
+	}
+	if ( ui == 4 ) {
+		return VRF_THEATER;	// Holomatch: following a player, the intermission
+	}
 	// the game's own state, no game-module change: the cgame sets cg_cameraActive while a
 	// scripted camera runs, and the client reports cinematics (vr_uiState 2)
 	if ( vr_cutsceneScreen->integer && ( ui == 2 || ri.Cvar_VariableIntegerValue( "cg_cameraActive" ) ) ) {
@@ -251,8 +259,9 @@ void R_VR_BeginFrame( void ) {
 	R_VR_DebugHeadTurn();
 	r_vrKind = R_VR_FrameKind();
 	// in play the dimmer is the head-in-a-wall fade (vr_move.c)
-	dim = r_vrKind == VRF_MENU ? vr_menuDim->value : r_vrKind == VRF_THEATER ? vr_theaterDim->value : VR_GetComfortFade();
-	VR_BeginFrame( r_vrKind == VRF_GAME, dim );
+	dim = ( r_vrKind == VRF_MENU || r_vrKind == VRF_MENU_LIVE ) ? vr_menuDim->value :
+		r_vrKind == VRF_THEATER ? vr_theaterDim->value : VR_GetComfortFade();
+	VR_BeginFrame( r_vrKind == VRF_GAME || r_vrKind == VRF_MENU_LIVE, dim );
 	r_vrFrame = qtrue;
 }
 
@@ -278,7 +287,8 @@ void R_VR_EndFrame( void ) {
 		layers.placement.followAngle = vr_hudFollowAngle->value;
 		break;
 	case VRF_MENU:
-		layers.projection = VR_PROJ_FROZEN;
+	case VRF_MENU_LIVE:
+		layers.projection = r_vrKind == VRF_MENU_LIVE && vk_vr_eyes_written() ? VR_PROJ_FRESH : VR_PROJ_FROZEN;
 		layers.dim = vr_menuDim->value > 0.0f;
 		layers.quadMode = VR_QUAD_MENU;
 		layers.placement.distance = vr_menuDistance->value;
