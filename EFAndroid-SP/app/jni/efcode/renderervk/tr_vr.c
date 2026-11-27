@@ -194,7 +194,8 @@ void R_VR_BeginFrame( void ) {
 		ri.Cvar_Set( "vr_active", "1" );
 	}
 	r_vrKind = R_VR_FrameKind();
-	dim = r_vrKind == VRF_MENU ? vr_menuDim->value : r_vrKind == VRF_THEATER ? vr_theaterDim->value : 0.0f;
+	// in play the dimmer is the head-in-a-wall fade (vr_move.c)
+	dim = r_vrKind == VRF_MENU ? vr_menuDim->value : r_vrKind == VRF_THEATER ? vr_theaterDim->value : VR_GetComfortFade();
 	VR_BeginFrame( r_vrKind == VRF_GAME, dim );
 	r_vrFrame = qtrue;
 }
@@ -211,6 +212,8 @@ void R_VR_EndFrame( void ) {
 	switch ( r_vrKind ) {
 	case VRF_GAME:
 		layers.projection = vk_vr_eyes_written() ? VR_PROJ_FRESH : VR_PROJ_NONE;
+		layers.dim = VR_GetComfortFade() > 0.0f;	// the head is in a wall
+		layers.vignette = 1;						// shown while moving or turning (vr_comfortVignette)
 		layers.quadMode = VR_QUAD_HUD;
 		layers.placement.distance = vr_hudDistance->value;
 		layers.placement.width = vr_hudWidth->value;

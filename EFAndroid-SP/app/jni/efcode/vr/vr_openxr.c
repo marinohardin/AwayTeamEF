@@ -284,7 +284,15 @@ static struct {
 
 	// head origin for VR_GetEyeOffset
 	int					recenterPending;
+	unsigned			recenterCount;		// recentres done (vr_move.c watches it)
 	float				headOrigin[3];
+	float				debugHead[3];		// vr_debugHead: added to the located views
+
+	// comfort (vr_move.c): the wall fade (the dimmer) and the movement vignette
+	float				comfortFade;
+	float				comfortVignette;
+	vrSwapchain_t		vignette;			// filled once with a radial mask (vr_move: vignette)
+	int					vignetteState;		// 0 empty, 1 acquired for its fill this frame, 2 filled
 } vr;
 
 static PFN_xrEnumerateDisplayRefreshRatesFB qxrEnumerateDisplayRefreshRatesFB;
@@ -785,6 +793,13 @@ static int VR_CreateEyeSwapchains( void ) {
 	}
 	vr.dimmerAlpha = 0.0f;
 	vr.dimmerPending = 0.0f;
+
+	// the movement vignette: a radial mask, filled once by the renderer
+	if ( !VR_CreateSwapchain( &vr.vignette, "vignette", VR_VIGNETTE_SIZE, VR_VIGNETTE_SIZE, format,
+			XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT ) ) {
+		VR_Log( 0, "VR: no vignette layer\n" );
+	}
+	vr.vignetteState = 0;
 	return 1;
 }
 
@@ -959,6 +974,8 @@ void VR_DestroySession( void ) {
 	}
 	VR_DestroySwapchain( &vr.canvas );
 	VR_DestroySwapchain( &vr.dimmer );
+	VR_DestroySwapchain( &vr.vignette );
+	vr.vignetteState = 0;
 
 	if ( vr.viewSpace != XR_NULL_HANDLE ) {
 		qxrDestroySpace( vr.viewSpace );
@@ -1111,6 +1128,7 @@ static void VR_UpdateHeadOrigin( void ) {
 	}
 	memset( vr.anchors, 0, sizeof( vr.anchors ) );	// the layers are placed again in front
 	vr.recenterPending = 0;
+	vr.recenterCount++;
 }
 
 int VR_BeginFrame( int wantEyes, float dimAlpha ) {
@@ -1176,6 +1194,14 @@ int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 		return 0;	// no tracking this frame: submit nothing rather than a wrong view
 	}
 
+	if ( vr.debugHead[0] || vr.debugHead[1] || vr.debugHead[2] ) {
+		for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {	// vr_debugHead: a pretend head movement
+			vr.views[eye].pose.position.x += vr.debugHead[0];
+			vr.views[eye].pose.position.y += vr.debugHead[1];
+			vr.views[eye].pose.position.z += vr.debugHead[2];
+		}
+	}
+
 	VR_UpdateHeadOrigin();
 
 	if ( !loggedViews ) {	// once: the runtime's eye fields of view and the eye separation
@@ -1202,6 +1228,9 @@ int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 	vr.dimmerPending = 0.0f;
 	if ( dimAlpha > 0.0f && fabsf( dimAlpha - vr.dimmerAlpha ) > 0.005f && VR_Acquire( &vr.dimmer ) ) {
 		vr.dimmerPending = dimAlpha;
+	}
+	if ( vr.vignetteState == 0 && vr.comfortVignette > 0.0f && VR_Acquire( &vr.vignette ) ) {
+		vr.vignetteState = 1;	// the renderer fills it this frame
 	}
 
 	vr.frameActive = 1;
@@ -1245,6 +1274,52 @@ void VR_GetEyeOffset( int eye, float offset[3] ) {
 
 void VR_Recenter( void ) {
 	vr.recenterPending = 1;
+}
+
+void VR_GetHeadOrigin( float origin[3] ) {
+	origin[0] = vr.headOrigin[0];
+	origin[1] = vr.headOrigin[1];
+	origin[2] = vr.headOrigin[2];
+}
+
+void VR_SetHeadOrigin( const float origin[3] ) {
+	vr.headOrigin[0] = origin[0];
+	vr.headOrigin[1] = origin[1];
+	vr.headOrigin[2] = origin[2];
+}
+
+unsigned VR_GetRecenterCount( void ) {
+	return vr.recenterCount;
+}
+
+void VR_SetDebugHeadOffset( const float offset[3] ) {
+	vr.debugHead[0] = offset[0];
+	vr.debugHead[1] = offset[1];
+	vr.debugHead[2] = offset[2];
+}
+
+void VR_SetComfort( float fade, float vignette ) {
+	vr.comfortFade = fade < 0.0f ? 0.0f : fade > 1.0f ? 1.0f : fade;
+	vr.comfortVignette = vignette < 0.0f ? 0.0f : vignette > 1.0f ? 1.0f : vignette;
+}
+
+float VR_GetComfortFade( void ) {
+	return vr.comfortFade;
+}
+
+int VR_GetVignetteSwapchain( vrSwapchainInfo_t *info ) {
+	if ( vr.vignette.handle == XR_NULL_HANDLE ) {
+		return 0;
+	}
+	VR_FillInfo( &vr.vignette, info );
+	return 1;
+}
+
+int VR_GetVignetteImageIndex( void ) {
+	if ( !vr.frameActive || !vr.vignette.acquired || vr.vignetteState != 1 ) {
+		return -1;
+	}
+	return (int)vr.vignette.acquiredIndex;
 }
 
 int VR_GetEyeImageIndex( int eye ) {
@@ -1384,8 +1459,8 @@ static void VR_FrameStats( vrProjection_t projection, int layerCount ) {
 void VR_EndFrame( const vrFrameLayers_t *layers ) {
 	XrCompositionLayerProjectionView projViews[VR_MAX_EYES];
 	XrCompositionLayerProjection proj;
-	XrCompositionLayerQuad dimQuad, quad;
-	const XrCompositionLayerBaseHeader *list[3];
+	XrCompositionLayerQuad dimQuad, quad, vigQuad;
+	const XrCompositionLayerBaseHeader *list[4];
 	XrFrameEndInfo ei;
 	int eye, eyesAcquired, layerCount = 0;
 	vrProjection_t projection = VR_PROJ_NONE;
@@ -1405,6 +1480,10 @@ void VR_EndFrame( const vrFrameLayers_t *layers ) {
 	if ( vr.dimmer.acquired ) {
 		VR_Release( &vr.dimmer );
 		vr.dimmerAlpha = vr.dimmerPending;	// the renderer filled it this frame
+	}
+	if ( vr.vignette.acquired ) {
+		VR_Release( &vr.vignette );
+		vr.vignetteState = 2;	// filled once; the runtime keeps showing the last released image
 	}
 
 	if ( layers && vr.frameActive ) {
@@ -1443,6 +1522,26 @@ void VR_EndFrame( const vrFrameLayers_t *layers ) {
 		if ( projection == VR_PROJ_FRESH ) {
 			memcpy( vr.frozenViews, vr.views, sizeof( vr.frozenViews ) );
 			vr.frozenValid = 1;
+		}
+
+		if ( layers->vignette && vr.vignetteState == 2 && vr.vignette.released && vr.comfortVignette > 0.01f ) {
+			// head-locked; the mask's clear disc is VR_VIGNETTE_HOLE of its half-size, so the
+			// quad's size sets how much of the view stays clear: from about 58 degrees off the
+			// centre (nothing visible) at strength 0 to about 29 degrees at strength 1
+			const float clearTan = 1.6f - 1.05f * vr.comfortVignette;
+			memset( &vigQuad, 0, sizeof( vigQuad ) );
+			vigQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+			vigQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+			vigQuad.space = vr.viewSpace != XR_NULL_HANDLE ? vr.viewSpace : vr.space;
+			vigQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+			vigQuad.subImage.swapchain = vr.vignette.handle;
+			vigQuad.subImage.imageRect.extent.width = (int32_t)vr.vignette.width;
+			vigQuad.subImage.imageRect.extent.height = (int32_t)vr.vignette.height;
+			vigQuad.pose.orientation.w = 1.0f;
+			vigQuad.pose.position.z = -1.0f;
+			vigQuad.size.width = 2.0f * clearTan / VR_VIGNETTE_HOLE;
+			vigQuad.size.height = vigQuad.size.width;
+			list[layerCount++] = (const XrCompositionLayerBaseHeader *)&vigQuad;
 		}
 
 		if ( layers->dim && vr.dimmer.released && vr.dimmerAlpha > 0.0f ) {

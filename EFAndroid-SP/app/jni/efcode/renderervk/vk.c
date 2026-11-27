@@ -8654,6 +8654,10 @@ static struct {
 	vrSwapchainInfo_t canvas;
 	qboolean		dimmer_ready;
 	vrSwapchainInfo_t dimmer;
+	qboolean		vignette_ready;
+	vrSwapchainInfo_t vignette;
+	VkBuffer		vignette_buffer;	// the mask's pixels, for its one-time fill
+	VkDeviceMemory	vignette_memory;
 
 	// per frame
 	int				target;			// -1 the canvas (main pass), else the eye being drawn
@@ -8901,6 +8905,7 @@ static void vk_vr_create_resources( void )
 		ri.Printf( PRINT_WARNING, "VR: no 2D layer: the HUD and menus won't show in the headset\n" );
 	}
 	vk_vr_state.dimmer_ready = VR_GetDimmerSwapchain( &vk_vr_state.dimmer ) ? qtrue : qfalse;
+	vk_vr_state.vignette_ready = VR_GetVignetteSwapchain( &vk_vr_state.vignette ) ? qtrue : qfalse;
 
 	vk_vr_state.ready = qtrue;
 	vk_vr_state.target = -1;
@@ -8935,6 +8940,8 @@ static void vk_vr_destroy_resources( void )
 		if ( vk_vr_state.memory[i] ) qvkFreeMemory( vk.device, vk_vr_state.memory[i], NULL );
 	}
 	if ( vk_vr_state.eye_pass ) qvkDestroyRenderPass( vk.device, vk_vr_state.eye_pass, NULL );
+	if ( vk_vr_state.vignette_buffer ) qvkDestroyBuffer( vk.device, vk_vr_state.vignette_buffer, NULL );
+	if ( vk_vr_state.vignette_memory ) qvkFreeMemory( vk.device, vk_vr_state.vignette_memory, NULL );
 	if ( vk_vr_state.main_resume ) qvkDestroyRenderPass( vk.device, vk_vr_state.main_resume, NULL );
 
 	Com_Memset( &vk_vr_state, 0, sizeof( vk_vr_state ) );
@@ -9146,6 +9153,66 @@ static void vk_vr_capture_finish( void )
 	vk_vr_state.capture_memory = VK_NULL_HANDLE;
 }
 
+/*
+The movement vignette's mask, once: premultiplied black whose alpha is 0 inside a disc of
+VR_VIGNETTE_HOLE of the half-size, rising smoothly to opaque at twice that radius. The
+runtime shows it on a head-locked quad sized for the wanted strength (vr_openxr.c).
+*/
+static void vk_vr_fill_vignette( VkImage dst )
+{
+	const uint32_t n = VR_VIGNETTE_SIZE;
+	const VkDeviceSize bytes = (VkDeviceSize)n * n * 4;
+	VkBufferCreateInfo bdesc;
+	VkMemoryRequirements reqs;
+	VkMemoryAllocateInfo alloc;
+	VkBufferImageCopy region;
+	byte *pixels;
+	uint32_t x, y;
+
+	if ( vk_vr_state.vignette_buffer == VK_NULL_HANDLE ) {
+		Com_Memset( &bdesc, 0, sizeof( bdesc ) );
+		bdesc.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		bdesc.size = bytes;
+		bdesc.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+		bdesc.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		VK_CHECK( qvkCreateBuffer( vk.device, &bdesc, NULL, &vk_vr_state.vignette_buffer ) );
+		qvkGetBufferMemoryRequirements( vk.device, vk_vr_state.vignette_buffer, &reqs );
+		Com_Memset( &alloc, 0, sizeof( alloc ) );
+		alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		alloc.allocationSize = reqs.size;
+		alloc.memoryTypeIndex = find_memory_type( reqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT );
+		VK_CHECK( qvkAllocateMemory( vk.device, &alloc, NULL, &vk_vr_state.vignette_memory ) );
+		VK_CHECK( qvkBindBufferMemory( vk.device, vk_vr_state.vignette_buffer, vk_vr_state.vignette_memory, 0 ) );
+
+		VK_CHECK( qvkMapMemory( vk.device, vk_vr_state.vignette_memory, 0, bytes, 0, (void **)&pixels ) );
+		for ( y = 0; y < n; y++ ) {
+			for ( x = 0; x < n; x++ ) {
+				const float u = ( x + 0.5f ) / n * 2.0f - 1.0f, v = ( y + 0.5f ) / n * 2.0f - 1.0f;
+				float t = ( sqrtf( u * u + v * v ) - VR_VIGNETTE_HOLE ) / VR_VIGNETTE_HOLE;
+				byte *p = pixels + ( y * n + x ) * 4;
+				t = t < 0.0f ? 0.0f : t > 1.0f ? 1.0f : t;
+				p[0] = p[1] = p[2] = 0;
+				p[3] = (byte)( 255.0f * t * t * ( 3.0f - 2.0f * t ) + 0.5f );
+			}
+		}
+		qvkUnmapMemory( vk.device, vk_vr_state.vignette_memory );
+	}
+
+	Com_Memset( &region, 0, sizeof( region ) );
+	region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	region.imageSubresource.layerCount = 1;
+	region.imageExtent.width = n;
+	region.imageExtent.height = n;
+	region.imageExtent.depth = 1;
+	vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT );
+	qvkCmdCopyBufferToImage( vk.cmd->command_buffer, vk_vr_state.vignette_buffer, dst,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region );
+	vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+		VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT );
+}
+
 // after the last render pass of the frame: the canvas into the 2D layer, and the dimmer fill
 static void vk_vr_end_frame( void )
 {
@@ -9210,6 +9277,11 @@ static void vk_vr_end_frame( void )
 		vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
 			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT );
+	}
+
+	index = VR_GetVignetteImageIndex();
+	if ( vk_vr_state.vignette_ready && index >= 0 && (uint32_t)index < vk_vr_state.vignette.imageCount ) {
+		vk_vr_fill_vignette( vk_vr_state.vignette.images[ index ] );
 	}
 }
 

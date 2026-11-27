@@ -67,6 +67,7 @@ itemInfo_t			cg_items[MAX_ITEMS];
 vmCvar_t	cg_forceAspect;
 vmCvar_t	cg_centertime;
 vmCvar_t	cg_runpitch;
+vmCvar_t	cg_vrActive;	// vr_active: the VR renderer is drawing to a headset (0 in every flat build)
 vmCvar_t	cg_runroll;
 vmCvar_t	cg_bobup;
 vmCvar_t	cg_bobpitch;
@@ -172,6 +173,7 @@ cvarTable_t		cvarTable[] = {
 	{ &cg_centertime, "cg_centertime", "3", CVAR_CHEAT },
 
 	{ &cg_runpitch, "cg_runpitch", "0.002", CVAR_ARCHIVE},
+	{ &cg_vrActive, "vr_active", "0", CVAR_ROM },
 	{ &cg_runroll, "cg_runroll", "0.005", CVAR_ARCHIVE },
 	{ &cg_bobup , "cg_bobup", "0.005", CVAR_ARCHIVE },
 	{ &cg_bobpitch, "cg_bobpitch", "0.002", CVAR_ARCHIVE },

@@ -359,6 +359,9 @@ target_link_libraries(efsp PRIVATE sp_game_bridge ${EF_SDL_TARGET})
 if(EF_VR)
   add_subdirectory(${EF}/vr ef_vr)
   target_link_libraries(efsp PRIVATE ef_vr)	# also defines EF_VR for the engine sources
+  # the SP bridge's VR hooks (room-scale movement; vr_move.h)
+  target_compile_definitions(sp_game_bridge PRIVATE EF_VR)
+  target_include_directories(sp_game_bridge PRIVATE ${EF}/vr)
 endif()
 if(APPLE)
   target_link_libraries(efsp PRIVATE

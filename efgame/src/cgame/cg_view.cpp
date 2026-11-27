@@ -350,6 +350,32 @@ static void CG_StepOffset( void ) {
 	}
 }
 
+// the eye, for the game (shots, NPC sight)
+static void CG_StoreEyePoint( void ) {
+	centity_t	*playerCent = &cg_entities[COOP_ViewClientNum()];
+
+	if ( playerCent && playerCent->gent && playerCent->gent->client )
+	{
+		VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.eyePoint );
+		VectorCopy( cg.refdefViewAngles, playerCent->gent->client->renderInfo.eyeAngles );
+	}
+}
+
+// VR: the standing eye height, also while crouched (the headset lowers the eye)
+static int CG_VRViewHeight( void ) {
+	const playerState_t	*ps = &cg.predicted_player_state;
+	centity_t			*cent;
+
+	if ( !( ps->pm_flags & PMF_DUCKED ) ) {
+		return ps->viewheight;
+	}
+	cent = &cg_entities[ps->clientNum];
+	if ( cent->gent && cent->gent->client ) {
+		return cent->gent->client->standheight + STANDARD_VIEWHEIGHT_OFFSET;
+	}
+	return DEFAULT_MAXS_2 + STANDARD_VIEWHEIGHT_OFFSET;
+}
+
 /*
 ===============
 CG_OffsetFirstPersonView
@@ -437,6 +463,17 @@ static void CG_OffsetFirstPersonView( void ) {
 
 //===================================
 
+	if ( cg_vrActive.integer )
+	{
+		// VR: the headset moves the eye from here (the renderer adds the real head's offset),
+		// so a crouch, a lean and the bob come from the player's own head, not added again:
+		// the standing eye height, smoothed stairs, no bob, landing dip or key lean
+		origin[2] += CG_VRViewHeight();
+		CG_StepOffset();
+		CG_StoreEyePoint();
+		return;
+	}
+
 	// add view height
 	origin[2] += cg.predicted_player_state.viewheight;
 
@@ -492,15 +529,7 @@ static void CG_OffsetFirstPersonView( void ) {
 	}
 #endif
 
-	{
-		centity_t	*playerCent = &cg_entities[COOP_ViewClientNum()];
-
-		if ( playerCent && playerCent->gent && playerCent->gent->client )
-		{
-			VectorCopy( cg.refdef.vieworg, playerCent->gent->client->renderInfo.eyePoint );
-			VectorCopy( cg.refdefViewAngles, playerCent->gent->client->renderInfo.eyeAngles );
-		}
-	}
+	CG_StoreEyePoint();
 }
 
 //======================================================================
