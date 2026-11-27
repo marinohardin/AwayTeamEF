@@ -5,6 +5,7 @@
 #include "../game/anims.h"
 #include "../game/boltons.h"
 #include "../game/coop_public.h"
+#include "../game/vr_shared.h"
 
 #define	LOOK_SWING_SCALE	0.5
 
@@ -2198,6 +2199,10 @@ void CG_LightningBolt( centity_t *cent, vec3_t origin )
 		angs[ROLL] = 0;
 	}
 	AngleVectors( angs, forward, NULL, NULL );
+	if ( cent->gent->s.number == COOP_ViewClientNum() && !cg.renderingThirdPerson )
+	{	// VR: the beam leaves the hand along its pointing ray
+		CG_VR_ShotRay( origin, org, forward );
+	}
 
 	VectorMA( org, weaponData[cent->currentState.weapon].range, forward, end );
 	

@@ -1,4 +1,5 @@
 #include "cg_local.h"
+#include "vr_shared.h"
 #include "../game/anims.h"
 #include "cg_media.h"
 #include "../game/coop_public.h"
@@ -521,6 +522,7 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 	centity_t	*cent;
 	clientInfo_t	*ci;
 	float		fovOffset;
+	qboolean	vrHand = qfalse;	// VR: the gun is in the tracked hand
 
 	// no gun if in third person view
 	if ( cg.renderingThirdPerson )
@@ -530,8 +532,8 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 		return;
 
 	cent = &cg_entities[cg.snap->ps.clientNum];
-	// allow the gun to be completely removed
-	if ( !cg_drawGun.integer || cg.zoomed ) {
+	// allow the gun to be completely removed (in VR the hand always holds it)
+	if ( ( !cg_drawGun.integer || cg.zoomed ) && !cg_vrPose.hand[VR_HAND_WEAPON].valid ) {
 		vec3_t		origin;
 
 		// special hack for lightning guns...
@@ -560,6 +562,11 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 
 	memset (&hand, 0, sizeof(hand));
 
+	if ( cg_vrPose.active && CG_VR_PlaceViewWeapon( ps->weapon, weapon->handsModel, &hand ) ) {
+		// VR: at the controller, turned with it; no bob, no sway, no landing dip
+		vrHand = qtrue;
+		VectorClear( angles );
+	} else {
 	// set up gun position
 	CG_CalculateWeaponPosition( hand.origin, angles );
 
@@ -568,6 +575,7 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 	VectorMA( hand.origin, (cg_gun_z.value+fovOffset), cg.refdef.viewaxis[2], hand.origin );
 
 	AnglesToAxis( angles, hand.axis );
+	}
 
 	// map torso animations to weapon animations
 	if ( cg_gun_frame.integer ) {
@@ -609,6 +617,9 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 	CG_PositionEntityOnTag( &gun, &hand, weapon->handsModel, "tag_weapon");
 
 	gun.renderfx = RF_MINLIGHT | RF_DEPTHHACK | RF_FIRST_PERSON;
+	if ( vrHand ) {
+		gun.renderfx = RF_MINLIGHT | RF_FIRST_PERSON;	// a real object in the room: depth-tested
+	}
 
 	cgi_R_AddRefEntityToScene( &gun );
 
@@ -669,7 +680,7 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 		if ( ( cg.time - cg_entities[ cg.snap->ps.clientNum ].muzzleFlashTime <= MUZZLE_FLASH_TIME ) ||
 		   ( ( ps->weapon == WP_PHASER ) && (  cent->currentState.eFlags & EF_FIRING ) ) )
 		{
-			flash.renderfx = RF_DEPTHHACK | RF_FIRST_PERSON;
+			flash.renderfx = vrHand ? RF_FIRST_PERSON : RF_DEPTHHACK | RF_FIRST_PERSON;
 			cgi_R_AddRefEntityToScene( &flash );
 		}
 	}
@@ -684,6 +695,9 @@ void CG_AddViewWeapon( playerState_t *ps ) {
 		cent->gent->client->renderInfo.mPCalcTime = cg.time;
 	}
 	COOP_NoteViewMuzzle( flash.origin );
+	if ( vrHand ) {
+		CG_VR_AddAimHelpers( flash.origin );
+	}
 }
 
 /*

@@ -77,6 +77,9 @@ static struct {
 	cvar_t		*turnSpeed;
 	cvar_t		*deadzone;
 	cvar_t		*cursorSpeed;
+	cvar_t		*leftHanded;
+	cvar_t		*debugHand;
+	cvar_t		*debugHandPose;
 
 	vrMode_t	mode;
 	int			lastTime;
@@ -104,6 +107,16 @@ static void VR_RegisterCvars( void ) {
 	Cvar_CheckRange( vrc.deadzone, 0, 0.9f, qfalse );
 	vrc.cursorSpeed = Cvar_Get( "vr_menuCursorSpeed", "500", CVAR_ARCHIVE );
 	Cvar_CheckRange( vrc.cursorSpeed, 50, 3000, qfalse );
+	vrc.leftHanded = Cvar_Get( "vr_leftHanded", "0", CVAR_ARCHIVE );
+	Cvar_CheckRange( vrc.leftHanded, 0, 1, qtrue );
+	Cvar_SetDescription( vrc.leftHanded, "VR: 1 = the weapon is in the left hand, and the left trigger fires." );
+	vrc.debugHand = Cvar_Get( "vr_debugHand", "0", CVAR_TEMP );
+	Cvar_CheckRange( vrc.debugHand, 0, 2, qtrue );
+	Cvar_SetDescription( vrc.debugHand, "VR debugging: drive the weapon hand without a controller. "
+		"1 = a slow scripted roll and sweep, 2 = the fixed pose in vr_debugHandPose." );
+	vrc.debugHandPose = Cvar_Get( "vr_debugHandPose", "0.40 0.20 -0.30 0 0 0", CVAR_TEMP );
+	Cvar_SetDescription( vrc.debugHandPose, "VR debugging (vr_debugHand 2): the weapon hand as "
+		"\"forward right up pitch yaw roll\", metres from the head and degrees from the body's facing." );
 	vrc.snapArmed = qtrue;
 	vrc.registered = qtrue;
 }
@@ -205,8 +218,13 @@ void VR_EngineInput( const vrInputState_t *in ) {
 	vrc.lastTime = time;
 
 	// logical buttons (triggers with hysteresis)
-	now[IN_ATTACK] = in->attack > ( vrc.down[IN_ATTACK] ? VR_TRIGGER_OFF : VR_TRIGGER_ON );
-	now[IN_ALTATTACK] = in->altAttack > ( vrc.down[IN_ALTATTACK] ? VR_TRIGGER_OFF : VR_TRIGGER_ON );
+	{	// the weapon hand's trigger fires, the other one is alternate fire
+		float fire = vrc.leftHanded->integer ? in->altAttack : in->attack;
+		float alt = vrc.leftHanded->integer ? in->attack : in->altAttack;
+
+		now[IN_ATTACK] = fire > ( vrc.down[IN_ATTACK] ? VR_TRIGGER_OFF : VR_TRIGGER_ON );
+		now[IN_ALTATTACK] = alt > ( vrc.down[IN_ALTATTACK] ? VR_TRIGGER_OFF : VR_TRIGGER_ON );
+	}
 	now[IN_JUMP] = ( in->buttons & VR_BUTTON_JUMP ) != 0;
 	now[IN_CROUCH] = ( in->buttons & VR_BUTTON_CROUCH ) != 0;
 	now[IN_USE] = ( in->buttons & VR_BUTTON_USE ) != 0;
@@ -292,4 +310,111 @@ void VR_EngineInput( const vrInputState_t *in ) {
 		}
 		VR_SetArrow( key, time );
 	}
+}
+
+/*
+==================
+The hand poses for the game modules (VR_EngineBodyHand, through the single-player bridge's
+CG_VR_GETPOSE). Same convention as the eye views (renderervk/tr_vr.c): the offset from the
+recentred head origin times vr_worldScale, OpenXR axes turned into the game's, and the body's
+yaw left for the game to apply. So a hand drawn at the game's eye plus this offset lines up
+with the eyes the renderer draws.
+==================
+*/
+
+// OpenXR (+X right, +Y up, -Z forward) to the game's body frame (+X forward, +Y left, +Z up)
+static void VR_FromXr( const float *xr, float *out ) {
+	out[0] = -xr[2];
+	out[1] = -xr[0];
+	out[2] = xr[1];
+}
+
+// vr_debugHand: a pose made up in the body frame, relative to the current head position
+static void VR_DebugHand( const vrInputState_t *in, const float *headOrigin, float scale, vrBodyHand_t *out ) {
+	float fwd = 0.40f, right = 0.20f, up = -0.30f, rel[3], head[3];
+	vec3_t angles, axis[3];
+	int i;
+
+	VectorClear( angles );
+	if ( vrc.debugHand->integer == 1 ) {
+		// slow and easy to follow: a full wrist roll back and forth, a sweep left and right
+		float t = Sys_Milliseconds() * 0.001f;
+		angles[ROLL] = 90.0f * sin( t * 0.5f );
+		angles[YAW] = 35.0f * sin( t * 0.23f );
+		angles[PITCH] = 12.0f * sin( t * 0.31f );
+	} else {
+		sscanf( vrc.debugHandPose->string, "%f %f %f %f %f %f", &fwd, &right, &up,
+			&angles[PITCH], &angles[YAW], &angles[ROLL] );
+	}
+	AnglesToAxis( angles, axis );
+
+	// follow the head: the made-up hand is relative to where the head is now
+	head[0] = head[1] = head[2] = 0.0f;
+	if ( in->head.valid ) {
+		for ( i = 0; i < 3; i++ ) {
+			rel[i] = in->head.position[i] - headOrigin[i];
+		}
+		VR_FromXr( rel, head );
+	}
+	out->origin[0] = ( head[0] + fwd ) * scale;
+	out->origin[1] = ( head[1] - right ) * scale;
+	out->origin[2] = ( head[2] + up ) * scale;
+	for ( i = 0; i < 3; i++ ) {
+		VectorCopy( axis[i], out->axis[i] );
+	}
+	out->valid = 1;
+}
+
+int VR_EngineBodyHand( int which, vrBodyHand_t *out ) {
+	const vrInputState_t *in = VR_GetInputState();
+	const vrPose_t *p;
+	float headOrigin[3], rel[3], col[3][3], v[3];
+	float qx, qy, qz, qw, scale;
+	int hand, i;
+
+	Com_Memset( out, 0, sizeof( *out ) );
+	if ( !vrc.registered ) {
+		VR_RegisterCvars();
+	}
+	if ( !in || !Cvar_VariableIntegerValue( "vr_active" ) ) {
+		return 0;
+	}
+	scale = Cvar_VariableValue( "vr_worldScale" );
+	if ( scale <= 0.0f ) {
+		scale = 32.0f;
+	}
+	VR_GetHeadOrigin( headOrigin );
+
+	if ( which == VR_BODY_WEAPON && vrc.debugHand->integer ) {
+		VR_DebugHand( in, headOrigin, scale, out );
+		return 1;
+	}
+	if ( !in->active ) {
+		return 0;
+	}
+	hand = ( which == VR_BODY_WEAPON ) != ( vrc.leftHanded->integer != 0 ) ? VR_HAND_RIGHT : VR_HAND_LEFT;
+	p = &in->aim[hand];
+	if ( !p->valid ) {
+		return 0;
+	}
+
+	for ( i = 0; i < 3; i++ ) {
+		rel[i] = p->position[i] - headOrigin[i];
+	}
+	VR_FromXr( rel, out->origin );
+	VectorScale( out->origin, scale, out->origin );
+
+	// the rotation's columns: the controller's right, up and back axes in OpenXR space
+	qx = p->orientation[0]; qy = p->orientation[1]; qz = p->orientation[2]; qw = p->orientation[3];
+	col[0][0] = 1 - 2 * ( qy * qy + qz * qz ); col[0][1] = 2 * ( qx * qy + qw * qz ); col[0][2] = 2 * ( qx * qz - qw * qy );
+	col[1][0] = 2 * ( qx * qy - qw * qz ); col[1][1] = 1 - 2 * ( qx * qx + qz * qz ); col[1][2] = 2 * ( qy * qz + qw * qx );
+	col[2][0] = 2 * ( qx * qz + qw * qy ); col[2][1] = 2 * ( qy * qz - qw * qx ); col[2][2] = 1 - 2 * ( qx * qx + qy * qy );
+
+	v[0] = -col[2][0]; v[1] = -col[2][1]; v[2] = -col[2][2];	// forward = -back
+	VR_FromXr( v, out->axis[0] );
+	v[0] = -col[0][0]; v[1] = -col[0][1]; v[2] = -col[0][2];	// left = -right
+	VR_FromXr( v, out->axis[1] );
+	VR_FromXr( col[1], out->axis[2] );
+	out->valid = 1;
+	return 1;
 }

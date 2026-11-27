@@ -9,11 +9,13 @@
 #include "objectives.h"
 #include "../cgame/cg_text.h"
 #include "coop_fx.h"		// co-op: the guest sees this file's direct cgame effects too (EF_COOP only)
+#include "vr_shared.h"
 
 extern vmCvar_t cg_thirdPerson;
 
 static	vec3_t	_forward, vright, up;
 static	vec3_t	muzzle;
+static	qboolean g_vrShot;	// VR: this shot leaves the hand (muzzle, _forward), not the eye
 
 #define	BORG_ADAPT_NUM_HITS 10
 extern int killPlayerTimer;
@@ -150,7 +152,7 @@ void WP_FirePhaser( gentity_t *ent, qboolean alt_fire )
 	qboolean	do_damage = qtrue, weak = qfalse;
 
 		// Make sure that the damage trace corresponds with the trace done for the actual effect or weird things could happen
-	if ( COOP_IsPlayer( ent ) )
+	if ( COOP_IsPlayer( ent ) && !g_vrShot )
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
 	else
 		VectorCopy( muzzle, start );
@@ -219,7 +221,7 @@ void WP_FireCompressionRifle ( gentity_t *ent, qboolean alt_fire )
 	qboolean	do_damage = qtrue;
 	qboolean	render_impact = qtrue;
 
-	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) )
+	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) && !g_vrShot )
 		// The trace start will originate at the eye so we can ensure that it hits the crosshair.
 		// This can cause small clipping errors, but it's probably not that big of a deal at this point.
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
@@ -336,7 +338,7 @@ void WP_FireIMOD ( gentity_t *ent, qboolean alt_fire )
 	gentity_t	*traceEnt;
 	qboolean	render_impact = qtrue;
 
-	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) )
+	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) && !g_vrShot )
 		// The trace start will originate at the eye so we can ensure that it hits the crosshair.
 		// This can cause small clipping errors, but it's probably not that big of a deal at this point.
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
@@ -1209,7 +1211,7 @@ void WP_FireDreadnoughtBeam( gentity_t *ent )
 	qboolean	do_damage = qtrue;
 
 	// Make sure that the damage trace corresponds with the trace done for the actual effect or weird things could happen
-	if ( COOP_IsPlayer( ent ) )
+	if ( COOP_IsPlayer( ent ) && !g_vrShot )
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
 	else
 		VectorCopy( muzzle, start );
@@ -1812,7 +1814,7 @@ void WP_FireProtonGun ( gentity_t *ent, qboolean alt_fire )
 	qboolean	do_damage = qtrue;
 	qboolean	render_impact = qtrue;
 
-	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) )
+	if ( COOP_IsPlayer( ent ) && !COOP_ThirdPerson( ent ) && !g_vrShot )
 		// The trace start will originate at the eye so we can ensure that it hits the crosshair.
 		// This can cause small clipping errors, but it's probably not that big of a deal at this point.
 		VectorCopy( ent->client->renderInfo.eyePoint, start );
@@ -3004,6 +3006,59 @@ void CalcMuzzlePoint( gentity_t *ent, vec3_t forward, vec3_t right, vec3_t up, v
 	AddLeanOfs(ent, muzzlePoint);
 }
 
+/*
+W_VRHandShot
+
+VR single player: the player's shot leaves the weapon hand along its pointing ray. The muzzle is
+where the cgame drew the weapon's flash (or the hand itself), traced from the eye so a gun pushed
+through a wall fires from this side of it. Only for the player (not co-op player 2, not NPCs),
+and only while the engine reports tracked VR hands; otherwise qfalse and the shot is as always.
+*/
+static qboolean W_VRHandShot( gentity_t *ent )
+{
+	vrGamePose_t	pose;
+	vec3_t			eye, hand, axis[3], dir;
+	trace_t			tr;
+
+	if ( ent->s.number != 0 || !ent->client || ent->NPC )
+		return qfalse;
+	if ( !VR_FetchPose( &pose ) )
+		return qfalse;
+
+	VectorCopy( ent->currentOrigin, eye );
+	eye[2] += ent->client->ps.viewheight;
+	if ( !VR_HandToWorld( &pose, VR_HAND_WEAPON, eye, ent->client->ps.viewangles[YAW], hand, axis ) )
+		return qfalse;
+
+	VectorCopy( axis[0], _forward );
+	VectorScale( axis[1], -1, vright );
+	VectorCopy( axis[2], up );
+
+	if ( ent->client->renderInfo.mPCalcTime >= level.time - FRAMETIME*2 )
+		VectorCopy( ent->client->renderInfo.muzzlePoint, muzzle );	// the drawn weapon's flash tag
+	else
+		VectorMA( hand, 8, _forward, muzzle );
+
+	gi.trace( &tr, eye, NULL, NULL, muzzle, ent->s.number, MASK_SHOT );
+	if ( tr.startsolid || tr.allsolid )
+	{
+		VectorCopy( eye, muzzle );
+	}
+	else if ( tr.fraction < 1.0f )
+	{
+		VectorSubtract( muzzle, eye, dir );
+		VectorNormalize( dir );
+		VectorMA( tr.endpos, -1, dir, muzzle );
+	}
+	if ( VR_DebugShots() )
+	{
+		gi.Printf( "VR shot: eye %.1f %.1f %.1f hand %.1f %.1f %.1f muzzle %.1f %.1f %.1f (eye-to-hand trace %.3f) fwd %.2f %.2f %.2f\n",
+			eye[0], eye[1], eye[2], hand[0], hand[1], hand[2], muzzle[0], muzzle[1], muzzle[2], tr.fraction,
+			_forward[0], _forward[1], _forward[2] );
+	}
+	return qtrue;
+}
+
 //---------------------------------------------------------
 void FireWeapon( gentity_t *ent, qboolean alt_fire ) 
 //---------------------------------------------------------
@@ -3011,11 +3066,15 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 	// track shots taken for accuracy tracking. 
 	ent->client->ps.persistant[PERS_ACCURACY_SHOTS]++;
 
+	ent->alt_fire = alt_fire;
+	g_vrShot = W_VRHandShot( ent );
+	if ( !g_vrShot )
+	{
 	// set aiming directions
 	AngleVectors (ent->client->ps.viewangles, _forward, vright, up);
 
-	ent->alt_fire = alt_fire;
 	CalcMuzzlePoint ( ent, _forward, vright, up, muzzle , 0);
+	}
 	COOP_ShotStart( ent, alt_fire );
 
 	// fire the specific weapon
@@ -3165,6 +3224,7 @@ void FireWeapon( gentity_t *ent, qboolean alt_fire )
 		break;
 	}
 	COOP_ShotEnd();
+	g_vrShot = qfalse;
 }
 
 //DETPACK

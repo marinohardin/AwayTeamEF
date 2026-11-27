@@ -11,6 +11,10 @@
 #include "tr_types.h"             // glconfig_t, refEntity_t, refdef_t
 #include "../cgame/cg_public.h"   // cgameImport_t (CG_*), snapshot_t
 #include "../client/vmachine.h"   // cgameExport_t (CG_INIT, CG_DRAW_ACTIVE_FRAME)
+#ifdef EF_VR
+#include "vr_shared.h"            // CG_VR_GETPOSE, vrGamePose_t (efgame/src/game)
+#include "vr_input.h"             // VR_EngineBodyHand (efcode/vr)
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1442,6 +1446,23 @@ static int SP_AS_GetBModelSound(const char* name, int stage){
     return -1;
 }
 
+#ifdef EF_VR
+// CG_VR_GETPOSE: the hands for the cgame's view weapon and the game's shots (efgame vr_shared.h)
+static int SP_VRGetPose( vrGamePose_t *pose ){
+    memset( pose, 0, sizeof(*pose) );
+    pose->active = Cvar_VariableIntegerValue( "vr_active" ) ? 1 : 0;
+    if( !pose->active ) return 0;
+    for( int h = 0; h < VR_NUM_HANDS; h++ ){
+        vrBodyHand_t b;
+        if( !VR_EngineBodyHand( h == VR_HAND_WEAPON ? VR_BODY_WEAPON : VR_BODY_OFFHAND, &b ) ) continue;
+        pose->hand[h].valid = 1;
+        memcpy( pose->hand[h].origin, b.origin, sizeof(b.origin) );
+        memcpy( pose->hand[h].axis, b.axis, sizeof(b.axis) );
+    }
+    return 1;
+}
+#endif
+
 static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     intptr_t args[16]; va_list ap; va_start(ap,cmd);
     for(int i=0;i<16;i++) args[i]=va_arg(ap,intptr_t);
@@ -1512,6 +1533,9 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     case CG_R_DRAWROTATEPIC:  SPR_DrawStretchPic(VMF(0),VMF(1),VMF(2),VMF(3),VMF(4),VMF(5),VMF(6),VMF(7),(int)A(9)); return 0; // rotation VMF(8) dropped
     case CG_R_SCISSOR:        return 0;     // no clip-rect support in re; HUD draws unclipped
     case CG_S_GETSAMPLELENGTH: return SPR_S_GetSampleLength((int)A(0));   // real sound duration ms (subtitle timing)
+#ifdef EF_VR
+    case CG_VR_GETPOSE:   return SP_VRGetPose((vrGamePose_t*)P(0));
+#endif
     // client state (the critical path)
     case CG_GETGLCONFIG: {   // live size: the desktop window can be resized in place (Alt+Enter)
         int rw=0, rh=0; SPR_GetVidSize(&rw,&rh);

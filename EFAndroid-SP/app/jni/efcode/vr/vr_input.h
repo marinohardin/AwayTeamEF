@@ -69,6 +69,23 @@ int			VR_GetHandPose( int hand, vrPose_t *aim, vrPose_t *grip );
 // "/interaction_profiles/oculus/touch_controller", or "" before the first one
 const char *VR_GetInteractionProfile( int hand );
 
+// the recentred head origin (see VR_Recenter in vr.h), reference space, metres
+void		VR_GetHeadOrigin( float origin[3] );
+
+// a hand pose for the game modules (vr_input_engine.c), in the game's terms: relative to the
+// game's eye (the point the eye offsets are added to), in game units (vr_worldScale), in the
+// body frame (+X forward, +Y left, +Z up, before the body's yaw is applied)
+typedef struct {
+	int		valid;
+	float	origin[3];		// the aim pose's position
+	float	axis[3][3];		// forward (the pointing ray), left, up
+} vrBodyHand_t;
+
+#define VR_BODY_WEAPON	0	// the dominant hand (right, or left with vr_leftHanded 1)
+#define VR_BODY_OFFHAND	1
+// returns valid: VR frames go to the headset and the hand is tracked (or vr_debugHand drives it)
+int			VR_EngineBodyHand( int which, vrBodyHand_t *out );
+
 // provided by the engine (vr_input_engine.c): called right after every sync, on the
 // render thread (inside RE_BeginFrame; VR runs with r_smp 0)
 void		VR_EngineInput( const vrInputState_t *in );

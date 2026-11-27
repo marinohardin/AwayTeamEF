@@ -3,6 +3,7 @@
 #include "cg_local.h"
 #include "FX_Public.h"
 #include "../game/coop_public.h"
+#include "../game/vr_shared.h"
 
 float cg_zoomFov;
 
@@ -882,6 +883,8 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 	CG_BuildSolidList();
 	// update cvars
 	CG_UpdateCvars();
+	// VR: the hands for this frame (inactive without VR)
+	CG_VR_RefreshPose();
 
 	// the engine can resize the screen in place (desktop Alt+Enter / Video menu):
 	// re-read the size every frame so the 3D view and the HUD follow it

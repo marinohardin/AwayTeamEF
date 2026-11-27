@@ -6,6 +6,7 @@
 #include "cg_text.h"
 #include "../game/objectives.h"
 #include "../game/coop_public.h"
+#include "../game/vr_shared.h"
 #include "../game/speakers.h"
 #include "../speedrun/PlayerOverbouncePrediction.hpp"
 #include "../speedrun/strafe_helper/strafe_helper.h"
@@ -1010,6 +1011,12 @@ static void CG_DrawCrosshair(void) {
 		return;
 	}
 
+	// VR: no screen-centre crosshair; the laser or dot shows where the hand aims
+	if ( CG_VR_HideCrosshair() )
+	{
+		return;
+	}
+
 	// Don't bother drawing the crosshairs when we don't have a weapon
 	if ( cg.snap->ps.weapon == WP_NONE )
 	{
@@ -1572,8 +1579,16 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 
 	//FIXME: debounce this to about 10fps?
 
+	vec3_t	vrForward;
+	if ( CG_VR_AimRay( start, vrForward ) )
+	{	// VR: what the weapon hand points at
+		VectorMA( start, 4096, vrForward, end );
+	}
+	else
+	{
 	VectorCopy( cg.refdef.vieworg, start );
 	VectorMA( start, 4096, cg.refdef.viewaxis[0], end );//was 8192
+	}
 
 	//YES!  This is very very bad... but it works!  James made me do it.  Really, he did.  Blame James.
 	gi.trace( &trace, start, vec3_origin, vec3_origin, end, 

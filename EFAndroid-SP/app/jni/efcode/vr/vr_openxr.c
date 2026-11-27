@@ -1243,6 +1243,12 @@ void VR_GetEyeOffset( int eye, float offset[3] ) {
 	offset[2] = vr.views[eye].pose.position.z - vr.headOrigin[2];
 }
 
+void VR_GetHeadOrigin( float origin[3] ) {
+	origin[0] = vr.headOrigin[0];
+	origin[1] = vr.headOrigin[1];
+	origin[2] = vr.headOrigin[2];
+}
+
 void VR_Recenter( void ) {
 	vr.recenterPending = 1;
 }
