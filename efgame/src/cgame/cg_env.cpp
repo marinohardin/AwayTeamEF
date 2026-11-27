@@ -1010,7 +1010,7 @@ void CG_ElectricalExplosion( vec3_t start, vec3_t dir, float radius )
 	}
 
 	// Now place a cool explosion model on top
-	VectorSubtract( cg.refdef.vieworg, start, dir );
+	VectorSubtract( CG_FXViewOrg(), start, dir );
 	VectorNormalize( dir );
 
 	le = CG_MakeExplosion( start, dir, cgs.media.explosionModel, 6, cgs.media.electricalExplosionSlowShader, 500, qfalse, radius * 0.01f + ( crandom() * 0.3f)  );
@@ -1399,7 +1399,7 @@ bool explosionTrailThink( FXPrimitive *fx, centity_t *ent )
 	vectoangles( dir, angles );
 		
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 	for ( i = 0; i < 3 + (int)remove * 6; i++)

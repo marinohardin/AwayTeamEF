@@ -74,7 +74,7 @@ void FX_BorgHit( vec3_t origin, vec3_t dir )
 	}
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 	//Tag the last one with a light
@@ -146,7 +146,7 @@ void FX_BorgShield( vec3_t position, vec3_t dir )
 	//TODO: dir is for later expansion
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, position, direction );
+	VectorSubtract( CG_FXViewOrg(), position, direction );
 	VectorNormalize( direction );
 
 	le = CG_MakeExplosion( position, direction, cgs.media.explosionModel, 6, cgs.media.borgShieldShader, 250, qfalse, 0.25f );

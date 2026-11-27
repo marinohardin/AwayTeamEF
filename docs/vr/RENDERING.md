@@ -163,6 +163,7 @@ and an sRGB image means the compositor decodes it. So:
 | `vr_uiState` | | read-only, set by the client |
 | `vr_active` | | read-only, set by the renderer: 1 while frames go to the headset |
 | `vr_debugCapture` | 0 | latched; lets `vr_screenshot` copy the eye images |
+| `vr_debugHeadTurn` | | testing: a pretend head turn, "yaw pitch roll" in degrees |
 
 Commands: `vr_recenter`; `vr_screenshot` writes `screenshots/vr_left.tga`, `vr_right.tga` and
 `vr_canvas.tga` (needs `vr_debugCapture 1`, which adds transfer-source usage to the eye swapchains).
@@ -218,6 +219,36 @@ Results so far (Quest 3 profile, 1680×1760 per eye, 4× MSAA, Apple M-series vi
 reaches FOCUSED, holds 70 to 72 fps at the 72 Hz display rate in play, and the HUD, menu and
 big-screen layers behave as described. With `EF_VR` built in and no runtime, or `vr_enable 0`, the game
 stays flat.
+
+## Effects in VR
+
+The game's effects were made for one flat view. In VR the eyes look where the head looks, which
+can be far from the body's view, so anything turned to (or culled by) the flat view would show
+edge-on or vanish.
+
+- **Renderer: already per eye.** Each eye is its own view (`R_VR_SetupEye`), and the back end builds
+  `RT_SPRITE`, `RT_ORIENTEDSPRITE`, `RT_LINE`, `RT_ORIENTEDLINE`, `RT_LINE2`, `RT_BEZIER`,
+  `RT_CYLINDER`, `RT_ELECTRICITY`, beams and rails, and `deformVertexes autosprite`/`autosprite2`,
+  from the view being drawn (`backEnd.viewParms`). So these face each eye exactly, and entities
+  and the world are culled against each eye's own frustum. Holomatch's effects are mostly these
+  entity types, so they look right with no game-module change.
+- **Flares** (`vk_flares.c`): each eye keeps its own flare records. Before, both eyes shared one
+  record per surface, so one eye's occlusion test decided the other's fade, and an eye could throw
+  out the other's flares as stale. Flat builds are unchanged (no eye, the same test).
+- **Single player's effects system** (`fx_primitive.cpp` and the `FX_*`/`fx_*` files): its sprites,
+  particles, lines, electricity, trails, cylinders and Bézier beams are polygons built in the cgame
+  from the view, once a frame, and it skips effects behind the view or nearer than 16 units. In VR
+  they now use the **head** (`CG_FXViewOrg`, `CG_FXViewAxis` in `cg_vr.cpp`): between the eyes, turned
+  as the headset is. The head rather than each eye, because the polygons are built once for both
+  eyes; the eyes' 6 cm only changes the angle by a few degrees. Cutscene cameras keep the flat view
+  (they are drawn flat on the big screen). The near cut is 6 units in VR, as the gun is in the hand.
+  Explosion models that are turned to the viewer when they spawn use the head's position too.
+  Without VR the accessors return `cg.refdef`'s own vectors, so flat play is identical.
+- The engine now hands the cgame the head's orientation with its position (`VR_BODY_HEAD`).
+
+Testing: `vr_debugHeadTurn "yaw pitch roll"` (degrees) turns the located eye views about the point
+between the eyes, as if the head had turned, so effects can be checked looking away from the body
+without a headset.
 
 ## Known issues
 

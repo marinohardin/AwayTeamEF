@@ -1034,6 +1034,8 @@ void CG_DrawActiveFrame( int serverTime, stereoFrame_t stereoView ) {
 			CGCam_UpdateFade();
 			inwater = CG_CalcViewValues();
 		}
+		// VR: effects face the real head in first person (cutscene cameras are drawn flat)
+		CG_VR_SetFXView( !in_camera && !s_dialogCamLatched );
 	}   // close the dialog-camera latch+freeze block
 
 	//This is done from the vieworg to get origin for non-attenuated sounds

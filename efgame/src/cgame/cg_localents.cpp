@@ -306,7 +306,7 @@ static void CG_AddPuff( localEntity_t *le ) {
 
 	// if the view would be "inside" the sprite, kill the sprite
 	// so it doesn't add too much overdraw
-	VectorSubtract( re->origin, cg.refdef.vieworg, delta );
+	VectorSubtract( re->origin, CG_FXViewOrg(), delta );
 	len = VectorLength( delta );
 	if ( len < le->radius ) {
 		CG_FreeLocalEntity( le );
@@ -342,7 +342,7 @@ static void CG_AddScaleFade( localEntity_t *le ) {
 
 	// if the view would be "inside" the sprite, kill the sprite
 	// so it doesn't add too much overdraw
-	VectorSubtract( re->origin, cg.refdef.vieworg, delta );
+	VectorSubtract( re->origin, CG_FXViewOrg(), delta );
 	len = VectorLength( delta );
 	if ( len < le->radius ) {
 		CG_FreeLocalEntity( le );
@@ -381,7 +381,7 @@ static void CG_AddFallScaleFade( localEntity_t *le ) {
 
 	// if the view would be "inside" the sprite, kill the sprite
 	// so it doesn't add too much overdraw
-	VectorSubtract( re->origin, cg.refdef.vieworg, delta );
+	VectorSubtract( re->origin, CG_FXViewOrg(), delta );
 	len = VectorLength( delta );
 	if ( len < le->radius ) {
 		CG_FreeLocalEntity( le );

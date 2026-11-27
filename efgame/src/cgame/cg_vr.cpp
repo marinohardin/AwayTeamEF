@@ -261,6 +261,55 @@ static void CG_VR_HeadWorld( vec3_t head ) {
 	VR_HandToWorld( &p, 0, cg.refdef.vieworg, cg.refdefViewAngles[YAW], head, axis );
 }
 
+/*
+==============================================================================
+
+THE VIEW EFFECTS FACE
+
+The effects code builds its sprites, particles and beams as polygons turned to the view, and
+skips those behind it. In VR the eyes look where the head looks, not along the body's flat view,
+so those would show edge-on or vanish. With VR the effects use the real head instead: between the
+eyes, turned as the headset is. One pose for both eyes: the polygons are built once a frame, and
+the eyes' 6 cm apart barely changes the angle. (Refentity sprites and beams are turned per eye
+by the renderer.) Cutscene cameras are drawn flat, so they keep the flat view.
+
+==============================================================================
+*/
+
+static qboolean	cg_vrFxView;			// this frame's effects face the head
+static vec3_t	cg_vrFxOrg;
+static vec3_t	cg_vrFxAxis[3];
+
+void CG_VR_SetFXView( qboolean firstPerson ) {
+	vrGamePose_t p;
+
+	cg_vrFxView = qfalse;
+	if ( !firstPerson || !cg_vrPose.active || !cg_vrPose.head.valid ) {
+		return;
+	}
+	p = cg_vrPose;
+	p.hand[0] = p.head;	// VR_HandToWorld places entry 0
+	p.hand[0].valid = 1;
+	if ( VR_HandToWorld( &p, 0, cg.refdef.vieworg, cg.refdefViewAngles[YAW], cg_vrFxOrg, cg_vrFxAxis ) &&
+		VectorLengthSquared( cg_vrFxAxis[0] ) > 0.5f ) {
+		cg_vrFxView = qtrue;
+	}
+}
+
+const float *CG_FXViewOrg( void ) {
+	return cg_vrFxView ? cg_vrFxOrg : cg.refdef.vieworg;
+}
+
+const vec3_t *CG_FXViewAxis( void ) {
+	return cg_vrFxView ? cg_vrFxAxis : cg.refdef.viewaxis;
+}
+
+float CG_FXNearCullSq( void ) {
+	// in VR the gun is in the hand, about 0.3 to 0.6 m (10 to 20 units) from the eyes: its
+	// effects must not be skipped as "too close"
+	return cg_vrFxView ? 6.0f * 6.0f : 16.0f * 16.0f;
+}
+
 // a sprite drawn by the renderer itself, so it faces each eye
 static void CG_VR_Sprite( const vec3_t org, float radius, const vec3_t rgb, float alpha, qhandle_t shader ) {
 	refEntity_t ent;

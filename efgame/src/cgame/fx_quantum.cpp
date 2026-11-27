@@ -133,7 +133,7 @@ void FX_QuantumHitWall( vec3_t origin, vec3_t normal )
 	}
 
 	// Always face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, dir );
+	VectorSubtract( CG_FXViewOrg(), origin, dir );
 	VectorNormalize( dir );
 
 	VectorMA( origin, 10, normal, org );
@@ -248,7 +248,7 @@ void FX_QuantumAltHitWall( vec3_t origin, vec3_t normal )
 						QuantumAltThink );
 	
 	// Always face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, dir );
+	VectorSubtract( CG_FXViewOrg(), origin, dir );
 	VectorNormalize( dir );
 
 	CG_MakeExplosion( origin, dir, cgs.media.explosionModel, 6, cgs.media.quantumFlashShader, 150, qfalse, 4.6f + ( crandom() * 0.3f)  );
@@ -316,7 +316,7 @@ void FX_QuantumColumns( vec3_t origin )
 	FXCylinder	*fx1, *fx2;
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, dir );
+	VectorSubtract( CG_FXViewOrg(), origin, dir );
 	VectorNormalize( dir );
 
 	//=== Sound === 

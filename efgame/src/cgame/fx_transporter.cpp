@@ -347,7 +347,7 @@ void FX_8472Teleport( vec3_t org, int parm )
 			{
 				// create a 3 x 3 grid of starting points for the effect
 				VectorClear( vel );
-				VectorMA( vel, t * 16, cg.refdef.viewaxis[1], vel );
+				VectorMA( vel, t * 16, CG_FXViewAxis()[1], vel );
 				
 				FX_AddSprite( start, vel, NULL, 56.0f, -10.0f, 0.3f, 0.0f, -90.0f, 0, 1800, cgs.media.portalFlareShader, FXF_NON_LINEAR_FADE );
 			}

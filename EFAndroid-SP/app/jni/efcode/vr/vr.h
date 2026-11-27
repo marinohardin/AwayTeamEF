@@ -170,6 +170,9 @@ void		VR_SetHeadOrigin( const float origin[3] );
 unsigned	VR_GetRecenterCount( void );
 // debugging (vr_debugHead): a fixed offset added to the located views, OpenXR axes, metres
 void		VR_SetDebugHeadOffset( const float offset[3] );
+// debugging (vr_debugHeadTurn): a rotation (x y z w, OpenXR axes) applied to the located views
+// about the point between the eyes; NULL switches it off
+void		VR_SetDebugHeadTurn( const float quat[4] );
 
 // comfort, from vr_move.c: fade = the head-in-a-wall fade to black (0..1, drawn with the dimmer
 // in play), vignette = the movement vignette's strength (0 = off)

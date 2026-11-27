@@ -162,7 +162,7 @@ void FX_CompressionExplosion( vec3_t origin, vec3_t normal )
 	scale = 0.4f + ( random() * 0.2f);
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 	// Add in the explosion and tag it with a light

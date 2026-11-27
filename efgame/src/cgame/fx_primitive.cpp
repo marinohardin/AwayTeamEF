@@ -38,16 +38,16 @@ bool FXPrimitive::Cull( void )
 	float	len;
 
 	//Get the direction to the view
-	VectorSubtract( m_origin, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin, CG_FXViewOrg(), dir );
 
 	//Check if it's behind the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) < 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) < 0 )
 		return true;
 
 	len = VectorLengthSquared( dir );
 
 	//Can't be too close
-	if ( len < 16 * 16 )
+	if ( len < CG_FXNearCullSq() )
 		return true;
 
 	return false;
@@ -461,7 +461,7 @@ void FXSprite::Draw( void )
 	scale = m_scale * 0.5f;
 	
 	for ( i = 0; i < 3; i++ )
-		VectorCopy( cg.refdef.viewaxis[i], axis[i] );	
+		VectorCopy( CG_FXViewAxis()[i], axis[i] );	
 
 	//This is done to spare non-rolling sprites the odd angle snapping <?>
 	if ( m_roll )
@@ -517,16 +517,16 @@ bool FXElectricity::Cull( void )
 {
 	vec3_t	dir;
 
-	VectorSubtract( m_origin, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;	//dont' cull
 
-	VectorSubtract( m_origin2, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin2, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;	//dont' cull
 
 	return true;
@@ -607,7 +607,7 @@ inline void FXElectricity::DrawSegment( vec3_t start, vec3_t end, float scale, f
 	polyVert_t	verts[4];
 
 	VectorSubtract( end, start, lineDir );
-	VectorSubtract( end, cg.refdef.vieworg, viewDir );
+	VectorSubtract( end, CG_FXViewOrg(), viewDir );
 
 	CrossProduct( lineDir, viewDir, cross );
 	VectorNormalize( cross );
@@ -764,7 +764,7 @@ void FXParticle::Draw( void )
 	scale = m_scale * 0.5f;
 	
 	for ( i = 0; i < 3; i++ )
-		VectorCopy( cg.refdef.viewaxis[i], axis[i] );	
+		VectorCopy( CG_FXViewAxis()[i], axis[i] );	
 
 	//This is done to spare non-rolling particles the odd angle snapping <?>
 	if (m_roll)
@@ -861,10 +861,10 @@ bool FXTri::Cull( void )
 	{
 		mid[ i ] = ( m_origin[ i ] + m_origin2[ i ] + m_origin3[ i ] ) * 0.333f;
 	}
-	VectorSubtract( mid, cg.refdef.vieworg, dir );
+	VectorSubtract( mid, CG_FXViewOrg(), dir );
 
 	//Check if it's behind the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) < 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) < 0 )
 		return true;
 
 	return false;
@@ -945,16 +945,16 @@ bool FXLine::Cull( void )
 {
 	vec3_t	dir;
 
-	VectorSubtract( m_origin, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;	//dont' cull
 
-	VectorSubtract( m_origin2, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin2, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;
 	
 	return true;	//all points behind
@@ -973,7 +973,7 @@ void FXLine::Draw( void )
 	float		scale;
 
 	VectorSubtract( m_origin2, m_origin, lineDir );
-	VectorSubtract( m_origin2, cg.refdef.vieworg, viewDir );
+	VectorSubtract( m_origin2, CG_FXViewOrg(), viewDir );
 	CrossProduct( lineDir, viewDir, cross );
 	VectorNormalize( cross );
 
@@ -1174,16 +1174,16 @@ bool FXLine2::Cull( void )
 {
 	vec3_t	dir;
 
-	VectorSubtract( m_origin, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;	//dont' cull
 
-	VectorSubtract( m_origin2, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin2, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;
 	
 	return true;	//all points behind
@@ -1203,7 +1203,7 @@ void FXLine2::Draw( void )
 	float		scale, scale2;
 
 	VectorSubtract( m_origin2, m_origin, lineDir );
-	VectorSubtract( m_origin2, cg.refdef.vieworg, viewDir );
+	VectorSubtract( m_origin2, CG_FXViewOrg(), viewDir );
 	CrossProduct( lineDir, viewDir, cross );
 	VectorNormalize( cross );
 
@@ -1261,7 +1261,7 @@ void FXLine2::Draw( void )
 	float		scale, scale2;
 
 	VectorSubtract( m_origin2, m_origin, lineDir );
-	VectorSubtract( m_origin2, cg.refdef.vieworg, viewDir );
+	VectorSubtract( m_origin2, CG_FXViewOrg(), viewDir );
 	CrossProduct( lineDir, viewDir, cross );
 	VectorNormalize( cross );
 
@@ -1389,9 +1389,9 @@ bool FXSpawner::Cull( void )
 {
 	vec3_t	dir;
 
-	VectorSubtract( m_origin, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin, CG_FXViewOrg(), dir );
 	//Check if it's behind the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) < 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) < 0 )
 		return true;
 
 	float len = VectorLengthSquared( dir );
@@ -1485,22 +1485,22 @@ bool FXBezier::Cull( void )
 {
 	vec3_t	dir;
 
-	VectorSubtract( m_origin, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;	//don't cull
 
-	VectorSubtract( m_origin2, cg.refdef.vieworg, dir );
+	VectorSubtract( m_origin2, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;
 
-	VectorSubtract( m_control1, cg.refdef.vieworg, dir );
+	VectorSubtract( m_control1, CG_FXViewOrg(), dir );
 
 	//Check if it's in front of the viewer
-	if ( (DotProduct( cg.refdef.viewaxis[0], dir )) >= 0 )
+	if ( (DotProduct( CG_FXViewAxis()[0], dir )) >= 0 )
 		return false;
 
 	return true; //all points behind viewer
@@ -1557,7 +1557,7 @@ inline void FXBezier::DrawSegment( vec3_t start, vec3_t end, float texcoord1, fl
 	float		scale;
 
 	VectorSubtract( end, start, lineDir );
-	VectorSubtract( end, cg.refdef.vieworg, viewDir );
+	VectorSubtract( end, CG_FXViewOrg(), viewDir );
 	CrossProduct( lineDir, viewDir, cross );
 	VectorNormalize( cross );
 
@@ -1735,7 +1735,7 @@ void FXTrail::Draw( void )
 	float		scale;
 
 	VectorSubtract( m_oldorigin, m_origin, lineDir );
-	VectorSubtract( m_oldorigin, cg.refdef.vieworg, viewDir );
+	VectorSubtract( m_oldorigin, CG_FXViewOrg(), viewDir );
 	CrossProduct( lineDir, viewDir, cross );
 	VectorNormalize( cross );
 
@@ -1893,7 +1893,7 @@ void FXCylinder::Draw( void )
 	{
 		//Work out the detail level of this cylinder
 		VectorMA( m_origin, m_height * 0.5, m_normal, midpoint );
-		VectorSubtract( midpoint, cg.refdef.vieworg, midpoint );
+		VectorSubtract( midpoint, CG_FXViewOrg(), midpoint );
 		length = VectorLengthSquared( midpoint );
 
 		detail = 1 - (length / (1024.0*1024.0) );

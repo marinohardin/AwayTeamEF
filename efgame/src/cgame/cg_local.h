@@ -1186,4 +1186,12 @@ void FX_RifleShot( vec3_t start, vec3_t end );
 void FX_RifleHitWall( vec3_t origin, vec3_t dir );
 void FX_RifleHitPlayer( vec3_t origin );
 
+// The point and axes that effects face and are culled from (cg_vr.cpp). Without VR these are
+// cg.refdef's own; in VR, the real head: between the eyes, turned as the headset is, so sprites
+// and beams built here face the player instead of the body's flat view.
+const float		*CG_FXViewOrg( void );
+const vec3_t	*CG_FXViewAxis( void );
+float			CG_FXNearCullSq( void );		// effects nearer than this (squared) are skipped
+void			CG_VR_SetFXView( qboolean firstPerson );	// once per frame, after the view is set
+
 #endif	//__CG_LOCAL_H__

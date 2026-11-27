@@ -388,6 +388,20 @@ static void VR_DebugHand( const vrInputState_t *in, const float *headOrigin, flo
 	out->valid = 1;
 }
 
+// a rotation (x y z w, OpenXR) as the game's forward, left and up axes
+static void VR_QuatToBodyAxes( const float *q, float axis[3][3] ) {
+	const float qx = q[0], qy = q[1], qz = q[2], qw = q[3];
+	float v[3];
+
+	// the rotation's columns are its right, up and back axes in OpenXR space
+	v[0] = -( 2 * ( qx * qz + qw * qy ) ); v[1] = -( 2 * ( qy * qz - qw * qx ) ); v[2] = -( 1 - 2 * ( qx * qx + qy * qy ) );
+	VR_FromXr( v, axis[0] );	// forward = -back
+	v[0] = -( 1 - 2 * ( qy * qy + qz * qz ) ); v[1] = -( 2 * ( qx * qy + qw * qz ) ); v[2] = -( 2 * ( qx * qz - qw * qy ) );
+	VR_FromXr( v, axis[1] );	// left = -right
+	v[0] = 2 * ( qx * qy - qw * qz ); v[1] = 1 - 2 * ( qx * qx + qz * qz ); v[2] = 2 * ( qy * qz + qw * qx );
+	VR_FromXr( v, axis[2] );	// up
+}
+
 int VR_EngineBodyHand( int which, vrBodyHand_t *out ) {
 	const vrInputState_t *in = VR_GetInputState();
 	const vrPose_t *p;
@@ -415,6 +429,7 @@ int VR_EngineBodyHand( int which, vrBodyHand_t *out ) {
 	if ( which == VR_BODY_HEAD ) {
 		// the eyes as the renderer draws them this frame (vr_debugHead included), else the head
 		float eye0[3], eye1[3];
+		vrEyeView_t view;
 
 		VR_GetEyeOffset( 0, eye0 );
 		VR_GetEyeOffset( 1, eye1 );
@@ -424,7 +439,12 @@ int VR_EngineBodyHand( int which, vrBodyHand_t *out ) {
 			}
 			VR_FromXr( rel, out->origin );
 			VectorScale( out->origin, scale, out->origin );
-			out->axis[0][0] = out->axis[1][1] = out->axis[2][2] = 1.0f;
+			// the eyes' orientation (both eyes share it): effects face the real head with it
+			if ( VR_GetEyeView( 0, &view ) ) {
+				VR_QuatToBodyAxes( view.orientation, out->axis );
+			} else {
+				out->axis[0][0] = out->axis[1][1] = out->axis[2][2] = 1.0f;
+			}
 			out->valid = 1;
 			return 1;
 		}

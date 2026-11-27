@@ -62,7 +62,7 @@ void FX_BotRocketHitWall( vec3_t origin, vec3_t normal )
 	localEntity_t	*le;
 
 	//Orient the explosions to face the camera
-	VectorScale( cg.refdef.viewaxis[0], -1, dir );
+	VectorScale( CG_FXViewAxis()[0], -1, dir );
 
 	// Add an explosion and tag a light to it
 	le = CG_MakeExplosion( origin, dir, cgs.media.explosionModel, 6, cgs.media.surfaceExplosionShader, 600, qfalse, 0.6f + (random()*0.3f) );
@@ -182,7 +182,7 @@ void FX_BotExplosions( vec3_t origin, vec3_t dir, vec3_t accel, vec3_t user )
 	localEntity_t	*le;
 
 	//Orient the explosions to face the camera
-	VectorScale( cg.refdef.viewaxis[0], -1, view );
+	VectorScale( CG_FXViewAxis()[0], -1, view );
 
 	for ( int i = 0; i < 3; i++ )
 	{

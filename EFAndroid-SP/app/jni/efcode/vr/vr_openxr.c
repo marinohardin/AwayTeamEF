@@ -287,6 +287,8 @@ static struct {
 	unsigned			recenterCount;		// recentres done (vr_move.c watches it)
 	float				headOrigin[3];
 	float				debugHead[3];		// vr_debugHead: added to the located views
+	int					debugTurnOn;		// vr_debugHeadTurn: a rotation applied to the located views
+	float				debugTurn[4];		// x y z w, OpenXR axes
 
 	// comfort (vr_move.c): the wall fade (the dimmer) and the movement vignette
 	float				comfortFade;
@@ -1131,6 +1133,48 @@ static void VR_UpdateHeadOrigin( void ) {
 	vr.recenterCount++;
 }
 
+// a quaternion product a * b (x y z w)
+static void VR_QuatMul( const float *a, const float *b, float *out ) {
+	out[0] = a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1];
+	out[1] = a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0];
+	out[2] = a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3];
+	out[3] = a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2];
+}
+
+/*
+vr_debugHeadTurn: turn the located views about the point between the eyes, as if the head had
+turned, so effects can be checked with the head looking away from the body without a headset
+*/
+static void VR_ApplyDebugTurn( void ) {
+	const float *q = vr.debugTurn;
+	float mid[3], p[3], t[3], o[4], r[4];
+	int eye;
+
+	mid[0] = 0.5f * ( vr.views[0].pose.position.x + vr.views[1].pose.position.x );
+	mid[1] = 0.5f * ( vr.views[0].pose.position.y + vr.views[1].pose.position.y );
+	mid[2] = 0.5f * ( vr.views[0].pose.position.z + vr.views[1].pose.position.z );
+	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
+		XrPosef *pose = &vr.views[eye].pose;
+
+		o[0] = pose->orientation.x; o[1] = pose->orientation.y;
+		o[2] = pose->orientation.z; o[3] = pose->orientation.w;
+		VR_QuatMul( q, o, r );
+		pose->orientation.x = r[0]; pose->orientation.y = r[1];
+		pose->orientation.z = r[2]; pose->orientation.w = r[3];
+
+		// v' = v + 2w (q x v) + 2 q x (q x v)
+		p[0] = pose->position.x - mid[0];
+		p[1] = pose->position.y - mid[1];
+		p[2] = pose->position.z - mid[2];
+		t[0] = 2.0f * ( q[1] * p[2] - q[2] * p[1] );
+		t[1] = 2.0f * ( q[2] * p[0] - q[0] * p[2] );
+		t[2] = 2.0f * ( q[0] * p[1] - q[1] * p[0] );
+		pose->position.x = mid[0] + p[0] + q[3] * t[0] + ( q[1] * t[2] - q[2] * t[1] );
+		pose->position.y = mid[1] + p[1] + q[3] * t[1] + ( q[2] * t[0] - q[0] * t[2] );
+		pose->position.z = mid[2] + p[2] + q[3] * t[2] + ( q[0] * t[1] - q[1] * t[0] );
+	}
+}
+
 int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 	XrFrameWaitInfo wi;
 	XrFrameBeginInfo bi;
@@ -1194,6 +1238,9 @@ int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 		return 0;	// no tracking this frame: submit nothing rather than a wrong view
 	}
 
+	if ( vr.debugTurnOn ) {
+		VR_ApplyDebugTurn();
+	}
 	if ( vr.debugHead[0] || vr.debugHead[1] || vr.debugHead[2] ) {
 		for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {	// vr_debugHead: a pretend head movement
 			vr.views[eye].pose.position.x += vr.debugHead[0];
@@ -1290,6 +1337,18 @@ void VR_SetHeadOrigin( const float origin[3] ) {
 
 unsigned VR_GetRecenterCount( void ) {
 	return vr.recenterCount;
+}
+
+void VR_SetDebugHeadTurn( const float quat[4] ) {
+	if ( quat ) {
+		vr.debugTurn[0] = quat[0];
+		vr.debugTurn[1] = quat[1];
+		vr.debugTurn[2] = quat[2];
+		vr.debugTurn[3] = quat[3];
+		vr.debugTurnOn = 1;
+	} else {
+		vr.debugTurnOn = 0;
+	}
 }
 
 void VR_SetDebugHeadOffset( const float offset[3] ) {

@@ -65,6 +65,9 @@ typedef struct flare_s {
 
 	portalView_t portalView;
 	int			frameSceneNum;
+#ifdef EF_VR
+	int			vrEye;				// VR: each eye keeps its own flares (position, test, fade)
+#endif
 	void		*surface;
 	int			fogNum;
 
@@ -82,6 +85,13 @@ typedef struct flare_s {
 } flare_t;
 
 static flare_t	r_flareStructs[ MAX_FLARES ];
+
+// the flare belongs to the view being drawn: same portal view and, in VR, the same eye
+#ifdef EF_VR
+#define FLARE_IN_VIEW( f ) ( (f)->portalView == backEnd.viewParms.portalView && (f)->vrEye == backEnd.viewParms.vrEye )
+#else
+#define FLARE_IN_VIEW( f ) ( (f)->portalView == backEnd.viewParms.portalView )
+#endif
 static flare_t	*r_activeFlares, *r_inactiveFlares;
 
 
@@ -113,7 +123,7 @@ static flare_t *R_SearchFlare( void *surface )
 
 	// see if a flare with a matching surface, scene, and view exists
 	for ( f = r_activeFlares ; f ; f = f->next ) {
-		if ( f->surface == surface && f->frameSceneNum == backEnd.viewParms.frameSceneNum && f->portalView == backEnd.viewParms.portalView ) {
+		if ( f->surface == surface && f->frameSceneNum == backEnd.viewParms.frameSceneNum && FLARE_IN_VIEW( f ) ) {
 			return f;
 		}
 	}
@@ -181,6 +191,9 @@ void RB_AddFlare( void *surface, int fogNum, vec3_t point, vec3_t color, vec3_t 
 		f->surface = surface;
 		f->frameSceneNum = backEnd.viewParms.frameSceneNum;
 		f->portalView = backEnd.viewParms.portalView;
+#ifdef EF_VR
+		f->vrEye = backEnd.viewParms.vrEye;
+#endif
 		f->visible = qfalse;
 		f->fadeTime = backEnd.refdef.time - 2000;
 		f->testCount = 0;
@@ -506,7 +519,7 @@ void RB_RenderFlares( void ) {
 	prev = &r_activeFlares;
 	while ( ( f = *prev ) != NULL ) {
 		// throw out any flares that weren't added last frame
-		if ( backEnd.viewParms.frameCount - f->addedFrame > 0 && f->portalView == backEnd.viewParms.portalView ) {
+		if ( backEnd.viewParms.frameCount - f->addedFrame > 0 && FLARE_IN_VIEW( f ) ) {
 			*prev = f->next;
 			f->next = r_inactiveFlares;
 			r_inactiveFlares = f;
@@ -515,7 +528,7 @@ void RB_RenderFlares( void ) {
 
 		// don't draw any here that aren't from this scene / portal
 		f->drawIntensity = 0;
-		if ( f->frameSceneNum == backEnd.viewParms.frameSceneNum && f->portalView == backEnd.viewParms.portalView ) {
+		if ( f->frameSceneNum == backEnd.viewParms.frameSceneNum && FLARE_IN_VIEW( f ) ) {
 			RB_TestFlare( f );
 			if ( f->testCount == 0 ) {
 				// recently added, wait 1 frame for test result
@@ -548,7 +561,7 @@ void RB_RenderFlares( void ) {
 	vk_update_mvp( m );
 
 	for ( f = r_activeFlares ; f ; f = f->next ) {
-		if ( f->frameSceneNum == backEnd.viewParms.frameSceneNum && f->portalView == backEnd.viewParms.portalView && f->drawIntensity ) {
+		if ( f->frameSceneNum == backEnd.viewParms.frameSceneNum && FLARE_IN_VIEW( f ) && f->drawIntensity ) {
 			RB_RenderFlare( f );
 		}
 	}

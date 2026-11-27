@@ -30,7 +30,7 @@ typedef struct {
 typedef struct {
 	int				active;	// VR frames go to the headset (the hands may still be untracked)
 	vrGameHand_t	hand[VR_NUM_HANDS];
-	vrGameHand_t	head;	// between the eyes as drawn (origin; the axes only roughly)
+	vrGameHand_t	head;	// between the eyes as drawn, turned as the headset is
 } vrGamePose_t;
 
 // cgame: refreshed once per drawn frame (CG_DrawActiveFrame)

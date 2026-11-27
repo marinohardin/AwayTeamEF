@@ -957,7 +957,7 @@ float FX_DetailLevel( vec3_t origin, float near_clip, float far_clip )
 
 	//TODO: Account for the FOV range
 
-	VectorSubtract( origin, cg.refdef.vieworg, dir );
+	VectorSubtract( origin, CG_FXViewOrg(), dir );
 	len = VectorNormalize( dir );
 
 	if ( len < near_clip )

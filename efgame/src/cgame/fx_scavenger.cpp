@@ -266,7 +266,7 @@ void FX_ScavengerAltExplode( vec3_t origin, vec3_t dir )
 	vec3_t			direction, org;
 	
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 	VectorMA( origin, 12, direction, org );

@@ -222,7 +222,7 @@ void FX_ProtonExplosion( vec3_t end, vec3_t dir )
 
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 

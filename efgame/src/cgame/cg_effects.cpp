@@ -132,7 +132,7 @@ void CG_ExplosionEffects( vec3_t origin, int intensity, int radius)
 	float	dist, intensityScale;
 	float	realIntensity;
 
-	VectorSubtract( cg.refdef.vieworg, origin, dir );
+	VectorSubtract( CG_FXViewOrg(), origin, dir );
 	dist = VectorNormalize( dir );
 
 	//Use the dir to add kick to the explosion
@@ -235,7 +235,7 @@ void CG_SurfaceExplosion( vec3_t origin, vec3_t normal, float radius, float shak
 	//Core of the explosion
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 	//Tag the last one with a light
@@ -336,7 +336,7 @@ void CG_MiscModelExplosion( vec3_t origin, vec3_t normal )
 	}
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 	//Tag the last one with a light

@@ -41,6 +41,7 @@ static cvar_t	*vr_theaterDim;
 static cvar_t	*vr_uiState;		// set by the client: 1 = a menu is up, 2 = a cinematic plays
 static cvar_t	*vr_debugCapture;
 static cvar_t	*vr_active;		// read-only, for the client: 1 while frames go to the headset
+static cvar_t	*vr_debugHeadTurn;	// "yaw pitch roll": a pretend head turn, for testing
 
 typedef enum {
 	VRF_GAME,		// the world in stereo, the HUD on its quad
@@ -124,6 +125,9 @@ void R_VR_Register( void ) {
 	ri.Cvar_Set( "vr_active", "0" );
 	vr_debugCapture = R_VR_Cvar( "vr_debugCapture", "0", CVAR_LATCH, "0", "1", CV_INTEGER,
 		"VR debugging: make the eye images readable for vr_screenshot. Requires vid_restart." );
+	vr_debugHeadTurn = ri.Cvar_Get( "vr_debugHeadTurn", "", 0 );
+	ri.Cvar_SetDescription( vr_debugHeadTurn,
+		"VR debugging: pretend head turn, \"yaw pitch roll\" in degrees (yaw left, pitch up and roll anticlockwise are positive)." );
 
 	if ( vr_enable->integer ) {
 		// VR draws the 2D canvas in the main pass's offscreen image: it needs r_fbo, and an
@@ -167,6 +171,39 @@ static vrFrameKind_t R_VR_FrameKind( void ) {
 	return VRF_GAME;
 }
 
+// vr_debugHeadTurn "yaw pitch roll" (degrees) -> a rotation of the located views (OpenXR axes:
+// yaw about +Y, pitch about +X, roll about +Z), applied in that order from the room's frame
+static void R_VR_DebugHeadTurn( void ) {
+	static int modified = -1;
+	float a[3] = { 0, 0, 0 }, qy[4], qp[4], qr[4], t[4], q[4];
+
+	if ( vr_debugHeadTurn->modificationCount == modified ) {
+		return;
+	}
+	modified = vr_debugHeadTurn->modificationCount;
+	if ( sscanf( vr_debugHeadTurn->string, "%f %f %f", &a[0], &a[1], &a[2] ) < 1 ||
+		( a[0] == 0.0f && a[1] == 0.0f && a[2] == 0.0f ) ) {
+		VR_SetDebugHeadTurn( NULL );
+		return;
+	}
+	a[0] = DEG2RAD( a[0] ) * 0.5f;
+	a[1] = DEG2RAD( a[1] ) * 0.5f;
+	a[2] = DEG2RAD( a[2] ) * 0.5f;
+	qy[0] = 0; qy[1] = sin( a[0] ); qy[2] = 0; qy[3] = cos( a[0] );
+	qp[0] = sin( a[1] ); qp[1] = 0; qp[2] = 0; qp[3] = cos( a[1] );
+	qr[0] = 0; qr[1] = 0; qr[2] = sin( a[2] ); qr[3] = cos( a[2] );
+	// t = qy * qp, q = t * qr
+	t[0] = qy[3] * qp[0] + qy[0] * qp[3] + qy[1] * qp[2] - qy[2] * qp[1];
+	t[1] = qy[3] * qp[1] - qy[0] * qp[2] + qy[1] * qp[3] + qy[2] * qp[0];
+	t[2] = qy[3] * qp[2] + qy[0] * qp[1] - qy[1] * qp[0] + qy[2] * qp[3];
+	t[3] = qy[3] * qp[3] - qy[0] * qp[0] - qy[1] * qp[1] - qy[2] * qp[2];
+	q[0] = t[3] * qr[0] + t[0] * qr[3] + t[1] * qr[2] - t[2] * qr[1];
+	q[1] = t[3] * qr[1] - t[0] * qr[2] + t[1] * qr[3] + t[2] * qr[0];
+	q[2] = t[3] * qr[2] + t[0] * qr[1] - t[1] * qr[0] + t[2] * qr[3];
+	q[3] = t[3] * qr[3] - t[0] * qr[0] - t[1] * qr[1] - t[2] * qr[2];
+	VR_SetDebugHeadTurn( q );
+}
+
 void R_VR_BeginFrame( void ) {
 	float dim;
 
@@ -193,6 +230,7 @@ void R_VR_BeginFrame( void ) {
 	if ( !vr_active->integer ) {
 		ri.Cvar_Set( "vr_active", "1" );
 	}
+	R_VR_DebugHeadTurn();
 	r_vrKind = R_VR_FrameKind();
 	// in play the dimmer is the head-in-a-wall fade (vr_move.c)
 	dim = r_vrKind == VRF_MENU ? vr_menuDim->value : r_vrKind == VRF_THEATER ? vr_theaterDim->value : VR_GetComfortFade();

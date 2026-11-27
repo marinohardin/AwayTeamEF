@@ -881,6 +881,6 @@ void FX_StasisMineExplode( vec3_t origin )
 	CG_Chunks( 0, org, moveDir, random() * 2 + 2, Q_irand(4, 6), MAT_STASIS, 0, 0.3f );
 
 	// Orient the explosion so that it faces the viewer
-	VectorScale( cg.refdef.viewaxis[0], -1, moveDir );
+	VectorScale( CG_FXViewAxis()[0], -1, moveDir );
 	CG_MakeExplosion( org, moveDir, cgs.media.explosionModel, 6, cgs.media.electricalExplosionSlowShader, 500, qfalse, random() * 0.2f + 0.7f );
 }

@@ -149,7 +149,7 @@ void FX_IMODExplosion( vec3_t origin, vec3_t normal )
 	int				i, numSparks;
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 	//Tag the last one with a light
@@ -203,7 +203,7 @@ void FX_AltIMODExplosion( vec3_t origin, vec3_t normal )
 	int				i, numSparks;
 
 	//Orient the explosions to face the camera
-	VectorSubtract( cg.refdef.vieworg, origin, direction );
+	VectorSubtract( CG_FXViewOrg(), origin, direction );
 	VectorNormalize( direction );
 
 	//Tag the last one with a light
