@@ -2251,6 +2251,7 @@ static void RE_Shutdown( refShutdownCode_t code ) {
 #ifdef EF_VR
 	ri.Cmd_RemoveCommand( "vr_recenter" );
 	ri.Cmd_RemoveCommand( "vr_screenshot" );
+	ri.Cmd_RemoveCommand( "vr_debugEndSession" );
 #endif
 	ri.Cmd_RemoveCommand( "screenshotBMP" );
 	ri.Cmd_RemoveCommand( "screenshotJPEG" );
