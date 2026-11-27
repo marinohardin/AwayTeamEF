@@ -84,7 +84,10 @@ typedef enum {
 typedef enum {
 	VR_QUAD_HUD,		// in-game HUD: lazy-follows the head's yaw
 	VR_QUAD_MENU,		// menus and console: placed in front of the head when it opens
-	VR_QUAD_THEATER		// cutscenes and cinematics: a large screen, placed when it starts
+	VR_QUAD_THEATER,	// cutscenes and cinematics: a large screen, placed when it starts
+	VR_QUAD_WHEEL,		// in play with the weapon wheel open: placed in front of the head when it
+						// opens, then world-locked (vr_wheel.c points the hand at it)
+	VR_NUM_QUAD_MODES
 } vrQuadMode_t;
 
 typedef struct {
@@ -166,6 +169,10 @@ int			VR_GetCanvasImageIndex( void );		// -1 when no canvas image is acquired th
 int			VR_GetDimmerImageIndex( float *alpha );	// -1 unless the dimmer must be (re)filled now
 int			VR_HaveFrozenEyes( void );			// a fresh projection has been submitted since the last reset
 void		VR_EndFrame( const vrFrameLayers_t *layers );
+// the 2D quad as last submitted in the reference space (not head-locked): its mode, centre
+// (OpenXR axes, metres), yaw about +Y (radians, 0 = facing +Z, toward a head looking down -Z)
+// and size in metres. Returns 0 when no quad went out last frame or it was head-locked.
+int			VR_GetLastQuad( vrQuadMode_t *mode, float centre[3], float *yaw, float size[2] );
 
 // head-origin reset: the current head position becomes the origin of the eye offsets that
 // VR_GetEyeOffset returns (done once automatically, on the first tracked frame)

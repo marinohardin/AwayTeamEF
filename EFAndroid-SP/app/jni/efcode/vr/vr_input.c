@@ -49,6 +49,7 @@ void VR_Log( int isError, const char *fmt, ... );	// vr_openxr.c
 	XR_FN( xrGetActionStateBoolean ) \
 	XR_FN( xrGetActionStateFloat ) \
 	XR_FN( xrGetActionStateVector2f ) \
+	XR_FN( xrApplyHapticFeedback ) \
 	XR_FN( xrCreateActionSpace ) \
 	XR_FN( xrCreateReferenceSpace ) \
 	XR_FN( xrLocateSpace ) \
@@ -77,6 +78,7 @@ typedef enum {
 	ACT_YBUTTON,
 	ACT_AIM,			// pose, per hand
 	ACT_GRIP,			// pose, per hand
+	ACT_HAPTIC,			// vibration output, per hand (the weapon wheel's tick)
 	NUM_ACTIONS
 } vrAction_t;
 
@@ -101,6 +103,7 @@ static const struct {
 	{ "ybutton",	"Menu or objectives",	XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_Y },
 	{ "aim",		"Aim pose",				XR_ACTION_TYPE_POSE_INPUT,		1, 0 },
 	{ "grip",		"Grip pose",			XR_ACTION_TYPE_POSE_INPUT,		1, 0 },
+	{ "haptic",		"Vibration",			XR_ACTION_TYPE_VIBRATION_OUTPUT,	1, 0 },
 };
 
 typedef struct {
@@ -131,6 +134,8 @@ static const vrBinding_t vr_touchBindings[] = {
 	{ ACT_AIM,			R "aim/pose" },
 	{ ACT_GRIP,			L "grip/pose" },
 	{ ACT_GRIP,			R "grip/pose" },
+	{ ACT_HAPTIC,		"/user/hand/left/output/haptic" },
+	{ ACT_HAPTIC,		"/user/hand/right/output/haptic" },
 };
 
 // no sticks: fire, use and the menu, so menus and doors still work
@@ -143,6 +148,8 @@ static const vrBinding_t vr_simpleBindings[] = {
 	{ ACT_AIM,			R "aim/pose" },
 	{ ACT_GRIP,			L "grip/pose" },
 	{ ACT_GRIP,			R "grip/pose" },
+	{ ACT_HAPTIC,		"/user/hand/left/output/haptic" },
+	{ ACT_HAPTIC,		"/user/hand/right/output/haptic" },
 };
 
 #undef L
@@ -184,6 +191,25 @@ int VR_GetHandPose( int hand, vrPose_t *aim, vrPose_t *grip ) {
 		*grip = vri.state.grip[hand];
 	}
 	return vri.state.aim[hand].valid;
+}
+
+void VR_Haptic( int hand, float amplitude, float seconds ) {
+	XrHapticActionInfo hai;
+	XrHapticVibration vib;
+
+	if ( hand < 0 || hand >= VR_HANDS || vri.session == XR_NULL_HANDLE || !ixrApplyHapticFeedback ) {
+		return;
+	}
+	memset( &hai, 0, sizeof( hai ) );
+	hai.type = XR_TYPE_HAPTIC_ACTION_INFO;
+	hai.action = vri.actions[ACT_HAPTIC];
+	hai.subactionPath = vri.handPaths[hand];
+	memset( &vib, 0, sizeof( vib ) );
+	vib.type = XR_TYPE_HAPTIC_VIBRATION;
+	vib.duration = (XrDuration)( seconds * 1e9f );
+	vib.frequency = XR_FREQUENCY_UNSPECIFIED;
+	vib.amplitude = amplitude;
+	ixrApplyHapticFeedback( vri.session, &hai, (const XrHapticBaseHeader *)&vib );
 }
 
 const char *VR_GetInteractionProfile( int hand ) {

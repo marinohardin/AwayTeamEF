@@ -66,6 +66,8 @@ typedef struct {
 const vrInputState_t *VR_GetInputState( void );
 // one hand's poses; returns aim->valid (either pointer may be NULL)
 int			VR_GetHandPose( int hand, vrPose_t *aim, vrPose_t *grip );
+// a short vibration of one controller (amplitude 0..1); nothing without a session
+void		VR_Haptic( int hand, float amplitude, float seconds );
 // the interaction profile the runtime picked for a hand, e.g.
 // "/interaction_profiles/oculus/touch_controller", or "" before the first one
 const char *VR_GetInteractionProfile( int hand );

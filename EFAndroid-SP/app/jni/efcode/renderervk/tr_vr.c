@@ -40,6 +40,10 @@ static cvar_t	*vr_theaterWidth;
 static cvar_t	*vr_theaterDim;
 static cvar_t	*vr_uiState;		// set by the client: 1 = a menu is up, 2 = a cinematic plays,
 								// 3 = a menu over the live world, 4 = the theater screen (Holomatch)
+static cvar_t	*vr_wheelOpen;		// set by the engine's weapon wheel (vr_wheel.c) while it's open
+static cvar_t	*vr_wheelDistance;
+static cvar_t	*vr_wheelWidth;
+static cvar_t	*vr_wheelHeight;
 static cvar_t	*vr_debugCapture;
 static cvar_t	*vr_active;		// read-only, for the client: 1 while frames go to the headset
 static cvar_t	*vr_debugHeadTurn;	// "yaw pitch roll": a pretend head turn, for testing
@@ -127,6 +131,13 @@ void R_VR_Register( void ) {
 	vr_theaterDim = R_VR_Cvar( "vr_theaterDim", "0.85", CVAR_ARCHIVE_ND, "0", "1", CV_FLOAT,
 		"VR: how much the frozen world around the cutscene screen is darkened (0 none, 1 black)." );
 
+	vr_wheelDistance = R_VR_Cvar( "vr_wheelDistance", "1.0", CVAR_ARCHIVE_ND, "0.4", "3", CV_FLOAT,
+		"VR: distance of the weapon wheel in metres (it shows on the HUD's layer, placed when it opens)." );
+	vr_wheelWidth = R_VR_Cvar( "vr_wheelWidth", "1.4", CVAR_ARCHIVE_ND, "0.3", "4", CV_FLOAT,
+		"VR: width of the HUD's layer while the weapon wheel is open, in metres." );
+	vr_wheelHeight = R_VR_Cvar( "vr_wheelHeight", "-0.15", CVAR_ARCHIVE_ND, "-2", "2", CV_FLOAT,
+		"VR: height of the weapon wheel's centre above eye level, in metres." );
+	vr_wheelOpen = ri.Cvar_Get( "vr_wheelOpen", "0", CVAR_ROM );
 	vr_uiState = ri.Cvar_Get( "vr_uiState", "0", CVAR_ROM );
 	vr_active = ri.Cvar_Get( "vr_active", "0", CVAR_ROM );
 	ri.Cvar_Set( "vr_active", "0" );
@@ -285,6 +296,15 @@ void R_VR_EndFrame( void ) {
 		layers.placement.height = vr_hudHeight->value;
 		layers.placement.follow = vr_hudFollow->integer;
 		layers.placement.followAngle = vr_hudFollowAngle->value;
+		if ( vr_wheelOpen->integer ) {
+			// the weapon wheel is drawn on the canvas: in front of the head where it opened, and
+			// held there, so the hand can point at it
+			layers.quadMode = VR_QUAD_WHEEL;
+			layers.placement.distance = vr_wheelDistance->value;
+			layers.placement.width = vr_wheelWidth->value;
+			layers.placement.height = vr_wheelHeight->value;
+			layers.placement.follow = 0;
+		}
 		break;
 	case VRF_MENU:
 	case VRF_MENU_LIVE:

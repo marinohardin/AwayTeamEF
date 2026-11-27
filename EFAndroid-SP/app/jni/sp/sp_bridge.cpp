@@ -14,6 +14,8 @@
 #ifdef EF_VR
 #include "vr_shared.h"            // CG_VR_GETPOSE, vrGamePose_t (efgame/src/game)
 #include "vr_input.h"             // VR_EngineBodyHand (efcode/vr)
+#include "vr_wheel.h"             // the weapon wheel: its list and the slow-motion clock (efcode/vr)
+static int g_vrWeaponsAt = 0;     // when the cgame last listed the weapons (Sys_Milliseconds; 0: none this level)
 #endif
 #include <stdio.h>
 #include <stdlib.h>
@@ -883,6 +885,10 @@ extern "C" void SP_UnloadGame( void ){
 #endif
     SP_EndCutsceneSkip();   // a load / new game / abort ends any camera-scene skip (timescale back to 1)
     SP_ResetFrameGates();   // ... and the pause/skip sound and draw gates
+#ifdef EF_VR
+    VR_Wheel_Reset( "level over" );   // the wheel shuts and time runs at normal speed again
+    g_vrWeaponsAt = 0;
+#endif
     // H3: g_linked[] holds raw gentity_t* into the module we just dlclose'd. Leaving them dangling is a
     // use-after-free waiting for one missing g_spActive gate. The next spawn resets g_numLinked anyway;
     // zero them now so nothing can walk a freed pointer in between.
@@ -1535,6 +1541,48 @@ static int SP_VRSetAim( const float *aim ){
     if( !g_vrAimAt ) g_vrAimAt = 1;
     return 1;
 }
+// CG_VR_SETWEAPONS: what the cgame lets the player switch to, for the engine's weapon wheel
+static vrWheelWeapons_t g_vrWeapons;
+static_assert( sizeof(vrWheelWeapons_t) == sizeof(vrWheelList_t) && VR_WHEEL_MAX_WEAPONS == VR_WHEEL_MAX,
+               "vrWheelWeapons_t (efgame vr_shared.h) and vrWheelList_t (efcode/vr/vr_wheel.h) must match" );
+static int SP_VRSetWeapons( const vrWheelWeapons_t *w ){
+    g_vrWeapons = *w;
+    if( g_vrWeapons.count < 0 ) g_vrWeapons.count = 0;
+    if( g_vrWeapons.count > VR_WHEEL_MAX_WEAPONS ) g_vrWeapons.count = VR_WHEEL_MAX_WEAPONS;
+    for( int i = 0; i < VR_WHEEL_MAX_WEAPONS; i++ ) g_vrWeapons.name[i][sizeof(g_vrWeapons.name[i]) - 1] = 0;
+    g_vrWeaponsAt = Sys_Milliseconds() | 1;
+    return VR_Wheel_IsOpen();
+}
+extern "C" int SP_VR_WheelWeapons( vrWheelList_t *out ){
+    // (a few seconds' grace: a long frame, such as a screenshot, mustn't shut the wheel)
+    if( !g_spActive || !g_vrWeaponsAt || Sys_Milliseconds() - g_vrWeaponsAt > 3000 ) return 0;
+    memcpy( out, &g_vrWeapons, sizeof(*out) );
+    return 1;
+}
+// The slow motion while the wheel is open: a factor on the real time the simulation is given
+// (single player only; VR_Wheel_TimeScale is 1 in co-op and Holomatch). Not a cvar, nothing saved.
+static void SP_VRWheelClock( int *delta, int skipping ){
+    static float frac = 0.0f;
+    static int slowSince = 0, slowLevel = 0;
+    const int now = Sys_Milliseconds();
+    float ts = VR_Wheel_TimeScale();
+    if( skipping ) ts = 1.0f;
+    if( ts >= 1.0f ){
+        frac = 0.0f;
+        if( slowSince ){
+            if( g_levelTime >= slowLevel )
+                binfo("VR wheel: slow time over: %d ms real, %d ms game time\n", now - slowSince, g_levelTime - slowLevel);
+            else
+                binfo("VR wheel: slow time over after %d ms real (a new level)\n", now - slowSince);
+            slowSince = 0;
+        }
+        return;
+    }
+    if( !slowSince ){ slowSince = now; slowLevel = g_levelTime; }
+    float d = *delta * ts + frac;
+    *delta = (int)d;
+    frac = d - *delta;
+}
 // CG_VR_GETPOSE: the hands for the cgame's view weapon and the game's shots (efgame vr_shared.h)
 static int SP_VRGetPose( vrGamePose_t *pose ){
     memset( pose, 0, sizeof(*pose) );
@@ -1630,6 +1678,7 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
 #ifdef EF_VR
     case CG_VR_GETPOSE:   return SP_VRGetPose((vrGamePose_t*)P(0));
     case CG_VR_SETAIM:    return SP_VRSetAim((const float*)P(0));
+    case CG_VR_SETWEAPONS: return SP_VRSetWeapons((const vrWheelWeapons_t*)P(0));
 #endif
     // client state (the critical path)
     case CG_GETGLCONFIG: {   // live size: the desktop window can be resized in place (Alt+Enter)
@@ -2050,6 +2099,9 @@ extern "C" const char *SP_RespawnSave( void ){
 //    re-locks the player) and the loadout is restored via Player_RestoreFromPrevLevel from the carry cvars.
 static void SP_SaveGameInternal(const char* name, qboolean bEAUTO){
     if(!ge || !g_spActive || !name || !name[0]){ bwarn("save: not in a game\n"); return; }
+#ifdef EF_VR
+    VR_Wheel_Reset( "save" );
+#endif
 #ifdef EF_COOP
     if( g_coopReplica ){ SP_ComPrintf()("co-op: only the host saves the game\n"); return; }
 #endif
@@ -3032,6 +3084,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     // SP_SKIP_MAX_TICKS ticks and SP_SKIP_BUDGET_MS of real time per frame; what doesn't fit carries to
     // the next frames, so a frame never hangs. The fast-forward stops at once when the skip ends (camera
     // over) or the game queues an in-game movie, so the scene after it starts at normal speed.
+#ifdef EF_VR
+    SP_VRWheelClock( &delta, skipping );
+#endif
     int maxTicks = SP_MAX_CATCHUP;
     if( skipping ){
         float ts = Cvar_VariableValue("timescale");

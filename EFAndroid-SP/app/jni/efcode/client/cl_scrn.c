@@ -24,6 +24,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #include "client.h"
 #ifdef EF_VR
 #include "../vr/vr_hm.h"
+#include "../vr/vr_wheel.h"
 #endif
 #include "../../sp/sp_ui.h"   // EF1 SP native UI (libefui.so) drive hooks
 
@@ -1031,6 +1032,9 @@ void SCR_DrawScreenField( stereoFrame_t stereoFrame ) {
 		case CA_ACTIVE:
 			// always supply STEREO_CENTER as vieworg offset is now done by the engine.
 			CL_CGameRendering(stereoFrame);
+#ifdef EF_VR
+			VR_Wheel_Draw();	// the VR weapon wheel over the HUD, while it's open
+#endif
 			// EF1 SP 1:1: an in-game cinematic (inGameCinematic / CIN_inGame) stays CA_ACTIVE
 			// and overlays the FMV on the live (paused) game — the retail engine
 			// never enters CA_CINEMATIC for it. The world was just drawn (frozen, since the

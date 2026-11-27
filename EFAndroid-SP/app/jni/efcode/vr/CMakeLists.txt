@@ -16,9 +16,11 @@ add_library(ef_vr STATIC ${CMAKE_CURRENT_LIST_DIR}/vr_openxr.c ${CMAKE_CURRENT_L
 # the engine target that links ef_vr (they use the client's headers and the engine's defines);
 # vr_input.c calls VR_EngineInput, which calls vr_move.c
 # vr_hm*.c: Holomatch H1, VR on any Holomatch server (docs/vr/HOLOMATCH-H1.md)
+# vr_wheel.c: the weapon wheel, every mode (vr_wheel.h)
 target_sources(ef_vr INTERFACE ${CMAKE_CURRENT_LIST_DIR}/vr_input_engine.c ${CMAKE_CURRENT_LIST_DIR}/vr_move.c
   ${CMAKE_CURRENT_LIST_DIR}/vr_hm.c ${CMAKE_CURRENT_LIST_DIR}/vr_hm_aim.c ${CMAKE_CURRENT_LIST_DIR}/vr_hm_trace.c
-  ${CMAKE_CURRENT_LIST_DIR}/vr_hm_scene.c ${CMAKE_CURRENT_LIST_DIR}/vr_hm_head.c)
+  ${CMAKE_CURRENT_LIST_DIR}/vr_hm_scene.c ${CMAKE_CURRENT_LIST_DIR}/vr_hm_head.c
+  ${CMAKE_CURRENT_LIST_DIR}/vr_wheel.c)
 target_include_directories(ef_vr PUBLIC ${CMAKE_CURRENT_LIST_DIR} ${EF_OPENXR_INCLUDE})
 target_compile_definitions(ef_vr PUBLIC EF_VR)
 target_link_libraries(ef_vr PRIVATE ${CMAKE_DL_LIBS})

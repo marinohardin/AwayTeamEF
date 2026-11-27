@@ -79,9 +79,31 @@ the commands, key events and joystick axes it already has, so the game modules s
 | B | Crouch (standing players can also really crouch) | `+movedown` |
 | X | Use (in VR the head is the lean; Use + strafe no longer leans) | `+use` |
 | Y, or the left menu button | Menu | Escape |
-| Right thumbstick click | Next weapon | `weapnext` |
+| Right thumbstick click | Tap: next weapon. Hold (0.25 s): the weapon wheel, see below | `weapnext` / `weapon <n>` |
 | Left thumbstick click | Previous weapon; hold 0.7 s to recentre | `weapprev` / recentre |
 | Grips | Not mapped yet (kept free for grabbing and two-handed weapons) | |
+
+**Weapon wheel** (every mode: single player, co-op and Holomatch). Holding the right thumbstick
+click for a quarter of a second opens a ring of the weapons the player has, with the game's own
+HUD icons, in front of the head, held still in the room while it's open. Point the weapon hand at
+one (a dot shows where the hand points) or push the right stick towards it; the highlighted
+weapon's name shows in the middle, and each new highlight gives a short tick on the weapon hand's
+controller. Letting go of the click switches to it with the ordinary `weapon <n>` command;
+letting go in the middle ("Cancel"), or with nothing highlighted, switches nothing. The weapon in
+hand has a bar under it, and weapons without enough ammo are shown crossed out on red (they can
+still be picked, as with a number key). While the wheel is open the triggers don't fire (one still
+held when it shuts stays dead until let go), the right stick doesn't turn (it must come back to the
+middle first), and a quick tap of the click keeps its old meaning. `vr_leftHanded` points with the
+left hand. It shuts without a pick when a menu or the console opens, a cutscene starts, the player
+dies, the level ends, a game is saved or loaded, or the game quits.
+
+**Slow motion with the wheel.** Only in plain single player: time runs at `vr_wheelSlowMotion` (0.2)
+while the wheel is open, easing down over 150 ms and back up over 100 ms after a pick, and straight
+back to normal when it shuts for any other reason. It is a factor on the single-player simulation's
+clock, not a cvar, so nothing is saved. With a co-op session (host with `sp_coop` set, or a guest)
+and in Holomatch, the wheel works the same but time is never touched; this is checked every frame,
+so a guest joining while the wheel is open brings time back to normal at once. Holomatch sees only
+the usual `weapon <n>` command.
 
 Alternate fire is on the **left trigger**, not the right grip, so that each trigger is one fire
 mode and the grips stay free for hand interactions later.
@@ -109,6 +131,8 @@ pose, are located every frame in the same space as the eye views. `VR_GetInputSt
 | `vr_leftHanded` | 0 | 1 = the weapon in the left hand (the triggers swap with it) |
 | `cg_vrLaser` | 1 | 0 = off, 1 = laser and dot at the hit point, 2 = dot only |
 | `cg_vrOffHand` | 1 | draw a marker at the off hand |
+| `vr_wheelSlowMotion` | 0.2 | single player: how fast time runs while the weapon wheel is open (1 = no slow motion) |
+| `vr_wheelDistance`, `vr_wheelWidth`, `vr_wheelHeight` | 1.0, 1.4, −0.15 | the wheel's place: the 2D layer (HUD included) moves there while it's open, metres |
 | `vr_roomScale`, `vr_leanRadius`, `vr_seated`, `vr_crouchThreshold`, `vr_moveDirection`, `vr_comfortVignette` | | head position, room-scale, crouch, move direction and comfort: see [MOVEMENT.md](MOVEMENT.md) |
 
 Movement follows the stick's deflection and, by default, the head's yaw; turning pivots about the
@@ -120,5 +144,6 @@ head. Details in [MOVEMENT.md](MOVEMENT.md).
 |---|---|
 | Actions, bindings, sync, poses (OpenXR only) | `EFAndroid-SP/app/jni/efcode/vr/vr_input.c`, `vr_input.h`, `vr_local.h` |
 | Controller map onto the engine (compiled into the engine target) | `efcode/vr/vr_input_engine.c` |
+| Weapon wheel: pointing, drawing, slow motion (engine target) | `efcode/vr/vr_wheel.c`, `vr_wheel.h`; the single-player weapon list comes from the cgame (`CG_VR_SETWEAPONS`, `cg_vr.cpp`) through `sp/sp_bridge.cpp`, which also slows its clock |
 | Session wiring | `efcode/vr/vr_openxr.c`: `VR_Input_*` calls in `VR_Init`, `VR_Shutdown`, `VR_CreateSession`, `VR_DestroySession`, `VR_PollEvents` and `VR_BeginFrame` |
 | Android shell | `android/AndroidManifest-quest.xml`, `android/java-quest/`, `android/jni/quest_jni.c`, `android/CMakeLists.txt` (`EF_VR`), `android/make-apk.sh` (`VR=1`) |
