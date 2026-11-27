@@ -1,7 +1,7 @@
 # Quest VR: Holomatch H1 (any server, engine only)
 
 Status: plan, approved by the owner on 2026-11-26. Round 1 (spikes S1, S2, S4 and steps 1–4, the
-aim) is being built; §10 records what it found. See [PLAN.md](PLAN.md) for the phases,
+aim) is built; §10 records what it found. See [PLAN.md](PLAN.md) for the phases,
 [MOVEMENT.md](MOVEMENT.md) for the head and movement design, [RENDERING.md](RENDERING.md) for the
 eye rendering, and [QUEST.md](QUEST.md) for the controller input.
 
@@ -606,3 +606,64 @@ The aim (fairness, hits) comes first, then what the player sees, then comfort.
 - The comfort of the 4-unit radius and of room-scale walking (S5, then the Quest).
 - Real controller jitter and the filter's settings (Quest).
 - Third-party server mods (only with ones the owner names, locally).
+
+---
+
+## 10. Round 1: what the spikes and the aim tests found (2026-11-26)
+
+Round 1 ran spikes S1, S2 and S4 and built steps 1–4 (the aim). All runs: the Mac `EF_VR` build,
+the Meta XR Simulator selected per launch, a dedicated server on 127.0.0.1 (`hm_voy1`), scripted
+`vr_debugHand` poses, and both cgames: cMod's (`sv_cmodGame 1`) and the stock 1.2 one
+(`sv_cmodGame 0`, `cl_cmodModules 0`).
+
+### 10.1 S1: the stock cgame against cMod's
+
+- `cg_bobup`, `cg_bobpitch`, `cg_bobroll` and `cg_drawCrosshair` are plain archived cvars in both
+  cgames, not cheat-protected. §4.4 holds: the engine can set them and put them back.
+- Every first-person view weapon part carries `RF_FIRST_PERSON|RF_DEPTHHACK` (renderfx 0xc) in both.
+- Beams carry renderfx 0 and start at the flash: `RT_LINE`, `RT_BEZIER`, `RT_ELECTRICITY`. Matching
+  beams by their start point (§4.3) works for both cgames.
+- One difference for round 2: the I-MOD's beam is an `RT_LINE` in the stock cgame and an
+  `RT_BEZIER` in cMod's. The re-pose must handle both.
+
+### 10.2 S2: re-basing the view
+
+- It works with both cgames. The eyes turn by the engine's body yaw (`VR_SetBodyYaw`); the cgame's
+  view follows the aim. The HUD and the scoreboard draw normally, the crosshair is off.
+- **Deviation from §3.3:** `cl.viewangles` stays the body's accumulator (turning and the mouse add to
+  it), and the aim goes only into `usercmd.angles`. This keeps every other user of `cl.viewangles`
+  unchanged. Because the server moves the player along the angles it receives, `forwardmove` and
+  `rightmove` are turned from the body's yaw into the aim's yaw, so walking still follows the body.
+- The forced cvars never reach the config: `writeconfig` while active writes the player's values
+  (checked with both cgames), and the saved config still has them after a quit.
+- The view weapon is still drawn at the flat view; the re-pose is round 2 (S3).
+- The laser and the dot use shaders from `pak0` (`gfx/effects/whitelaser`,
+  `gfx/misc/yellowparticle`) instead of a built-in white image: they exist on every install, and
+  nothing new goes into a pak.
+
+### 10.3 S4 and the aim tests
+
+| Test | Result |
+|---|---|
+| Aim accuracy, walls (cMod) | 20 I-MOD shots at 100–276 units, 5 poses × 4 body turns: every hit within **0.96 units** of the dot. The predicted muzzle is within about 2.5 units of the server's. Rifle main fire is within its own random spread (at most 1.13°, the spread is up to 0.99° plus the muzzle snap). |
+| Aim accuracy, long range | 0.52–0.86 units at 700–760 units (both cgames). One stock shot at 412 units was 9.6 units off, with P equally off: the aim moved between the logged command and the shot, not a convergence error. |
+| Blocked eye | Hand 0.45 m to the side of a pillar, yawed in: the dot turns orange at the pillar, the shot hit **0.89 units** from it (cMod) and 0.90 (stock), about 2.9 units from the laser's end, as designed. The gun pushed into a wall: 0.21–0.29 units. |
+| Pitch clamp | The hand straight up and down (±90, ±89) for 10 s each: the angle sent stays inside ±87 (the target point lies on the ceiling or floor), `delta_angles[PITCH]` never changed. |
+| Teleport and respawn | `setviewpos` to 0, 90 and 225: the body yaw follows the server's turn (new delta angles), and the aim stays relative to the hand. Dead: no laser or dot. After the respawn the aim follows the hand at once. |
+| Server | `dumpuser`: no `vr` key; the userinfo is the flat client's. Nothing unusual in the server log with either cgame. |
+| Flat gates | `base-1_4_0` (`EF_COOP=0`) and `coop-m2-base`: **ALL IDENTICAL**. |
+
+Not covered yet (round 2, or a later run):
+- A standing bot as the target. The bot kept moving and firing with `g_speed 0`, so the bot runs
+  were inconclusive; `g_unlagged` 0/1/2 with `cg_predictWeapons` 0/1 therefore has no hit data yet
+  against players (the walls ran with `g_unlagged 1`, `cg_predictWeapons 1`).
+- Hitscan weapons other than the rifle and the I-MOD, and ranges beyond about 760 units.
+- The flat observers, the lean and crouch, the HUD layer and menus in detail, and the 20-minute
+  session: steps 5 onwards.
+- Real controller jitter and the filter's settings, on a headset.
+
+### 10.4 Smaller deviations
+
+- The eye-to-muzzle check (§3.6) traces a point, not the projectile's size: for hitscan that is what
+  the server does; for projectiles a gun touching a wall may differ by a few units.
+- `vr_hmDebug` (TEMP, default 0) prints the aim and the events for these tests. It is off unless set.
