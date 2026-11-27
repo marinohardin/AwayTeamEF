@@ -1024,6 +1024,13 @@ typedef struct playerState_s {
 
 #define	BUTTON_ANY			256			// any key whatsoever
 
+// VR players only (a flat client never sets these). ClientThink takes them out of the command
+// before anything else sees it (G_TakeVRButtons, g_active.cpp).
+#define	BUTTON_VRAIM		0x00004000	// co-op guest: its hand's muzzle and aim came with this command
+#define	BUTTON_VRLEAN		0x00008000	// an analog lean (the head's sideways offset) is in the byte below
+#define	BUTTON_VRLEAN_SHIFT	16			// bits 16-23: the lean, a signed byte in game units (+ right)
+#define	BUTTON_VRBITS		0x00ffc000	// all of the above
+
 #define	MOVE_RUN			120			// if forwardmove or rightmove are >= MOVE_RUN,
 										// then BUTTON_WALKING should be set
 

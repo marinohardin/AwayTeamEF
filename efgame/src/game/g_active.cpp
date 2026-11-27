@@ -806,6 +806,8 @@ usually be a couple times for each server frame on fast clients.
 ==============
 */
 
+static int g_vrLeanCmd = BG_VRLEAN_NONE;	// VR: this command's lean (G_TakeVRButtons, below)
+
 void ClientThink_real( gentity_t *ent, usercmd_t *ucmd ) 
 {
 	gclient_t	*client;
@@ -1110,7 +1112,9 @@ extern vmCvar_t cg_thirdPerson;
 	VectorCopy( client->ps.origin, oldOrigin );
 
 	// perform a pmove
+	bg_vrLean = g_vrLeanCmd;
 	Pmove( &pm );
+	bg_vrLean = BG_VRLEAN_NONE;
 
 	// save results of pmove
 	if ( ent->client->ps.eventSequence != oldEventSequence ) 
@@ -1236,10 +1240,40 @@ ClientThink
 A new command has arrived from the client
 ==================
 */
+/*
+==================
+G_TakeVRButtons
+
+A VR player's command carries an analog lean (and, from a co-op guest, a flag for its hand's aim)
+in buttons no key sets. Take them out before anything looks at the buttons; the lean goes to
+Pmove (bg_vrLean). A flat player's command has none of these bits, so nothing changes for it.
+==================
+*/
+static void G_TakeVRButtons( usercmd_t *ucmd )
+{
+	g_vrLeanCmd = BG_VRLEAN_NONE;
+	if ( !( ucmd->buttons & BUTTON_VRBITS ) )
+	{
+		return;
+	}
+	if ( ucmd->buttons & BUTTON_VRLEAN )
+	{
+		g_vrLeanCmd = (signed char)( ( ucmd->buttons >> BUTTON_VRLEAN_SHIFT ) & 0xff );
+	}
+	ucmd->buttons &= ~BUTTON_VRBITS;
+}
+
 void ClientThink( int clientNum, usercmd_t *ucmd ) {
 	gentity_t *ent;
+	usercmd_t vrCmd;
 
 	ent = g_entities + clientNum;
+	if ( ucmd->buttons & BUTTON_VRBITS )
+	{
+		vrCmd = *ucmd;		// (the engine's command may be used again for the next frame)
+		ucmd = &vrCmd;
+	}
+	G_TakeVRButtons( ucmd );
 	ent->client->usercmd = *ucmd;
 //	if ( !g_syncronousClients->integer ) 
 	{

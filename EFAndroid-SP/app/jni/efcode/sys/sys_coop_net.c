@@ -155,6 +155,10 @@ typedef struct {
 	int				weapon;
 	signed char		forwardmove, rightmove, upmove;
 	int				viewTime;			// the host level time the guest's screen showed (its shots)
+	// a VR guest's weapon hand, sent only with COOP_BUTTON_VRAIM: the muzzle from the eye in
+	// eighths of a unit, and the ray's pitch and yaw (ANGLE2SHORT), in the body frame
+	short			vrMuzzle[3];
+	short			vrAngles[2];
 } coopCmd_t;
 
 typedef struct {
@@ -1006,6 +1010,7 @@ static struct {
 	int					appliedSeq;		// the newest command the game applied (the frames' ackCmd)
 	int					starved;		// game frames in a row with no command waiting
 	int					heldButtons;	// buttons of commands dropped from a full queue
+	coopCmd_t			applied;		// the command CoopNet_GuestInput returned last (a VR guest's hand)
 	int					viewTime;		// the applied command's (CoopNet_GuestViewTime)
 
 	// the guest's console commands (CoopNet_HostTakeCommand)
@@ -1230,6 +1235,13 @@ static void CoopHostInput( msg_t *msg )
 		c.rightmove = (signed char)MSG_ReadByte( msg );
 		c.upmove = (signed char)MSG_ReadByte( msg );
 		c.viewTime = MSG_ReadLong( msg );
+		if ( c.buttons & COOP_BUTTON_VRAIM )
+		{
+			for ( int j = 0; j < 3; j++ )
+				c.vrMuzzle[j] = (short)MSG_ReadShort( msg );
+			for ( int j = 0; j < 2; j++ )
+				c.vrAngles[j] = (short)MSG_ReadShort( msg );
+		}
 		if ( msg->readcount > msg->cursize )
 			return;
 		// oldest first; only commands newer than the newest one seen count
@@ -1239,14 +1251,14 @@ static void CoopHostInput( msg_t *msg )
 		if ( coopHost.haveCmd && c.seq - coopHost.appliedSeq <= 0 )
 		{
 			// a frame that had none waiting already stood in for it (CoopNet_GuestInput): only its buttons
-			coopHost.heldButtons |= c.buttons;
+			coopHost.heldButtons |= c.buttons & ~COOP_BUTTON_VRBITS;
 			coopHost.cmdHeard = Sys_Milliseconds();
 			continue;
 		}
 		if ( coopHost.queued == COOP_CMD_QUEUE )
 		{
 			// the guest got ahead: drop the oldest, keeping its buttons
-			coopHost.heldButtons |= coopHost.queue[0].buttons;
+			coopHost.heldButtons |= coopHost.queue[0].buttons & ~COOP_BUTTON_VRBITS;
 			memmove( &coopHost.queue[0], &coopHost.queue[1], sizeof( coopHost.queue[0] ) * ( COOP_CMD_QUEUE - 1 ) );
 			coopHost.queued--;
 		}
@@ -1453,7 +1465,7 @@ int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *for
 	else
 	{
 		c = coopHost.cmd;
-		c.buttons = 0;
+		c.buttons &= COOP_BUTTON_VRBITS;	// a VR guest's lean and hand stay (they aren't presses)
 		if ( ++coopHost.starved > COOP_INPUT_REPEAT )
 			c.forwardmove = c.rightmove = c.upmove = 0;
 		else
@@ -1468,6 +1480,24 @@ int CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *for
 	*rightmove = c.rightmove;
 	*upmove = c.upmove;
 	coopHost.heldButtons = 0;
+	coopHost.applied = c;
+	return 1;
+}
+
+int CoopNet_GuestVRAim( float muzzle[3], float forward[3] )
+{
+	const coopCmd_t *c = &coopHost.applied;
+	float pitch, yaw;
+
+	if ( !coopHost.active || !( c->buttons & COOP_BUTTON_VRAIM ) )
+		return 0;
+	for ( int j = 0; j < 3; j++ )
+		muzzle[j] = c->vrMuzzle[j] / 8.0f;
+	pitch = DEG2RAD( SHORT2ANGLE( c->vrAngles[0] ) );
+	yaw = DEG2RAD( SHORT2ANGLE( c->vrAngles[1] ) );
+	forward[0] = cosf( pitch ) * cosf( yaw );
+	forward[1] = cosf( pitch ) * sinf( yaw );
+	forward[2] = -sinf( pitch );
 	return 1;
 }
 
@@ -1666,6 +1696,7 @@ static struct {
 	int					seq;
 	int					textSeq;		// the last console command sent (CoopNet_GuestSendCommand)
 	coopCmd_t			cmds[COOP_INPUT_BACKUP];	// the newest last
+	short				vrMuzzle[3], vrAngles[2];	// a VR guest's weapon hand, for the next commands
 	int					numCmds;
 	qboolean			unsent;			// a command not sent yet
 
@@ -2091,9 +2122,30 @@ int CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
 	c->rightmove = (signed char)rightmove;
 	c->upmove = (signed char)upmove;
 	c->viewTime = viewTime;
+	if ( buttons & COOP_BUTTON_VRAIM )
+	{
+		memcpy( c->vrMuzzle, coopGuest.vrMuzzle, sizeof( c->vrMuzzle ) );
+		memcpy( c->vrAngles, coopGuest.vrAngles, sizeof( c->vrAngles ) );
+	}
 	coopGuest.unsent = qtrue;
 	CoopGuestSend();
 	return 1;
+}
+
+void CoopNet_GuestSetVRAim( const float muzzle[3], const float forward[3] )
+{
+	vec3_t	f, angles;
+
+	for ( int j = 0; j < 3; j++ )
+	{
+		float v = muzzle[j] * 8.0f;
+		v = v > 32767.0f ? 32767.0f : v < -32767.0f ? -32767.0f : v;
+		coopGuest.vrMuzzle[j] = (short)( v < 0 ? v - 0.5f : v + 0.5f );
+		f[j] = forward[j];
+	}
+	vectoangles( f, angles );
+	coopGuest.vrAngles[0] = (short)ANGLE2SHORT( angles[PITCH] );
+	coopGuest.vrAngles[1] = (short)ANGLE2SHORT( angles[YAW] );
 }
 
 /*
@@ -2146,6 +2198,13 @@ static void CoopGuestSend( void )
 			MSG_WriteByte( &msg, (byte)c->rightmove );
 			MSG_WriteByte( &msg, (byte)c->upmove );
 			MSG_WriteLong( &msg, c->viewTime );
+			if ( c->buttons & COOP_BUTTON_VRAIM )
+			{
+				for ( int j = 0; j < 3; j++ )
+					MSG_WriteShort( &msg, c->vrMuzzle[j] );
+				for ( int j = 0; j < 2; j++ )
+					MSG_WriteShort( &msg, c->vrAngles[j] );
+			}
 		}
 		MSG_WriteLong( &msg, coopGuest.newestFrame );
 		MSG_WriteLong( &msg, coopGuest.readyLevel );

@@ -645,6 +645,7 @@ static qboolean COOP_GuestBuildCmd( gentity_t *ent, usercmd_t *cmd )
 	usercmd_t	g;
 
 	memset( &g, 0, sizeof( g ) );
+	coop_p2.vrAim = qfalse;
 	if ( !COOP_GuestCmd( &g ) )
 	{
 		if ( coop_p2.guestSteering )
@@ -670,6 +671,8 @@ static qboolean COOP_GuestBuildCmd( gentity_t *ent, usercmd_t *cmd )
 	*cmd = g;
 	cmd->serverTime = level.time;
 	coop_p2.shotViewTime = COOP_GuestViewTime();
+	// a VR guest's hand (BUTTON_VRAIM; ClientThink takes the VR bits out of the command)
+	coop_p2.vrAim = ( g.buttons & BUTTON_VRAIM ) && COOP_GuestVRAim( coop_p2.vrMuzzle, coop_p2.vrForward ) ? qtrue : qfalse;
 	// a weapon P2 doesn't have (or none: the guest isn't in a level) keeps P2's
 	if ( g.weapon <= WP_NONE || g.weapon >= WP_NUM_WEAPONS || !( cl->ps.stats[STAT_WEAPONS] & ( 1 << g.weapon ) ) )
 	{
@@ -692,6 +695,7 @@ static void COOP_BuildCmd( gentity_t *ent, usercmd_t *cmd )
 	gclient_t	*cl = ent->client;
 	vec3_t		view, dir;
 
+	coop_p2.vrAim = qfalse;
 	if ( coop_p2.moveFrames <= 0 && COOP_GuestBuildCmd( ent, cmd ) )
 	{
 		coop_p2.weapon = 0;

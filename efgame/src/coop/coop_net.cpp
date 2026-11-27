@@ -58,3 +58,8 @@ int COOP_GuestViewTime( void )
 {
 	return coop_bridge.GuestViewTime ? coop_bridge.GuestViewTime() : 0;
 }
+
+qboolean COOP_GuestVRAim( vec3_t muzzle, vec3_t forward )
+{
+	return coop_bridge.GuestVRAim ? coop_bridge.GuestVRAim( muzzle, forward ) : qfalse;
+}

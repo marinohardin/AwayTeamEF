@@ -157,6 +157,7 @@ extern "C" {
     int         CoopNet_CorePakFile( const char *qpath );
     int         CoopNet_HostHasGuest( void );
     int         CoopNet_GuestViewTime( void );
+    int         CoopNet_GuestVRAim( float muzzle[3], float forward[3] );
 }
 static qboolean SP_CoopGuestCmd( usercmd_t *cmd ){
     int angles[3], buttons = 0, weapon = 0; signed char fwd = 0, side = 0, up = 0;
@@ -167,11 +168,13 @@ static qboolean SP_CoopGuestCmd( usercmd_t *cmd ){
     return qtrue;
 }
 static qboolean SP_CoopGuestConnected( void ){ return CoopNet_HostHasGuest() ? qtrue : qfalse; }
+static qboolean SP_CoopGuestVRAim( float muzzle[3], float forward[3] ){ return CoopNet_GuestVRAim( muzzle, forward ) ? qtrue : qfalse; }
 static qboolean SP_CoopCorePakFile( const char *qpath ){ return CoopNet_CorePakFile( qpath ) ? qtrue : qfalse; }
 static void SP_CoopSetBridge( void ){
     typedef void (*coopSetBridge_t)( const coopBridge_t * );
     static coopBridge_t bridge = { COOP_BRIDGE_VERSION, SP_CoopGuestCmd, CoopNet_GuestName, SP_CoopGuestConnected,
-                                   CoopNet_GuestViewTime, CoopNet_GuestSex, CoopNet_GuestLook, SP_CoopCorePakFile };
+                                   CoopNet_GuestViewTime, CoopNet_GuestSex, CoopNet_GuestLook, SP_CoopCorePakFile,
+                                   SP_CoopGuestVRAim };
     coopSetBridge_t set = (coopSetBridge_t)SP_ModuleSym( g_lib, "COOP_SetBridge" );   // only in EF_COOP game modules
     if( set ) set( &bridge );
 }
@@ -1523,6 +1526,15 @@ static int SP_AS_GetBModelSound(const char* name, int stage){
 }
 
 #ifdef EF_VR
+// CG_VR_SETAIM: the weapon hand as the cgame drew it (a co-op guest sends it with its commands)
+static float g_vrAim[6];        // muzzle from the eye, the hand's ray: body frame
+static int   g_vrAimAt = 0;     // when (Sys_Milliseconds; 0: never)
+static int SP_VRSetAim( const float *aim ){
+    memcpy( g_vrAim, aim, sizeof(g_vrAim) );
+    g_vrAimAt = Sys_Milliseconds();
+    if( !g_vrAimAt ) g_vrAimAt = 1;
+    return 1;
+}
 // CG_VR_GETPOSE: the hands for the cgame's view weapon and the game's shots (efgame vr_shared.h)
 static int SP_VRGetPose( vrGamePose_t *pose ){
     memset( pose, 0, sizeof(*pose) );
@@ -1617,6 +1629,7 @@ static intptr_t SP_CgameSyscall( intptr_t cmd, ... ){
     case CG_S_GETSAMPLELENGTH: return SPR_S_GetSampleLength((int)A(0));   // real sound duration ms (subtitle timing)
 #ifdef EF_VR
     case CG_VR_GETPOSE:   return SP_VRGetPose((vrGamePose_t*)P(0));
+    case CG_VR_SETAIM:    return SP_VRSetAim((const float*)P(0));
 #endif
     // client state (the critical path)
     case CG_GETGLCONFIG: {   // live size: the desktop window can be resized in place (Alt+Enter)
@@ -2757,6 +2770,13 @@ static void SP_CoopMakeCmd( void ){
     int shotTime = g_coopRep ? g_coopRep->TakeShotTime() : 0;
     int viewTime = ( shotTime > g_coopSentView || ( shotTime && g_coopSentView - shotTime > 1000 ) ) ? shotTime : g_coopDrawnTime;   // (or a new level)
     g_coopSeqAt = Sys_Milliseconds();
+#ifdef EF_VR
+    // a VR guest: the weapon hand the cgame drew last goes along, for the host's shots and the look
+    if( g_vrAimAt && Sys_Milliseconds() - g_vrAimAt < 200 ){
+        CoopNet_GuestSetVRAim( g_vrAim, g_vrAim + 3 );
+        c.buttons |= COOP_BUTTON_VRAIM;
+    }
+#endif
     if( !CoopNet_GuestQueueCmd( g_coopSeq + 1, an, c.buttons, c.weapon, c.forwardmove, c.rightmove, c.upmove, viewTime ) ) return;
     g_coopSeq++;
     g_coopBtn = 0;
@@ -2830,9 +2850,16 @@ static void SP_CoopReplicaDrawFrame( int stereo ){
     if( !paused ){
       int an[3]; signed char fwd=0,side=0,up=0; int btn=0;
       SPR_GetLatestCmd(an,&fwd,&side,&up,&btn);
+#ifdef EF_VR
+      btn |= VR_Move_LeanButtons();   // the newest lean goes with each command, never merged (below)
+#endif
       g_lastcmd.angles[0]=an[0]; g_lastcmd.angles[1]=an[1]; g_lastcmd.angles[2]=an[2];
       g_lastcmd.forwardmove=fwd; g_lastcmd.rightmove=side; g_lastcmd.upmove=up; g_lastcmd.buttons=btn;
+#ifdef EF_VR
+      g_lastcmd.weapon = (byte)g_weaponSelect; g_coopBtn |= btn & ~COOP_BUTTON_VRBITS; }
+#else
       g_lastcmd.weapon = (byte)g_weaponSelect; g_coopBtn |= btn; }
+#endif
     SP_CoopReplicaApply();
     SP_CoopClockFrame( paused );
     // the world is drawn on the same clock, a host frame behind (between its two newest frames)
@@ -2986,6 +3013,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     // drained below). serverTime is stamped per-tick inside the loop so pml.msec == 50.
     { int an[3]; signed char fwd=0,side=0,up=0; int btn=0;
       SPR_GetLatestCmd(an,&fwd,&side,&up,&btn);
+#ifdef EF_VR
+      btn |= VR_Move_LeanButtons();   // the head's lean, in the game's int buttons (BUTTON_VRLEAN)
+#endif
       g_lastcmd.angles[0]=an[0]; g_lastcmd.angles[1]=an[1]; g_lastcmd.angles[2]=an[2];
       g_lastcmd.forwardmove=fwd; g_lastcmd.rightmove=side; g_lastcmd.upmove=up; g_lastcmd.buttons=btn;
       // Propagate the cgame's selected weapon into the usercmd. The cgame reports its weapon via

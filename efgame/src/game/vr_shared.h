@@ -16,6 +16,9 @@
 
 // outside cgameImport_t on purpose: a number no other syscall will take
 #define CG_VR_GETPOSE		0x5652
+// co-op guest: the weapon hand for the next commands, float[6]: the muzzle from the eye and the
+// hand's ray, in the body frame before the yaw (only a VR engine's co-op guest uses it)
+#define CG_VR_SETAIM		0x5653
 
 #define VR_HAND_WEAPON		0	// the dominant hand (the engine's vr_leftHanded picks it)
 #define VR_HAND_OFFHAND		1
@@ -56,5 +59,7 @@ void		CG_VR_AddAimHelpers( const vec3_t muzzle );
 qboolean	CG_VR_HideCrosshair( void );
 // this frame's shot ray (set by CG_VR_AddAimHelpers), for the crosshair-entity scan
 qboolean	CG_VR_AimRay( vec3_t start, vec3_t forward );
+// the newest shot ray, drawn at most maxAge ms ago
+qboolean	CG_VR_RecentAimRay( vec3_t start, vec3_t forward, int maxAge );
 
 #endif

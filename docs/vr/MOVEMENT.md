@@ -24,10 +24,11 @@ Eyes, hands and movement all place a tracked pose in the world the same way:
 ## Head position
 
 - **Lean.** Within `vr_leanRadius` (0.3 m; capped so the eye stays inside the 16-unit player box)
-  the head is only a view offset. The game's own lean is not used in VR: the cgame skips its
-  `leanofs` view offset, and Use + strafe no longer starts the single player key lean (the command
-  gets a forward move of 1, below any speed that matters). The co-op work will drive the game's
-  lean from the head later.
+  the head is a view offset. The head also drives the game's lean (`leanofs`) as an analog value:
+  each command carries the head's sideways offset in game units (times `vr_leanScale`) and the game
+  moves `leanofs` toward it through the key lean's own wall trace. NPCs and co-op partners see that
+  lean (see [COOP.md](COOP.md)). On the VR player's own screen the cgame skips the `leanofs` view
+  offset, since the real head already moved the eyes. The key lean (Use + strafe) is off in VR.
 - **Room-scale (single player).** Past the radius the body follows the head. Before each game tick
   the SP bridge moves the player's box by the excess with the game's own trace
   (`MASK_PLAYERSOLID`, a stair step up to `STEPSIZE`) and the head origin moves by what the move
@@ -75,10 +76,11 @@ mask, drawn by the runtime, so it costs nothing in the eye render.
 | `vr_crouchThreshold` | 0.3 | metres below the recentred height that crouch the player (0 off) |
 | `vr_moveDirection` | 0 | 0: move where the head looks; 1: where the off-hand points |
 | `vr_comfortVignette` | 0 | edge darkening while moving or smooth turning, 0..1 |
+| `vr_leanScale` | 1 | how much of the head's sideways offset becomes the game's lean (0: none) |
 
 Debugging (not archived): `vr_debugHead "side fwd up"` (metres) adds a pretend head offset,
 `vr_debugStick "x y"` a pretend move stick, `vr_debugMove 1` (2 Hz) or `2` (10 Hz) prints the head,
-body and movement state, and `vr_debugTurn <degrees>` turns as a snap would.
+body and movement state (`3`: also the lean sent to the game), and `vr_debugTurn <degrees>` turns as a snap would.
 
 ## Limits
 

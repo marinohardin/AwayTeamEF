@@ -31,6 +31,7 @@
 #include "../cgame/cg_local.h"
 #include "../game/anims.h"
 #include "../game/coop_public.h"
+#include "../game/vr_shared.h"
 
 #define CP_RECENT		1000	// ms: the host's effects of player 2's shots are left out this long after one
 #define CP_MISSILES		16		// projectiles drawn at once before the host's arrive
@@ -529,8 +530,16 @@ The shot
 
 // where the host's game fires player 2's weapon from (CalcMuzzlePoint, g_weapon.cpp: by the eye,
 // not the model's gun, for all but the phaser)
+static qboolean	cp_vrShot;		// a VR guest's shot: the host fires it from the hand (W_VRHandShot)
+static vec3_t	cp_vrStart;		// ...from here (the drawn muzzle, on the eye's side of walls)
+
 static void CP_HostMuzzle( const playerState_t *ps, int weapon, const vec3_t forward, const vec3_t right, vec3_t muzzle )
 {
+	if ( cp_vrShot )
+	{
+		VectorCopy( cp_vrStart, muzzle );
+		return;
+	}
 	VectorCopy( ps->origin, muzzle );
 	muzzle[2] += ps->viewheight;
 	switch ( weapon )
@@ -785,13 +794,29 @@ void COOP_PredictShot( centity_t *cent, qboolean alt )
 	}
 
 	// the host's game fires from player 2's eyes (coop_lagcomp.cpp puts them where they are after
-	// this command's move, as here)
-	VectorCopy( ps->origin, eye );
-	eye[2] += ps->viewheight;
-	AngleVectors( ps->viewangles, forward, right, up );
+	// this command's move, as here); a VR guest's from its hand, which went with the command
+	cp_vrShot = CG_VR_RecentAimRay( cp_vrStart, forward, 200 );
+	if ( cp_vrShot )
+	{
+		vec3_t angles;
+
+		VectorCopy( cp_vrStart, eye );		// (the beam traces start 8 behind it, as the host's do)
+		vectoangles( forward, angles );
+		AngleVectors( angles, NULL, right, up );
+	}
+	else
+	{
+		VectorCopy( ps->origin, eye );
+		eye[2] += ps->viewheight;
+		AngleVectors( ps->viewangles, forward, right, up );
+	}
 	if ( cp_muzzleTime && cg.time - cp_muzzleTime < 200 && cg.time >= cp_muzzleTime )
 	{
 		VectorCopy( cp_muzzle, muzzle );
+	}
+	else if ( cp_vrShot )
+	{
+		VectorCopy( cp_vrStart, muzzle );
 	}
 	else
 	{
@@ -846,6 +871,7 @@ void COOP_PredictShot( centity_t *cent, qboolean alt )
 		break;
 	}
 	COOP_UnseedShot();
+	cp_vrShot = qfalse;
 
 	if ( hitscan )
 	{

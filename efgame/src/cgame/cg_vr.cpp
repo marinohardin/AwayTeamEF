@@ -383,6 +383,34 @@ qboolean CG_VR_AimRay( vec3_t start, vec3_t forward ) {
 	return qtrue;
 }
 
+// the newest shot ray, if drawn at most maxAge ms ago (a predicted shot runs before this frame's
+// view weapon is placed)
+qboolean CG_VR_RecentAimRay( vec3_t start, vec3_t forward, int maxAge ) {
+	if ( !cg_vrPose.active || !cg_vrAimRayTime || cg.time < cg_vrAimRayTime || cg.time - cg_vrAimRayTime > maxAge ) {
+		return qfalse;
+	}
+	VectorCopy( cg_vrAimStart, start );
+	VectorCopy( cg_vrAimForward, forward );
+	return qtrue;
+}
+
+// co-op guest: the engine sends the weapon hand with the next commands (CG_VR_SETAIM): the muzzle
+// as drawn, from the eye, and the hand's ray, both in the body frame before the yaw
+static void CG_VR_ReportAim( const vec3_t muzzle, const vec3_t forward ) {
+	const float yaw = DEG2RAD( cg.refdefViewAngles[YAW] ), c = cos( yaw ), s = sin( yaw );
+	vec3_t d;
+	float aim[6];
+
+	VectorSubtract( muzzle, cg.refdef.vieworg, d );
+	aim[0] = c * d[0] + s * d[1];
+	aim[1] = -s * d[0] + c * d[1];
+	aim[2] = d[2];
+	aim[3] = c * forward[0] + s * forward[1];
+	aim[4] = -s * forward[0] + c * forward[1];
+	aim[5] = forward[2];
+	syscall( CG_VR_SETAIM, aim );
+}
+
 void CG_VR_AddAimHelpers( const vec3_t muzzle ) {
 	trace_t tr;
 	vec3_t start, forward, end, rgb = { 1.0f, 0.15f, 0.1f };
@@ -395,6 +423,7 @@ void CG_VR_AddAimHelpers( const vec3_t muzzle ) {
 	VectorCopy( start, cg_vrAimStart );
 	VectorCopy( forward, cg_vrAimForward );
 	cg_vrAimRayTime = cg.time;
+	CG_VR_ReportAim( muzzle, forward );
 	if ( !cg_vrLaser.integer || ( cg.snap->ps.weapon >= WP_TRICORDER && cg.snap->ps.weapon <= WP_RED_HYPO ) ) {
 		// no laser on the tricorder and the hypos
 		return;

@@ -379,6 +379,7 @@ static int REP_WriteGlobals( unsigned char *buf, int size )
 		}
 	}
 	COOP_FxWrite();		// effects the game drew directly (coop_fx.cpp)
+	COOP_VRWrite();		// a VR player's aim, for drawing its model (coop_vr.cpp; no chunk without one)
 	return REP_EndWrite();
 }
 
@@ -614,6 +615,7 @@ static void REP_ApplyGlobals( const unsigned char *data, int len )
 		repSound_t	recent[REP_SOUNDS];
 		int			n = gi.ReadFromSaveGameOptional( 'RSND', recent, sizeof( recent ), NULL ) / (int)sizeof( recent[0] );
 		COOP_FxRead();
+		COOP_VRRead();
 		if ( !REP_EndRead() )
 		{
 			gi.Printf( S_COLOR_YELLOW "co-op: the host's level globals didn't read back; skipped\n" );

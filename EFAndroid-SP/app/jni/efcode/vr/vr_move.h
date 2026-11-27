@@ -45,6 +45,10 @@ void	VR_Move_Cmd( struct usercmd_s *cmd );
 // catcher (stick and buttons go to the game); dt in seconds
 void	VR_Move_Frame( const void *inState, int game, float dt );
 void	VR_Move_CrouchButton( int down );
+// the analog lean for the SP game's command: BUTTON_VRLEAN plus the head's sideways offset in game
+// units (times vr_leanScale, within +-32) in bits 16-23, to OR into the command's int buttons (the
+// SP bridge; the engine's usercmd buttons are a byte). 0 without a tracked head in play.
+int		VR_Move_LeanButtons( void );
 // a turn of the body yaw by deltaYaw degrees (counter-clockwise) this frame, and how fast,
 // 0..1 of full smooth-turn speed (for the comfort vignette; a snap turn is 0)
 void	VR_Move_Turned( float deltaYaw, float amount );

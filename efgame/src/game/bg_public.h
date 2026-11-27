@@ -142,6 +142,9 @@ typedef struct {
 
 // if a full pmove isn't done on the client, you can just update the angles
 void PM_UpdateViewAngles( playerState_t *ps, usercmd_t *cmd, gentity_t *gent );
+// VR: the analog lean of the command being moved (BUTTON_VRLEAN), or BG_VRLEAN_NONE (bg_pangles.cpp)
+#define BG_VRLEAN_NONE	(-1000)
+extern int bg_vrLean;
 void Pmove( pmove_t *pmove );
 
 
