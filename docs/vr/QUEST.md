@@ -106,6 +106,9 @@ pose, are located every frame in the same space as the eye views. `VR_GetInputSt
 | `vr_turnSpeed` | 150 | smooth turn, degrees per second at full deflection |
 | `vr_stickDeadzone` | 0.25 | thumbstick dead zone (0..0.9) |
 | `vr_menuCursorSpeed` | 500 | menu cursor speed, pixels per second |
+| `vr_leftHanded` | 0 | 1 = the weapon in the left hand (the triggers swap with it) |
+| `cg_vrLaser` | 1 | 0 = off, 1 = laser and dot at the hit point, 2 = dot only |
+| `cg_vrOffHand` | 1 | draw a marker at the off hand |
 | `vr_roomScale`, `vr_leanRadius`, `vr_seated`, `vr_crouchThreshold`, `vr_moveDirection`, `vr_comfortVignette` | | head position, room-scale, crouch, move direction and comfort: see [MOVEMENT.md](MOVEMENT.md) |
 
 Movement follows the stick's deflection and, by default, the head's yaw; turning pivots about the
