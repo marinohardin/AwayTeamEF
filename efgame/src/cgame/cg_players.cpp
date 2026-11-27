@@ -3015,6 +3015,19 @@ void CG_StopWeaponSounds( centity_t *cent )
 	qboolean		weak = qfalse;
 	weaponInfo_t	*weapon = &cg_weapons[ cent->currentState.weapon ];
 
+	// Tricorder scan held past its one-shot (CG_FireWeapon): keep it going as a loop on this
+	// entity, which ends the moment the button is let go.
+	if ( cent->currentState.weapon == WP_TRICORDER && cent->pe.scanSound
+		&& ( cent->currentState.eFlags & EF_FIRING ) && cg.time >= cent->pe.scanSoundEnd )
+	{
+		cgi_S_AddLoopingSound( cent->currentState.number, cent->lerpOrigin, vec3_origin, cent->pe.scanSound );
+		cent->pe.scanLooping = qtrue;
+	}
+	else
+	{
+		cent->pe.scanLooping = qfalse;
+	}
+
 	if ( !( cent->currentState.eFlags & EF_FIRING ) )
 	{
 		if ( cent->pe.lightningFiring )
