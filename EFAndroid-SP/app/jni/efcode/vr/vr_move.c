@@ -46,6 +46,8 @@ extern int			SP_IsActive( void );	// sp_bridge.cpp: a single-player game is runn
 #define VM_FADE_START		0.03f	// metres into a wall before the view starts to fade
 #define VM_FADE_RANGE		0.12f	// ... and how much deeper it is black
 #define VM_SP_TIMEOUT		1500	// ms without VR_Move_SPView: the SP bridge isn't driving the body
+#define VM_SP_BUTTON_VRLEAN	0x8000	// the SP game's BUTTON_VRLEAN: an analog lean in bits 16-23
+#define VM_LEAN_DEADZONE	1.5f	// game units of sideways head offset that are still no lean
 
 typedef struct {
 	int		time;			// level time of the game tick
@@ -67,6 +69,7 @@ static struct {
 	cvar_t		*debugMove;
 	cvar_t		*worldScale;
 	cvar_t		*deadzone;
+	cvar_t		*leanScale;
 
 	qboolean	valid;			// a tracked head since the last recentre
 	unsigned	recenterSeen;
@@ -133,6 +136,9 @@ static void VM_Register( void ) {
 	Cvar_SetDescription( vm.debugMove, "VR debugging: print the head, body and movement state twice a second." );
 	vm.worldScale = Cvar_Get( "vr_worldScale", "32", 0 );
 	vm.deadzone = Cvar_Get( "vr_stickDeadzone", "0.25", CVAR_ARCHIVE );
+	vm.leanScale = Cvar_Get( "vr_leanScale", "1", CVAR_ARCHIVE );
+	Cvar_CheckRange( vm.leanScale, 0, 3, qfalse );
+	Cvar_SetDescription( vm.leanScale, "VR: how much of the head's sideways offset becomes the game's lean (what co-op partners and NPCs see, and the lean stance). 0: none." );
 	Cmd_AddCommand( "vr_debugTurn", VM_DebugTurn_f );
 	vm.registered = qtrue;
 }
@@ -393,11 +399,37 @@ void VR_Move_Cmd( usercmd_t *cmd ) {
 	}
 
 	// The SP game leans while Use is held with a strafe and no forward move. In VR the head is
-	// the lean, so a tiny forward move keeps that from adding a second one.
+	// the lean (VR_Move_LeanButtons: the game then ignores the key lean); without a tracked head,
+	// a tiny forward move keeps the key lean from starting.
 	if ( SP_IsActive() && ( cmd->buttons & VM_SP_BUTTON_USE ) && cmd->rightmove && !cmd->forwardmove &&
-		cmd->upmove <= 0 ) {
+		cmd->upmove <= 0 && !VR_Move_LeanButtons() ) {
 		cmd->forwardmove = 1;
 	}
+}
+
+int VR_Move_LeanButtons( void ) {
+	vrBodyHand_t head;
+	float lean;
+	int b;
+
+	if ( !vm.registered || !vm.gameInput || !vm.valid || !VR_EngineBodyHand( VR_BODY_HEAD, &head ) ) {
+		return 0;
+	}
+	// the eyes' offset to the body's right, in game units (the body frame's +Y is left)
+	lean = -head.origin[1] * vm.leanScale->value;
+	if ( fabsf( lean ) < VM_LEAN_DEADZONE ) {
+		lean = 0.0f;
+	}
+	lean = lean > 32.0f ? 32.0f : lean < -32.0f ? -32.0f : lean;
+	b = (int)floorf( lean + 0.5f );
+	if ( vm.debugMove->integer > 2 ) {
+		static int next;
+		if ( Sys_Milliseconds() >= next ) {
+			next = Sys_Milliseconds() + 500;
+			Com_Printf( "vrmove: lean %d (head left %+.2f units)\n", b, head.origin[1] );
+		}
+	}
+	return VM_SP_BUTTON_VRLEAN | ( ( b & 0xff ) << 16 );
 }
 
 // ---------------------------------------------------------------------------

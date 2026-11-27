@@ -3009,21 +3009,36 @@ void CalcMuzzlePoint( gentity_t *ent, vec3_t forward, vec3_t right, vec3_t up, v
 /*
 W_VRHandShot
 
-VR single player: the player's shot leaves the weapon hand along its pointing ray. The muzzle is
-where the cgame drew the weapon's flash (or the hand itself), traced from the eye so a gun pushed
-through a wall fires from this side of it. Only for the player (not co-op player 2, not NPCs),
-and only while the engine reports tracked VR hands; otherwise qfalse and the shot is as always.
+VR: the player's shot leaves the weapon hand along its pointing ray. The muzzle is where the
+cgame drew the weapon's flash (or the hand itself), traced from the eye so a gun pushed through
+a wall fires from this side of it.
+- Player 1: while this machine's engine reports tracked VR hands.
+- Co-op player 2: while the guest's command carried its hand's muzzle and aim (a VR guest,
+  COOP_VRGuestHand); the same trace from player 2's eye.
+NPCs and flat players: qfalse, and the shot is as always.
 */
 static qboolean W_VRHandShot( gentity_t *ent )
 {
 	vrGamePose_t	pose;
-	vec3_t			eye, hand, axis[3], dir;
+	vec3_t			eye, hand, axis[3], dir, angles;
 	trace_t			tr;
+	qboolean		guest = qfalse;
 
-	if ( ent->s.number != 0 || !ent->client || ent->NPC )
+	if ( !ent->client || ent->NPC )
 		return qfalse;
-	if ( !VR_FetchPose( &pose ) )
+	if ( ent->s.number == 0 )
+	{
+		if ( !VR_FetchPose( &pose ) )
+			return qfalse;
+	}
+	else if ( !COOP_IsP2( ent ) )
+	{
 		return qfalse;
+	}
+	else
+	{
+		guest = qtrue;
+	}
 
 	// the body's eye, where the cgame puts the view in VR: the standing eye height even while
 	// crouched (the headset itself lowers the eyes, and the hands are measured from here)
@@ -3032,17 +3047,30 @@ static qboolean W_VRHandShot( gentity_t *ent )
 		eye[2] += ent->client->standheight + STANDARD_VIEWHEIGHT_OFFSET;
 	else
 		eye[2] += ent->client->ps.viewheight;
-	if ( !VR_HandToWorld( &pose, VR_HAND_WEAPON, eye, ent->client->ps.viewangles[YAW], hand, axis ) )
-		return qfalse;
 
-	VectorCopy( axis[0], _forward );
-	VectorScale( axis[1], -1, vright );
-	VectorCopy( axis[2], up );
-
-	if ( ent->client->renderInfo.mPCalcTime >= level.time - FRAMETIME*2 )
-		VectorCopy( ent->client->renderInfo.muzzlePoint, muzzle );	// the drawn weapon's flash tag
+	if ( guest )
+	{
+		// a VR guest: its cgame's muzzle and the hand's ray, from player 2's eye and body yaw
+		if ( !COOP_VRGuestHand( ent, eye, muzzle, _forward ) )
+			return qfalse;
+		VectorCopy( muzzle, hand );
+		vectoangles( _forward, angles );
+		AngleVectors( angles, NULL, vright, up );
+	}
 	else
-		VectorMA( hand, 8, _forward, muzzle );
+	{
+		if ( !VR_HandToWorld( &pose, VR_HAND_WEAPON, eye, ent->client->ps.viewangles[YAW], hand, axis ) )
+			return qfalse;
+
+		VectorCopy( axis[0], _forward );
+		VectorScale( axis[1], -1, vright );
+		VectorCopy( axis[2], up );
+
+		if ( ent->client->renderInfo.mPCalcTime >= level.time - FRAMETIME*2 )
+			VectorCopy( ent->client->renderInfo.muzzlePoint, muzzle );	// the drawn weapon's flash tag
+		else
+			VectorMA( hand, 8, _forward, muzzle );
+	}
 
 	gi.trace( &tr, eye, NULL, NULL, muzzle, ent->s.number, MASK_SHOT );
 	if ( tr.startsolid || tr.allsolid )
@@ -3055,11 +3083,16 @@ static qboolean W_VRHandShot( gentity_t *ent )
 		VectorNormalize( dir );
 		VectorMA( tr.endpos, -1, dir, muzzle );
 	}
-	if ( VR_DebugShots() )
+	if ( guest ? COOP_VRDebugShots() : VR_DebugShots() )
 	{
-		gi.Printf( "VR shot: eye %.1f %.1f %.1f hand %.1f %.1f %.1f muzzle %.1f %.1f %.1f (eye-to-hand trace %.3f) fwd %.2f %.2f %.2f\n",
-			eye[0], eye[1], eye[2], hand[0], hand[1], hand[2], muzzle[0], muzzle[1], muzzle[2], tr.fraction,
-			_forward[0], _forward[1], _forward[2] );
+		trace_t	hit;
+		vec3_t	end;
+
+		VectorMA( muzzle, 8192, _forward, end );
+		gi.trace( &hit, muzzle, NULL, NULL, end, ent->s.number, MASK_SHOT );
+		gi.Printf( "VR shot%s: eye %.1f %.1f %.1f hand %.1f %.1f %.1f muzzle %.1f %.1f %.1f (eye-to-hand trace %.3f) fwd %.2f %.2f %.2f hits %.1f %.1f %.1f\n",
+			guest ? " (player 2)" : "", eye[0], eye[1], eye[2], hand[0], hand[1], hand[2], muzzle[0], muzzle[1], muzzle[2], tr.fraction,
+			_forward[0], _forward[1], _forward[2], hit.endpos[0], hit.endpos[1], hit.endpos[2] );
 	}
 	return qtrue;
 }

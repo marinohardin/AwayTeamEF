@@ -76,6 +76,9 @@
 #define COOP_RethinkPlayerEnemy()	((void)0)
 #define COOP_EVERYONE				NULL
 #define COOP_TeamAttack(t,a)		0
+#define COOP_VRGuestHand(e,eye,m,f)	qfalse
+#define COOP_VRDebugShots()			qfalse
+#define COOP_VRAimAngles(e,a)		qfalse
 
 #else // EF_COOP
 
@@ -190,6 +193,14 @@ inline bool COOP_HeldBeam( const entityState_t *es )
 	return coop_p2Num >= 0 && COOP_IsPlayerNum( es->number ) && ( es->eFlags & EF_FIRING )
 		&& ( es->weapon == WP_PHASER || ( es->weapon == WP_DREADNOUGHT && !( es->eFlags & EF_ALT_FIRING ) ) );
 }
+
+// VR partners (coop_vr.cpp). A VR guest's command brings its hand's muzzle and aim: player 2's
+// shot leaves them (W_VRHandShot) from eye, with player 2's body yaw (qfalse: not a VR guest's).
+// For drawing, a VR player's model turns its head and torso toward the hand's aim
+// (CG_PlayerAngles): qfalse for a flat player, whose look is its view angles as always.
+qboolean	COOP_VRGuestHand( gentity_t *ent, const vec3_t eye, vec3_t muzzle, vec3_t forward );
+qboolean	COOP_VRDebugShots( void );
+qboolean	COOP_VRAimAngles( const gentity_t *ent, vec3_t angles );
 
 // the cgame's co-op status text (coop_hud.cpp): CG_ServerCommand hands it "coopmsg" (qtrue:
 // taken), CG_Draw2D draws it

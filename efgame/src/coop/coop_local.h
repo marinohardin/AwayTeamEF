@@ -35,6 +35,9 @@ typedef struct
 	// the guest's input (coop_net.cpp) steers P2; its view angles were re-based on the guest's
 	qboolean	guestSteering;
 	int			shotViewTime;		// the host time the guest's screen showed for this command (0: not the guest's)
+	qboolean	vrAim;				// a VR guest's command: its hand's muzzle and aim (coop_vr.cpp)
+	vec3_t		vrMuzzle;			// ...from the eye, in the body frame (+X forward, +Y left, +Z up) before the yaw
+	vec3_t		vrForward;			// ...the hand's pointing ray, same frame
 
 	// player 1's armor when this level started (P2's first spawn without a carry-over gets the same)
 	qboolean	haveP1StartArmor;
@@ -72,6 +75,9 @@ void		COOP_ForgetAnimFrames( int num );		// coop_look.cpp
 const char	*COOP_GuestLook( void );					// the guest's character id, "" for Munro
 qboolean	COOP_CorePakFile( const char *qpath );		// qpath comes from pak0-pak2
 qboolean	COOP_GuestConnected( void );
+qboolean	COOP_GuestVRAim( vec3_t muzzle, vec3_t forward );	// the command GuestCmd returned came with a VR hand
+void		COOP_VRWrite( void );						// coop_vr.cpp: the replica's VR aims (host) ...
+void		COOP_VRRead( void );						// ... and read back on the guest
 int			COOP_GuestViewTime( void );
 int			COOP_TakeShotTime( void );					// coop_predict.cpp
 void		COOP_LagRecord( void );						// coop_lagcomp.cpp

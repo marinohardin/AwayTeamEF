@@ -75,6 +75,15 @@ int			CoopNet_GuestInput( int *angles, int *buttons, int *weapon, signed char *f
 // the host level time the guest's screen showed when it made the command CoopNet_GuestInput
 // returned last (its shots are checked against the world as it was then); 0 when unknown
 int			CoopNet_GuestViewTime( void );
+// A VR player's extras in a command's buttons (the game's BUTTON_VR*, q_shared.h): its hand's
+// muzzle and aim came along (COOP_BUTTON_VRAIM; a guest's only), and an analog lean (the newest
+// command's, never merged into the buttons held from other commands). A flat player sets none.
+#define COOP_BUTTON_VRAIM	0x00004000
+#define COOP_BUTTON_VRBITS	0x00ffc000
+// the command CoopNet_GuestInput returned last brought a VR guest's weapon hand: the muzzle from
+// player 2's eye and the hand's ray, in the body frame before the yaw (+X forward, +Y left,
+// +Z up); 0 for a flat guest's
+int			CoopNet_GuestVRAim( float muzzle[3], float forward[3] );
 // the guest's oldest console command for player 2 not run yet (a cheat; the bridge checks which),
 // 0 when there is none
 int			CoopNet_HostTakeCommand( char *out, int size );
@@ -117,6 +126,9 @@ int			CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon
 				int forwardmove, int rightmove, int upmove, int viewTime );
 // a console command for player 2 on the host (a cheat), sent now; 0 when not connected
 int			CoopNet_GuestSendCommand( const char *text );
+// a VR guest: its weapon hand for the commands queued from now on (CoopNet_GuestQueueCmd with
+// COOP_BUTTON_VRAIM), as CoopNet_GuestVRAim gives it to the host's game
+void		CoopNet_GuestSetVRAim( const float muzzle[3], const float forward[3] );
 
 // The guest. Once a frame (sys_osx_coop.m, before anything of the host): connects when
 // the coop_connect cvar names a host, sends this player's input, disconnects when the

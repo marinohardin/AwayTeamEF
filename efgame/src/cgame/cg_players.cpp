@@ -1634,6 +1634,19 @@ void CG_PlayerAngles( centity_t *cent, vec3_t legs[3], vec3_t torso[3], vec3_t h
 	lookingSpeed = yawSpeed;
 
 	VectorCopy( cent->lerpAngles, headAngles );
+	if ( cent->gent && cent->gent->s.number != COOP_ViewClientNum() && !( cent->currentState.eFlags & EF_NPC ) )
+	{
+		// co-op, a VR partner: the head looks, and the torso turns, where its weapon hand points
+		// (its view angles are only the body's yaw)
+		if ( COOP_VRAimAngles( cent->gent, headAngles ) )
+		{
+			// the torso keeps up with the hand (the weapon is held where it points)
+			torsoYawSwingTolMin = -15;
+			torsoYawSwingTolMax = 15;
+			torsoPitchSwingTolMin = -10;
+			torsoPitchSwingTolMax = 10;
+		}
+	}
 	headAngles[YAW] = AngleMod( headAngles[YAW] );
 	VectorClear( legsAngles );
 	VectorClear( torsoAngles );

@@ -7,7 +7,7 @@
 #ifndef COOP_BRIDGE_H
 #define COOP_BRIDGE_H
 
-#define COOP_BRIDGE_VERSION	5
+#define COOP_BRIDGE_VERSION	6
 
 typedef struct
 {
@@ -29,6 +29,10 @@ typedef struct
 	const char	*(*GuestLook)( void );
 	// qtrue when the copy of qpath the game would load comes from the game's own pak0-pak2
 	qboolean	(*CorePakFile)( const char *qpath );
+	// a VR guest: the command GuestCmd returned last brought its weapon hand, the muzzle as an
+	// offset from player 2's eye and the hand's pointing ray, both in the body frame (+X forward,
+	// +Y left, +Z up) before the body's yaw; qfalse for a flat guest's command
+	qboolean	(*GuestVRAim)( float muzzle[3], float forward[3] );
 } coopBridge_t;
 
 extern "C" void COOP_SetBridge( const coopBridge_t *bridge );

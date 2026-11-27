@@ -148,6 +148,78 @@ void BG_CalculateOffsetAngles( gentity_t *ent, usercmd_t *ucmd )
 	}
 }
 
+// VR: the lean the player's head asks for this command, in game units (+ right), or BG_VRLEAN_NONE.
+// ClientThink_real sets it around Pmove from the command's BUTTON_VRLEAN byte (g_active.cpp).
+int bg_vrLean = BG_VRLEAN_NONE;
+
+/*
+================
+PM_VRLean
+
+An analog lean from a VR player's head: leanofs follows the head's sideways offset (at most 8 a
+call, the same clamp of 32 as the key lean), through the key lean's own trace from the eye, so a
+wall stops it. No Use or strafe is involved and nothing is held off afterwards, so walking while
+leaning works. The lean stance shows on the legs while standing still and leaning far enough.
+================
+*/
+#define VRLEAN_STEP		8
+#define VRLEAN_STANCE	4		// |leanofs| from which the standing lean stance plays
+
+static void PM_VRLean( playerState_t *ps, usercmd_t *cmd, gentity_t *gent )
+{
+	vec3_t	start, end, tmins, tmaxs, right;
+	trace_t	trace;
+	int		target = bg_vrLean, leanofs;
+
+	if ( target > 32 )
+		target = 32;
+	else if ( target < -32 )
+		target = -32;
+	leanofs = ps->leanofs;
+	if ( leanofs < target )
+		leanofs = ( target - leanofs > VRLEAN_STEP ) ? leanofs + VRLEAN_STEP : target;
+	else if ( leanofs > target )
+		leanofs = ( leanofs - target > VRLEAN_STEP ) ? leanofs - VRLEAN_STEP : target;
+
+	if ( leanofs )
+	{
+		VectorCopy( ps->origin, start );
+		start[2] += ps->viewheight;
+		AngleVectors( ps->viewangles, NULL, right, NULL );
+		VectorNormalize( right );
+		right[2] = (leanofs<0)?0.25:-0.25;
+		VectorMA( start, leanofs, right, end );
+		VectorSet( tmins, -8, -8, -4 );
+		VectorSet( tmaxs, 8, 8, 4 );
+		gi.trace( &trace, start, tmins, tmaxs, end, gent->s.number, MASK_PLAYERSOLID );
+		leanofs = floor( (float)leanofs * trace.fraction );
+	}
+	ps->leanofs = leanofs;
+
+	// the stance, for the others to see: only standing still (walking keeps its own legs)
+	{
+		const int legs = pm->ps->legsAnim & ~ANIM_TOGGLEBIT;
+		const qboolean still = ( !cmd->forwardmove && !cmd->rightmove && cmd->upmove <= 0 ) ? qtrue : qfalse;
+
+		if ( still && leanofs >= VRLEAN_STANCE )
+		{
+			if ( legs != LEGS_LEAN_RIGHT1 )
+				PM_SetAnim( pm, SETANIM_LEGS, LEGS_LEAN_RIGHT1, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+			pm->ps->legsAnimTimer = 100;
+		}
+		else if ( still && leanofs <= -VRLEAN_STANCE )
+		{
+			if ( legs != LEGS_LEAN_LEFT1 )
+				PM_SetAnim( pm, SETANIM_LEGS, LEGS_LEAN_LEFT1, SETANIM_FLAG_OVERRIDE|SETANIM_FLAG_HOLD );
+			pm->ps->legsAnimTimer = 100;
+		}
+		else if ( legs == LEGS_LEAN_RIGHT1 || legs == LEGS_LEAN_LEFT1 )
+		{
+			pm->ps->legsAnimTimer = 0;	// back to standing or walking
+		}
+	}
+}
+
 /*
 ================
 PM_UpdateViewAngles
@@ -235,7 +307,11 @@ void PM_UpdateViewAngles( playerState_t *ps, usercmd_t *cmd, gentity_t *gent )
 		}
 	}
 
-	if ( (cmd->buttons & BUTTON_USE) && cmd->rightmove != 0 && !cmd->forwardmove && cmd->upmove <= 0 )
+	if ( gent && bg_vrLean != BG_VRLEAN_NONE )
+	{//VR: the head is the lean (the key lean is off)
+		PM_VRLean( ps, cmd, gent );
+	}
+	else if ( (cmd->buttons & BUTTON_USE) && cmd->rightmove != 0 && !cmd->forwardmove && cmd->upmove <= 0 )
 	{//Only lean if holding use button, strafing and not moving forward or back and not jumping
 		if ( gent )
 		{
