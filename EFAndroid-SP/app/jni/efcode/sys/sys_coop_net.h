@@ -28,6 +28,15 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 // the connect and the accept;
 // 8: the commands slot carries the credits number, the look key, guest console commands)
 #define VSP_COOP_PROTOCOL	8
+// The co-op compatibility version: what every co-op message's "version" key carries, and, with
+// VSP_COOP_PROTOCOL, all that host and guest compare. It names the first release whose co-op this
+// build still plays with (not EF_APP_VERSION), so a patch that changes nothing co-op depends on
+// pairs with the releases before it. The app's own version travels as "appVersion", only to be
+// shown (a copy from before 1.5.1 sends no appVersion: its "version" is its app version).
+// Bump it to the new release's version when the replicated structs, the save field tables the
+// replica uses, bg_* movement or anything else both copies must agree on changes (docs/coop-compat.md);
+// bump VSP_COOP_PROTOCOL too when the messages themselves change. = LC_COOP_COMPAT (lc_coop.h)
+#define VSP_COOP_COMPAT		"1.5.0"
 
 // the longest player name co-op sends (coop_name; the launcher's "Your name")
 #define COOP_NAME_MAX		31

@@ -368,7 +368,8 @@ static BOOL CoopAnswer( const char *packet, int len, const struct sockaddr_in *f
 	playing = SP_IsActive() && SP_CurMap()[0];
 	info[0] = 0;
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
-	CoopSetInfo( info, "version", EF_APP_VERSION );
+	CoopSetInfo( info, "version", VSP_COOP_COMPAT );
+	CoopSetInfo( info, "appVersion", EF_APP_VERSION );
 	CoopSetInfo( info, "hostname", coopHostName );
 	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	if( Cvar_VariableString( "coop_name" )[0] )
@@ -527,6 +528,22 @@ static NSDictionary *CoopParseInfo( const char *s, size_t len )
 	return d;
 }
 
+// the version a host runs, to show: its appVersion, or for a host from before 1.5.1 its version
+static NSString *CoopShownVersion( NSDictionary *info )
+{
+	if( [info[@"appVersion"] length] )
+		return info[@"appVersion"];
+	return [info[@"version"] length] ? info[@"version"] : @"?";
+}
+
+// this Mac can join the host: the same co-op protocol and compatibility version (VSP_COOP_COMPAT),
+// whatever app version each runs (lc_coop_compatible)
+static BOOL CoopCompatible( NSDictionary *info )
+{
+	return [info[@"coopProtocol"] length] && [info[@"coopProtocol"] intValue] == VSP_COOP_PROTOCOL &&
+		[info[@"version"] isEqualToString: @VSP_COOP_COMPAT];
+}
+
 static NSDictionary *CoopResult( NSString *status, NSString *address, NSDictionary *info, NSString *error )
 {
 	NSMutableDictionary *r = [NSMutableDictionary dictionaryWithObject: status forKey: @"status"];
@@ -621,9 +638,9 @@ NSDictionary *VSP_CoopQuery( NSString *address, double timeout )
 			if( !info || ( info[@"challenge"] && ![info[@"challenge"] isEqualToString: @( challenge )] ) )
 				continue;
 			close( fd );
-			version = info[@"version"] ? info[@"version"] : @"?";
+			version = CoopShownVersion( info );
 			protocol = info[@"coopProtocol"] ? info[@"coopProtocol"] : @"?";
-			if( [protocol intValue] != VSP_COOP_PROTOCOL || ![version isEqualToString: @EF_APP_VERSION] )
+			if( !CoopCompatible( info ) )
 				return CoopResult( @"mismatch", shown, info, [NSString stringWithFormat: @"The host runs Elite Force for Mac %@ "
 					@"(co-op version %@), and this Mac runs %s (co-op version %d). Both need the same version to play together.",
 					version, protocol, EF_APP_VERSION, VSP_COOP_PROTOCOL] );
@@ -1136,15 +1153,15 @@ static void CoopLanCheck( NSMutableArray<NSMutableDictionary *> *games, NSString
 	for( NSMutableDictionary *g in games )
 	{
 		NSDictionary *info = g[@"info"];
-		NSString *version = info[@"version"] ?: @"";
+		NSString *version = CoopShownVersion( info );
 		char text[1024];
 
 		g[@"usable"] = @NO;
 		[g removeObjectForKey: @"reason"];
-		if( [info[@"coopProtocol"] intValue] != VSP_COOP_PROTOCOL || ![version isEqualToString: @EF_APP_VERSION] )
+		if( !CoopCompatible( info ) )
 		{
 			g[@"reason"] = [NSString stringWithFormat: @"Another version: the host runs Elite Force %@, this Mac runs %s",
-				[version length] ? version : @"?", EF_APP_VERSION];
+				version, EF_APP_VERSION];
 			continue;
 		}
 		if( !ours )
@@ -1887,7 +1904,7 @@ static NSString *CoopDescribe( NSDictionary *info )
 	if( [info[@"needPassword"] isEqualToString: @"1"] )
 		[lines addObject: @"The host set a password."];
 	[lines addObject: [NSString stringWithFormat: @"Host’s app: Elite Force for Mac %@ · co-op version %@",
-		info[@"version"] ? info[@"version"] : @"?", info[@"coopProtocol"] ? info[@"coopProtocol"] : @"?"]];
+		CoopShownVersion( info ), info[@"coopProtocol"] ? info[@"coopProtocol"] : @"?"]];
 	return [lines componentsJoinedByString: @"\n"];
 }
 

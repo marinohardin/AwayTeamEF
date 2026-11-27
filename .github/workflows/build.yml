@@ -33,6 +33,20 @@ permissions:
   contents: read
 
 jobs:
+  # ------------------------------------------------------------- co-op compat
+  # Co-op pairs copies by VSP_COOP_COMPAT + VSP_COOP_PROTOCOL, not the app version: fail when
+  # something both copies must agree on changed since the last release with neither bumped
+  # (docs/coop-compat.md). The struct-size half of the guard is a static_assert in efgame.
+  coop-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Co-op compatibility version
+        run: tools/check-coop-compat.sh
+
   # ------------------------------------------------------------------ Linux
   linux:
     if: github.ref_type != 'tag' || startsWith(github.ref_name, 'macos-v')

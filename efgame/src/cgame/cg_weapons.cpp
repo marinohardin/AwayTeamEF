@@ -1183,7 +1183,24 @@ void CG_FireWeapon( centity_t *cent, qboolean alt_fire )
 			break;
 	}	
 
-	if ( alt_fire )
+	if ( ent->weapon == WP_TRICORDER )
+	{
+		// The tricorder fires every 100 ms while held, and its scan sounds run for seconds:
+		// starting one per shot stacked a dozen copies. Start it once; CG_StopWeaponSounds
+		// carries it on as a loop while the button stays down.
+		sfxHandle_t	scan = alt_fire ? weap->altFlashSound : weap->flashSound;
+
+		if ( scan && !( cent->pe.scanSound == scan && ( cent->pe.scanLooping || cg.time < cent->pe.scanSoundEnd ) ) )
+		{
+			int len = (int)cgi_S_GetSampleLength( scan );
+
+			cgi_S_StartSound( NULL, ent->number, CHAN_WEAPON, scan );
+			cent->pe.scanSound = scan;
+			cent->pe.scanSoundEnd = cg.time + ( len > 0 ? len : 1000 );
+			cent->pe.scanLooping = qfalse;
+		}
+	}
+	else if ( alt_fire )
 	{
 		if ( weap->altFlashSound )
 		{

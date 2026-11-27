@@ -113,6 +113,11 @@ typedef struct {
 	// For persistent beam weapons, so they don't play their start sound more than once
 	qboolean		lightningFiring;
 
+	// Tricorder scan: the scan sound plays once per press, then loops while the button is held
+	sfxHandle_t		scanSound;		// the scan sound last started (primary or alt)
+	int				scanSoundEnd;	// cg.time when that one-shot finishes
+	qboolean		scanLooping;	// held past the one-shot: the sound now loops until release
+
 	// machinegun spinning
 	float			barrelAngle;
 	int				barrelTime;

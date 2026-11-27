@@ -91,7 +91,8 @@ Co-op sheet (the steps below say "Mac"; on Windows it's your PC).
 A Mac, a Windows PC and a Linux computer use the same co-op protocol, so they should be able to
 play together as long as they run the same version.
 
-Both players need the same version of the app and the game's own `pak0.pk3`, `pak1.pk3` and
+Both players need a version of the app with the same co-op (any 1.5.x release plays with any other
+1.5.x, unless the release notes say a release changed co-op) and the game's own `pak0.pk3`, `pak1.pk3` and
 `pak2.pk3`. Other packs (Holomatch maps, mods, community packs) don't matter. If only one of you
 has the Expansion Pack (`pak3.pk3`), Check shows a warning and you can still join with
 **Join Anyway**: the host runs the game, so the difference is mostly cosmetic for player 2.

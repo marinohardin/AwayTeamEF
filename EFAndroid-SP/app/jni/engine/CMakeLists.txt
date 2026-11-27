@@ -60,6 +60,31 @@ set(JNI ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(EF  ${JNI}/efcode)
 set(SP  ${JNI}/sp)
 set(EFG ${JNI}/../../../efgame)
+
+# Co-op pairs copies by their co-op compatibility version (VSP_COOP_COMPAT, = LC_COOP_COMPAT), not
+# by EF_APP_VERSION, so a patch release keeps playing with the releases before it. Refuse to build
+# when the two headers disagree, or when the app moved to another major.minor line and the compat
+# version did not follow (docs/coop-compat.md).
+file(STRINGS ${EF}/sys/sys_coop_net.h _vsp_compat REGEX "^#define[ \t]+VSP_COOP_COMPAT[ \t]")
+file(STRINGS ${EF}/launcher/lc_coop.h _lc_compat REGEX "^#define[ \t]+LC_COOP_COMPAT[ \t]")
+string(REGEX REPLACE ".*\"([^\"]*)\".*" "\\1" EF_COOP_COMPAT "${_vsp_compat}")
+string(REGEX REPLACE ".*\"([^\"]*)\".*" "\\1" _lc_compat "${_lc_compat}")
+if(NOT EF_COOP_COMPAT OR NOT EF_COOP_COMPAT STREQUAL _lc_compat)
+  message(FATAL_ERROR "co-op: VSP_COOP_COMPAT (\"${EF_COOP_COMPAT}\", sys_coop_net.h) and LC_COOP_COMPAT (\"${_lc_compat}\", lc_coop.h) must be the same")
+endif()
+file(STRINGS ${EF}/sys/sys_coop_net.h _vsp_proto REGEX "^#define[ \t]+VSP_COOP_PROTOCOL[ \t]")
+file(STRINGS ${EF}/launcher/lc_coop.h _lc_proto REGEX "^#define[ \t]+LC_COOP_PROTOCOL[ \t]")
+string(REGEX MATCH "[0-9]+" _vsp_proto "${_vsp_proto}")
+string(REGEX MATCH "[0-9]+" _lc_proto "${_lc_proto}")
+if(NOT _vsp_proto OR NOT _vsp_proto STREQUAL _lc_proto)
+  message(FATAL_ERROR "co-op: VSP_COOP_PROTOCOL (${_vsp_proto}, sys_coop_net.h) and LC_COOP_PROTOCOL (${_lc_proto}, lc_coop.h) must be the same")
+endif()
+string(REGEX MATCH "^[0-9]+\\.[0-9]+" _app_line "${EF_APP_VERSION}")
+string(REGEX MATCH "^[0-9]+\\.[0-9]+" _coop_line "${EF_COOP_COMPAT}")
+if(_app_line AND NOT _app_line STREQUAL _coop_line)
+  message(FATAL_ERROR "co-op: EF_APP_VERSION ${EF_APP_VERSION} is a new ${_app_line} line, but VSP_COOP_COMPAT is still ${EF_COOP_COMPAT}: "
+    "set VSP_COOP_COMPAT and LC_COOP_COMPAT to \"${EF_APP_VERSION}\" (docs/coop-compat.md)")
+endif()
 # desktop stand-in for <android/log.h> (android/log.h) and bink_stub.c; a shared compat/
 # directory wins if the sp/ work has moved the shim there
 if(EXISTS ${JNI}/compat/android/log.h)
