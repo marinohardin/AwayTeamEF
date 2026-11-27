@@ -1123,6 +1123,82 @@ static qboolean SP_EntInView( const SP_View *v, gentity_t *e ){
     return ( inPVS && ( connected || !anyArea ) ) ? qtrue : qfalse;
 }
 
+#ifdef EF_VR
+// ---- VR room-scale (efcode/vr/vr_move.c): the body follows the player's real steps ----
+// Before each ClientThink, the head's distance past the lean radius becomes a move of the player's
+// box through the same collision the game uses (W_Trace), with a stair step-up. What it achieves
+// moves the head origin, so a wall stops the body and the head ends up outside it (vr_move.c then
+// pushes the eye back and fades). The game modules are unchanged; only the player's origin moves.
+#define EF_VR_MOVE_NO_CMD   // the game's usercmd_t is not the engine's
+#include "vr_move.h"
+#include "bg_public.h"   // MASK_*, PM_NORMAL, STEPSIZE, the player sizes
+
+static void SP_VR_StepMove( gentity_t *ent, playerState_t *ps, const float want[3], float got[3] ){
+    trace_t tr;
+    vec3_t start, end, best;
+    VectorCopy( ps->origin, start );
+    VectorAdd( start, want, end );
+    end[2] = start[2];
+    W_Trace( &tr, start, ent->mins, ent->maxs, end, ent->s.number, MASK_PLAYERSOLID );
+    if( tr.allsolid || tr.startsolid ){ VectorClear( got ); return; }
+    VectorCopy( tr.endpos, best );
+    if( tr.fraction < 1.0f ){
+        // blocked: try a stair step (up, across, down), as pmove's step slide does
+        trace_t up, across, down;
+        vec3_t upEnd, acrossEnd, downEnd;
+        VectorCopy( start, upEnd ); upEnd[2] += STEPSIZE;
+        W_Trace( &up, start, ent->mins, ent->maxs, upEnd, ent->s.number, MASK_PLAYERSOLID );
+        if( !up.allsolid ){
+            VectorAdd( up.endpos, want, acrossEnd ); acrossEnd[2] = up.endpos[2];
+            W_Trace( &across, up.endpos, ent->mins, ent->maxs, acrossEnd, ent->s.number, MASK_PLAYERSOLID );
+            VectorCopy( across.endpos, downEnd ); downEnd[2] = start[2] - 1.0f;
+            W_Trace( &down, across.endpos, ent->mins, ent->maxs, downEnd, ent->s.number, MASK_PLAYERSOLID );
+            float dBest = (best[0]-start[0])*(best[0]-start[0]) + (best[1]-start[1])*(best[1]-start[1]);
+            float dStep = (down.endpos[0]-start[0])*(down.endpos[0]-start[0]) + (down.endpos[1]-start[1])*(down.endpos[1]-start[1]);
+            if( !down.allsolid && down.fraction < 1.0f && down.plane.normal[2] >= MIN_WALK_NORMAL && dStep > dBest + 0.25f )
+                VectorCopy( down.endpos, best );
+        }
+    }
+    VectorSubtract( best, start, got );
+    VectorCopy( best, ps->origin );
+    VectorCopy( best, ent->currentOrigin );   // ClientThink's pmove starts from here and relinks the player
+}
+
+// once per game tick, before ClientThink
+static void SP_VR_RoomScale( void ){
+    gentity_t *p0 = SP_GEntity(0);
+    float want[3], got[3] = { 0, 0, 0 };
+    if( !p0 || !p0->client ) return;
+    playerState_t *ps = (playerState_t*)p0->client;
+    float yaw = SHORT2ANGLE( g_lastcmd.angles[YAW] + ps->delta_angles[YAW] );
+    if( !VR_Move_SPWant( yaw, want ) ) return;
+    // the game holds the player in cutscenes, when dead, frozen or noclipping: no body move
+    int canMove = ps->pm_type == PM_NORMAL && ps->stats[STAT_HEALTH] > 0 &&
+                  !Cvar_VariableIntegerValue( "cg_cameraActive" );
+    if( canMove ) SP_VR_StepMove( p0, ps, want, got );
+    VR_Move_SPMoved( want, got, canMove );
+}
+
+static float SP_VR_ViewTrace( const float start[3], const float end[3], float endpos[3] ){
+    static const vec3_t mins = { -2, -2, -2 }, maxs = { 2, 2, 2 };
+    trace_t tr;
+    W_Trace( &tr, start, mins, maxs, end, 0, MASK_SOLID );
+    if( tr.startsolid || tr.allsolid ){ VectorCopy( end, endpos ); return 1.0f; }   // no clear start: no verdict
+    VectorCopy( tr.endpos, endpos );
+    return tr.fraction;
+}
+
+// before each cgame draw: the eye's room origin for the body as the cgame draws it at cgTime
+static void SP_VR_View( int cgTime ){
+    gentity_t *p0 = SP_GEntity(0);
+    if( !p0 || !p0->client ) return;
+    playerState_t *ps = (playerState_t*)p0->client;
+    // the cgame draws the latest command's angles (CG_InterpolatePlayerState)
+    float yaw = SHORT2ANGLE( g_lastcmd.angles[YAW] + ps->delta_angles[YAW] );
+    VR_Move_SPView( cgTime, yaw, DEFAULT_MAXS_2 + STANDARD_VIEWHEIGHT_OFFSET, SP_VR_ViewTrace );
+}
+#endif
+
 static void BuildSnapshot(void){
     memset(&g_snap, 0, sizeof(g_snap));
     g_snap.serverTime = g_levelTime;
@@ -1458,6 +1534,12 @@ static int SP_VRGetPose( vrGamePose_t *pose ){
         pose->hand[h].valid = 1;
         memcpy( pose->hand[h].origin, b.origin, sizeof(b.origin) );
         memcpy( pose->hand[h].axis, b.axis, sizeof(b.axis) );
+    }
+    vrBodyHand_t b;
+    if( VR_EngineBodyHand( VR_BODY_HEAD, &b ) ){
+        pose->head.valid = 1;
+        memcpy( pose->head.origin, b.origin, sizeof(b.origin) );
+        memcpy( pose->head.axis, b.axis, sizeof(b.axis) );
     }
     return 1;
 }
@@ -2940,6 +3022,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         g_cmdNum++;
         g_lastcmd.serverTime = g_levelTime;
         Regress_SeedRand( g_levelTime );
+#ifdef EF_VR
+        SP_VR_RoomScale();
+#endif
         ge->ClientThink(0, &g_lastcmd);
         // The game ends a skip in ClientThink (the camera is over: skippingCinematic 0, timescale 1), and the
         // RunFrame right after it is already normal play: the script's next voice line starts there. Blocking
@@ -2948,6 +3033,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
         if( skipping ) s_spSoundsBlocked = Cvar_VariableIntegerValue("skippingCinematic") ? 1 : 0;
         SP_GameRunFrame();
         BuildSnapshot();
+#ifdef EF_VR
+        VR_Move_SPRecord( g_levelTime, g_snap.ps.origin, g_snap.ps.viewheight );
+#endif
 #ifdef EF_COOP
         // (while skipping, many game frames run per drawn frame: the guest gets the last of them, below)
         if( !skipping ) SP_CoopHostFrame();
@@ -2988,6 +3076,9 @@ extern "C" void SP_DrawFrame(int serverTime, int stereo){
     s_spSoundsBlocked = skipNow;
     s_spSkipDraw = skipNow;
     SP_UpdateVisemes();   // mouths follow the voice per render frame, not per sim tick
+#ifdef EF_VR
+    SP_VR_View( cgTime );
+#endif
     SP_VmMain(CG_DRAW_ACTIVE_FRAME, cgTime, stereo, qfalse);
     s_spSkipDraw = 0;
     if( skipNow ){

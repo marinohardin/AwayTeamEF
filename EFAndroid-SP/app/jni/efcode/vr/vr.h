@@ -42,6 +42,8 @@ extern "C" {
 
 #define VR_MAX_EYES 2
 #define VR_MAX_SWAPCHAIN_IMAGES 8
+#define VR_VIGNETTE_SIZE	64		// the comfort vignette's mask image, pixels square
+#define VR_VIGNETTE_HOLE	0.3f	// its clear disc, as a fraction of the image's half-size
 
 // pose of one eye in the session's reference space (STAGE, or LOCAL as a fallback),
 // in OpenXR's own convention: metres, +X right, +Y up, -Z forward
@@ -98,6 +100,7 @@ typedef struct {
 	int				quadOpaque;		// 1 = ignore the canvas' alpha (theater)
 	vrQuadPlacement_t placement;	// for quadMode
 	int				dim;			// draw the dimmer between the world and the quad
+	int				vignette;		// draw the movement vignette (VR_SetComfort) over the world
 } vrFrameLayers_t;
 
 // printing: the renderer passes a function that takes one finished line
@@ -157,6 +160,24 @@ void		VR_EndFrame( const vrFrameLayers_t *layers );
 void		VR_Recenter( void );
 // eye position relative to the recentred head origin, OpenXR axes, metres
 void		VR_GetEyeOffset( int eye, float offset[3] );
+
+// The head origin is the point of the room (reference space) that sits over the player's
+// origin at the standing eye height: world = body origin + R(body yaw) * (pose - head origin)
+// * vr_worldScale, for the eyes and for the hands alike. vr_move.c moves it as the body
+// follows the head (room-scale) and on a recentre; VR_GetRecenterCount counts the recentres.
+void		VR_GetHeadOrigin( float origin[3] );
+void		VR_SetHeadOrigin( const float origin[3] );
+unsigned	VR_GetRecenterCount( void );
+// debugging (vr_debugHead): a fixed offset added to the located views, OpenXR axes, metres
+void		VR_SetDebugHeadOffset( const float offset[3] );
+
+// comfort, from vr_move.c: fade = the head-in-a-wall fade to black (0..1, drawn with the dimmer
+// in play), vignette = the movement vignette's strength (0 = off)
+void		VR_SetComfort( float fade, float vignette );
+float		VR_GetComfortFade( void );
+// the vignette's mask swapchain, and the image to fill this frame (-1: none; it is filled once)
+int			VR_GetVignetteSwapchain( vrSwapchainInfo_t *info );
+int			VR_GetVignetteImageIndex( void );
 
 #ifdef __cplusplus
 }

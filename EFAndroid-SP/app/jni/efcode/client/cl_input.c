@@ -22,6 +22,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // cl.input.c  -- builds an intended movement command to send to the server
 
 #include "client.h"
+#ifdef EF_VR
+#include "../vr/vr_move.h"
+#endif
 #include "../../sp/sp_ui.h"   // EF1 SP native UI (libefui.so) drive hooks
 
 unsigned	frame_msec;
@@ -605,6 +608,11 @@ usercmd_t CL_CreateCmd( void ) {
 
 	// get basic movement from joystick
 	CL_JoystickMove( &cmd );
+
+#ifdef EF_VR
+	// VR controllers: the stick's speed in proportion to its deflection, crouch, no key lean
+	VR_Move_Cmd( &cmd );
+#endif
 
 	// check to make sure the angles haven't wrapped
 	if ( cl.viewangles[PITCH] - oldAngles[PITCH] > 90 ) {

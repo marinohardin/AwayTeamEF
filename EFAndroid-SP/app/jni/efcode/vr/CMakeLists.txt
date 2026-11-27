@@ -12,9 +12,10 @@ set(EF_OPENXR_INCLUDE "${CMAKE_CURRENT_LIST_DIR}/../../../../../deps/openxr/incl
   CACHE PATH "Khronos OpenXR headers (openxr/openxr.h)")
 
 add_library(ef_vr STATIC ${CMAKE_CURRENT_LIST_DIR}/vr_openxr.c ${CMAKE_CURRENT_LIST_DIR}/vr_input.c)
-# the controller map: compiled into the engine target that links ef_vr (it uses the client's
-# headers and the engine's defines), and called from vr_input.c (VR_EngineInput)
-target_sources(ef_vr INTERFACE ${CMAKE_CURRENT_LIST_DIR}/vr_input_engine.c)
+# the controller map and the movement (head position, room-scale, analog stick): compiled into
+# the engine target that links ef_vr (they use the client's headers and the engine's defines);
+# vr_input.c calls VR_EngineInput, which calls vr_move.c
+target_sources(ef_vr INTERFACE ${CMAKE_CURRENT_LIST_DIR}/vr_input_engine.c ${CMAKE_CURRENT_LIST_DIR}/vr_move.c)
 target_include_directories(ef_vr PUBLIC ${CMAKE_CURRENT_LIST_DIR} ${EF_OPENXR_INCLUDE})
 target_compile_definitions(ef_vr PUBLIC EF_VR)
 target_link_libraries(ef_vr PRIVATE ${CMAKE_DL_LIBS})

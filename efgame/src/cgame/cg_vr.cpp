@@ -247,6 +247,71 @@ qboolean CG_VR_HideCrosshair( void ) {
 	return cg_vrPose.active ? qtrue : qfalse;
 }
 
+// the eyes' midpoint in the world (a billboard has to face the real head, not the game's eye)
+static void CG_VR_HeadWorld( vec3_t head ) {
+	vec3_t axis[3];
+
+	if ( !cg_vrPose.head.valid ) {
+		VectorCopy( cg.refdef.vieworg, head );
+		return;
+	}
+	vrGamePose_t p = cg_vrPose;
+	p.hand[0] = p.head;	// VR_HandToWorld places entry 0
+	p.hand[0].valid = 1;
+	VR_HandToWorld( &p, 0, cg.refdef.vieworg, cg.refdefViewAngles[YAW], head, axis );
+}
+
+// a sprite drawn by the renderer itself, so it faces each eye
+static void CG_VR_Sprite( const vec3_t org, float radius, const vec3_t rgb, float alpha, qhandle_t shader ) {
+	refEntity_t ent;
+
+	memset( &ent, 0, sizeof( ent ) );
+	ent.reType = RT_SPRITE;
+	VectorCopy( org, ent.origin );
+	VectorCopy( org, ent.oldorigin );
+	ent.radius = radius;
+	ent.customShader = shader;
+	ent.shaderRGBA[0] = (byte)( rgb[0] * 255 );
+	ent.shaderRGBA[1] = (byte)( rgb[1] * 255 );
+	ent.shaderRGBA[2] = (byte)( rgb[2] * 255 );
+	ent.shaderRGBA[3] = (byte)( alpha * 255 );
+	ent.renderfx = RF_FIRST_PERSON;
+	cgi_R_AddRefEntityToScene( &ent );
+}
+
+// a flat beam turned edge-on to the real head
+static void CG_VR_Beam( const vec3_t start, const vec3_t end, float width, const vec3_t rgb, float alpha, qhandle_t shader ) {
+	polyVert_t verts[4];
+	vec3_t head, dir, toHead, side, mid;
+	int i;
+
+	CG_VR_HeadWorld( head );
+	VectorSubtract( end, start, dir );
+	VectorAdd( start, end, mid );
+	VectorScale( mid, 0.5f, mid );
+	VectorSubtract( head, mid, toHead );
+	CrossProduct( dir, toHead, side );
+	if ( VectorNormalize( side ) < 0.0001f ) {
+		return;
+	}
+	VectorScale( side, width * 0.5f, side );
+	VectorAdd( start, side, verts[0].xyz );
+	VectorSubtract( start, side, verts[1].xyz );
+	VectorSubtract( end, side, verts[2].xyz );
+	VectorAdd( end, side, verts[3].xyz );
+	verts[0].st[0] = 0; verts[0].st[1] = 0;
+	verts[1].st[0] = 0; verts[1].st[1] = 1;
+	verts[2].st[0] = 1; verts[2].st[1] = 1;
+	verts[3].st[0] = 1; verts[3].st[1] = 0;
+	for ( i = 0; i < 4; i++ ) {
+		verts[i].modulate[0] = (byte)( rgb[0] * 255 );
+		verts[i].modulate[1] = (byte)( rgb[1] * 255 );
+		verts[i].modulate[2] = (byte)( rgb[2] * 255 );
+		verts[i].modulate[3] = (byte)( alpha * 255 );
+	}
+	cgi_R_AddPolyToScene( shader, 4, verts );
+}
+
 static void CG_VR_OffHandMarker( void ) {
 	vec3_t org, axis[3], rgb = { 0.55f, 0.75f, 1.0f };
 
@@ -254,7 +319,7 @@ static void CG_VR_OffHandMarker( void ) {
 		!VR_HandToWorld( &cg_vrPose, VR_HAND_OFFHAND, cg.refdef.vieworg, cg.refdefViewAngles[YAW], org, axis ) ) {
 		return;
 	}
-	FX_AddSprite( org, NULL, NULL, 0.9f, 0.0f, 0.7f, 0.7f, rgb, rgb, 0.0f, 0.0f, 1, cgs.media.yellowParticleShader );
+	CG_VR_Sprite( org, 0.6f, rgb, 0.7f, cgs.media.yellowParticleShader );
 }
 
 static int		cg_vrAimRayTime = -1;
@@ -303,17 +368,13 @@ void CG_VR_AddAimHelpers( const vec3_t muzzle ) {
 		}
 	}
 	if ( cg_vrLaser.integer == 1 ) {
-		if ( cg_vrGunInfo.integer == 3 ) {
-			CG_Printf( "VR laser: frametime %d time %d weapon %d\n", cg.frametime, cg.time, cg.snap->ps.weapon );
-		}
-		FX_AddLine( start, tr.endpos, 1.0f, 0.35f, 0.0f, 0.6f, 0.6f, rgb, rgb, 1, cgs.media.whiteLaserShader );
+		CG_VR_Beam( start, tr.endpos, 0.3f, rgb, 0.6f, cgs.media.whiteLaserShader );
 	}
 	if ( tr.fraction < 1.0f ) {
-		// the dot: a constant size to the eye, about a third of a degree
+		// the dot: about the same size to the eye at any distance
 		vec3_t dot;
 
 		VectorMA( tr.endpos, 0.5f, tr.plane.normal, dot );
-		FX_AddSprite( dot, NULL, NULL, 1.0f + dist * 0.006f, 0.0f, 1.0f, 1.0f, rgb, rgb, 0.0f, 0.0f, 1,
-			cgs.media.yellowParticleShader );
+		CG_VR_Sprite( dot, 0.5f + dist * 0.003f, rgb, 1.0f, cgs.media.yellowParticleShader );
 	}
 }

@@ -178,7 +178,8 @@ if(EF_VR)
   # libopenxr_loader.so is not linked: vr_openxr.c opens it at run time (make-apk.sh builds it).
   target_sources(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/jni/quest_jni.c)
   target_link_libraries(main PRIVATE ef_vr)
-  # the SP bridge answers the cgame's hand-pose syscall (CG_VR_GETPOSE) from vr_input.h
+  # the SP bridge's VR hooks: room-scale movement (vr_move.h) and the hand-pose syscall
+  # CG_VR_GETPOSE (vr_input.h)
   target_compile_definitions(sp_game_bridge PRIVATE EF_VR)
   target_include_directories(sp_game_bridge PRIVATE ${EF}/vr)
 endif()

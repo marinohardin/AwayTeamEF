@@ -71,16 +71,16 @@ the commands, key events and joystick axes it already has, so the game modules s
 
 | Control | Action | Engine input |
 |---|---|---|
-| Left thumbstick | Move and strafe | joystick axes `j_forward_axis` / `j_side_axis` |
+| Left thumbstick | Move and strafe, speed in proportion to deflection ([MOVEMENT.md](MOVEMENT.md)) | usercmd forward / right |
 | Right thumbstick, left/right | Turn: snap by default, smooth as an option | view yaw |
 | Right trigger | Fire | `+attack` |
 | Left trigger | Alternate fire | `+altattack` |
 | A | Jump | `+moveup` |
-| B | Crouch | `+movedown` |
-| X | Use (and, with a strafe, lean) | `+use` |
+| B | Crouch (standing players can also really crouch) | `+movedown` |
+| X | Use (in VR the head is the lean; Use + strafe no longer leans) | `+use` |
 | Y, or the left menu button | Menu | Escape |
 | Right thumbstick click | Next weapon | `weapnext` |
-| Left thumbstick click | Previous weapon | `weapprev` |
+| Left thumbstick click | Previous weapon; hold 0.7 s to recentre | `weapprev` / recentre |
 | Grips | Not mapped yet (kept free for grabbing and two-handed weapons) | |
 
 Alternate fire is on the **left trigger**, not the right grip, so that each trigger is one fire
@@ -106,10 +106,10 @@ pose, are located every frame in the same space as the eye views. `VR_GetInputSt
 | `vr_turnSpeed` | 150 | smooth turn, degrees per second at full deflection |
 | `vr_stickDeadzone` | 0.25 | thumbstick dead zone (0..0.9) |
 | `vr_menuCursorSpeed` | 500 | menu cursor speed, pixels per second |
+| `vr_roomScale`, `vr_leanRadius`, `vr_seated`, `vr_crouchThreshold`, `vr_moveDirection`, `vr_comfortVignette` | | head position, room-scale, crouch, move direction and comfort: see [MOVEMENT.md](MOVEMENT.md) |
 
-Known limits: movement goes through the engine's joystick path, which reaches full speed at a
-small deflection, so walking speed isn't analog (`cl_run` / `+speed` pick walk or run). Head
-yaw doesn't steer movement; the body yaw does.
+Movement follows the stick's deflection and, by default, the head's yaw; turning pivots about the
+head. Details in [MOVEMENT.md](MOVEMENT.md).
 
 ## Code
 

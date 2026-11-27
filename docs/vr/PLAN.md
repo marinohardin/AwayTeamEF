@@ -64,6 +64,7 @@ A native **Meta Quest 2** build of AwayTeamEF with full **6DoF**: head position 
   - controller input through OpenXR actions (Touch controller, simple controller fallback): move, snap or smooth turn, fire, alternate fire, jump, crouch, use, menu, weapon cycling, menu cursor; head, aim and grip poses exposed for hand aiming;
   - in the emulator (no OpenXR runtime) it stays flat with "no OpenXR runtime", no crash. **Not yet run on a headset.**
   - Next: first run on the Quest 2, then render straight into the eye images, the 2D layer for HUD and menus, and aiming from the hand.
+- **Movement (vr-move, 2026-11-26)**, in the Meta XR Simulator on the Mac, single player: 6DoF head (lean as a view offset within `vr_leanRadius`), room-scale steps through the game's collision with the eye pushed back and faded in walls, real crouch (`vr_crouchThreshold`) and button crouch, analog stick speed with head- or off-hand-relative direction, snap or smooth turn pivoting about the head, optional comfort vignette, recentre on a held left thumbstick click. The key lean is off in VR. Design and cvars: [MOVEMENT.md](MOVEMENT.md). Not yet on a headset; Holomatch and co-op guests get the lean without a collision move.
 
 ## Testing from a Mac
 

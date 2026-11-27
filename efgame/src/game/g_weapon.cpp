@@ -3025,8 +3025,13 @@ static qboolean W_VRHandShot( gentity_t *ent )
 	if ( !VR_FetchPose( &pose ) )
 		return qfalse;
 
+	// the body's eye, where the cgame puts the view in VR: the standing eye height even while
+	// crouched (the headset itself lowers the eyes, and the hands are measured from here)
 	VectorCopy( ent->currentOrigin, eye );
-	eye[2] += ent->client->ps.viewheight;
+	if ( ent->client->ps.pm_flags & PMF_DUCKED )
+		eye[2] += ent->client->standheight + STANDARD_VIEWHEIGHT_OFFSET;
+	else
+		eye[2] += ent->client->ps.viewheight;
 	if ( !VR_HandToWorld( &pose, VR_HAND_WEAPON, eye, ent->client->ps.viewangles[YAW], hand, axis ) )
 		return qfalse;
 

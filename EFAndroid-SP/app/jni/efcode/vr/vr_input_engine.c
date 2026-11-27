@@ -11,13 +11,15 @@ defines and headers. Everything goes through paths the engine already has, so th
 modules need no change:
 
   in play (no key catcher)
-    left stick           move: joystick axes j_side_axis / j_forward_axis (CL_JoystickMove)
+    left stick           move, at a speed in proportion to the deflection, relative to the
+                         head or the off-hand (vr_move.c: VR_Move_Cmd in CL_CreateCmd)
     right stick x        turn: snap (vr_turnMode 0, vr_snapTurnAngle degrees) or smooth
                          (vr_turnMode 1, vr_turnSpeed degrees per second), on cl.viewangles
     right trigger        +attack
     left trigger         +altattack
-    A / B / X            +moveup (jump) / +movedown (crouch) / +use
-    right / left stick click   weapnext / weapprev
+    A / B / X            +moveup (jump) / crouch (vr_move.c) / +use
+    right stick click    weapnext
+    left stick click     weapprev when tapped; held VR_RECENTER_HOLD ms: recentre the head
     Y, left menu button  Escape (the in-game menu)
   in menus and the console (any key catcher)
     right stick          mouse cursor
@@ -31,7 +33,9 @@ does nothing in the new mode until it is released.
 */
 
 #include "../client/client.h"
+#include "vr.h"
 #include "vr_input.h"
+#include "vr_move.h"
 
 #define VR_KEYNUM_BASE		0x7000	// fake key numbers for +commands (kbutton_t tracks two keys)
 
@@ -42,6 +46,7 @@ does nothing in the new mode until it is released.
 #define VR_ARROW_ON			0.60f
 #define VR_ARROW_DELAY		400		// ms before an arrow key repeats
 #define VR_ARROW_REPEAT		120
+#define VR_RECENTER_HOLD	700		// ms the left stick is held in for a recentre
 
 // logical digital inputs
 enum {
@@ -88,8 +93,9 @@ static struct {
 	vrMode_t	heldIn[NUM_INPUTS];		// where its press went (MODE_NONE = nowhere)
 	qboolean	menuDown;				// Escape is held
 
-	qboolean	axesSet;
 	qboolean	snapArmed;
+	int			prevHeldSince;			// when the left stick click went down (in play), 0 = up
+	qboolean	prevRecentered;			// that hold already recentred
 	float		cursorFrac[2];
 
 	int			arrowKey;				// held arrow key, 0 = none
@@ -143,20 +149,28 @@ static void VR_Key( int key, qboolean down, int time ) {
 static void VR_GameCmd( int input, qboolean down, int time ) {
 	const char *cmd = vr_map[input].gameCmd;
 
+	if ( input == IN_CROUCH ) {
+		VR_Move_CrouchButton( down );	// the view goes down with the game's crouch
+		return;
+	}
+	if ( input == IN_WEAPPREV ) {
+		// a tap is weapprev (on release), a long hold recentres (VR_EngineInput)
+		if ( down ) {
+			vrc.prevHeldSince = time ? time : 1;
+			vrc.prevRecentered = qfalse;
+		} else {
+			if ( vrc.prevHeldSince && !vrc.prevRecentered ) {
+				Cbuf_AddText( "weapprev\n" );
+			}
+			vrc.prevHeldSince = 0;
+		}
+		return;
+	}
 	if ( cmd[0] == '+' ) {
 		Cbuf_AddText( va( "%c%s %d %d\n", down ? '+' : '-', cmd + 1, VR_KEYNUM_BASE + input, time ) );
 	} else if ( down ) {
 		Cbuf_AddText( va( "%s\n", cmd ) );
 	}
-}
-
-static void VR_SetAxes( float side, float forward, int time ) {
-	int s = (int)( side * 32767.0f );
-	int f = (int)( -forward * 32767.0f );	// stick up is forward; joystick axes are SDL's (up = negative)
-
-	Com_QueueEvent( time, SE_JOYSTICK_AXIS, j_side_axis->integer, s, 0, NULL );
-	Com_QueueEvent( time, SE_JOYSTICK_AXIS, j_forward_axis->integer, f, 0, NULL );
-	vrc.axesSet = ( s || f ) ? qtrue : qfalse;
 }
 
 static void VR_SetArrow( int key, int time ) {
@@ -190,11 +204,10 @@ static void VR_Release( int input, int time ) {
 static void VR_LeaveMode( int time ) {
 	int i;
 
+	vrc.prevHeldSince = 0;	// a held left stick click let go by a mode change: neither a tap nor a hold
+
 	for ( i = 0; i < NUM_INPUTS; i++ ) {
 		VR_Release( i, time );
-	}
-	if ( vrc.axesSet ) {
-		VR_SetAxes( 0, 0, time );
 	}
 	VR_SetArrow( 0, time );
 	vrc.cursorFrac[0] = vrc.cursorFrac[1] = 0;
@@ -205,7 +218,7 @@ void VR_EngineInput( const vrInputState_t *in ) {
 	qboolean now[NUM_INPUTS];
 	vrMode_t mode;
 	int time = Sys_Milliseconds();
-	float dt, mx, my, tx;
+	float dt, tx;
 	int i;
 
 	if ( !vrc.registered ) {
@@ -254,7 +267,7 @@ void VR_EngineInput( const vrInputState_t *in ) {
 			// a fresh press goes to the current mode
 			if ( mode == MODE_GAME ) {
 				VR_GameCmd( i, qtrue, time );
-				vrc.heldIn[i] = vr_map[i].gameCmd[0] == '+' ? MODE_GAME : MODE_NONE;
+				vrc.heldIn[i] = ( vr_map[i].gameCmd[0] == '+' || i == IN_WEAPPREV ) ? MODE_GAME : MODE_NONE;
 			} else if ( mode == MODE_UI && vr_map[i].uiKey ) {
 				VR_Key( vr_map[i].uiKey, qtrue, time );
 				vrc.heldIn[i] = MODE_UI;
@@ -265,21 +278,31 @@ void VR_EngineInput( const vrInputState_t *in ) {
 		vrc.down[i] = now[i];
 	}
 
-	mx = VR_Stick( in->move[0] );
-	my = VR_Stick( in->move[1] );
 	tx = VR_Stick( in->turn[0] );
 
+	// head position, room-scale and the move stick (vr_move.c); the stick reaches the game in
+	// CL_CreateCmd (VR_Move_Cmd), with a speed in proportion to the deflection
+	VR_Move_Frame( in, mode == MODE_GAME, dt );
+
 	if ( mode == MODE_GAME ) {
-		if ( mx || my || vrc.axesSet ) {
-			VR_SetAxes( mx, my, time );
+		float turn = 0.0f;
+
+		if ( vrc.prevHeldSince && !vrc.prevRecentered && time - vrc.prevHeldSince >= VR_RECENTER_HOLD ) {
+			VR_Recenter();
+			vrc.prevRecentered = qtrue;
+			Com_Printf( "VR: recentred\n" );
 		}
 
+		// turning changes the body yaw only; vr_move.c turns the head origin about the head with it
 		if ( vrc.turnMode->integer == 1 ) {
-			cl.viewangles[YAW] -= tx * vrc.turnSpeed->value * dt;
+			turn = -tx * vrc.turnSpeed->value * dt;
+			VR_Move_Turned( turn, tx < 0 ? -tx : tx );
 		} else if ( vrc.snapArmed && ( in->turn[0] > VR_SNAP_ON || in->turn[0] < -VR_SNAP_ON ) ) {
-			cl.viewangles[YAW] -= in->turn[0] > 0 ? vrc.snapTurnAngle->value : -vrc.snapTurnAngle->value;
+			turn = in->turn[0] > 0 ? -vrc.snapTurnAngle->value : vrc.snapTurnAngle->value;
+			VR_Move_Turned( turn, 0.0f );
 			vrc.snapArmed = qfalse;
 		}
+		cl.viewangles[YAW] += turn;
 		if ( in->turn[0] < VR_SNAP_REARM && in->turn[0] > -VR_SNAP_REARM ) {
 			vrc.snapArmed = qtrue;
 		}
@@ -389,11 +412,33 @@ int VR_EngineBodyHand( int which, vrBodyHand_t *out ) {
 		VR_DebugHand( in, headOrigin, scale, out );
 		return 1;
 	}
+	if ( which == VR_BODY_HEAD ) {
+		// the eyes as the renderer draws them this frame (vr_debugHead included), else the head
+		float eye0[3], eye1[3];
+
+		VR_GetEyeOffset( 0, eye0 );
+		VR_GetEyeOffset( 1, eye1 );
+		if ( eye0[0] != eye1[0] || eye0[1] != eye1[1] || eye0[2] != eye1[2] ) {
+			for ( i = 0; i < 3; i++ ) {
+				rel[i] = 0.5f * ( eye0[i] + eye1[i] );
+			}
+			VR_FromXr( rel, out->origin );
+			VectorScale( out->origin, scale, out->origin );
+			out->axis[0][0] = out->axis[1][1] = out->axis[2][2] = 1.0f;
+			out->valid = 1;
+			return 1;
+		}
+		if ( !in->head.valid ) {
+			return 0;
+		}
+		p = &in->head;
+	} else {
 	if ( !in->active ) {
 		return 0;
 	}
 	hand = ( which == VR_BODY_WEAPON ) != ( vrc.leftHanded->integer != 0 ) ? VR_HAND_RIGHT : VR_HAND_LEFT;
 	p = &in->aim[hand];
+	}
 	if ( !p->valid ) {
 		return 0;
 	}
