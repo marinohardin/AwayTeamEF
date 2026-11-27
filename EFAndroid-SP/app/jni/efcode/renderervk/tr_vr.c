@@ -50,10 +50,15 @@ typedef enum {
 
 static qboolean r_vrFrame;		// R_VR_BeginFrame ran VR_BeginFrame; R_VR_EndFrame is due
 static qboolean r_vrWarnedSmp;
+static qboolean r_vrExitHandled;	// the runtime ended the session: flat or quit was queued
 static vrFrameKind_t r_vrKind;
 
 static void R_VR_Recenter_f( void ) {
 	VR_Recenter();
+}
+
+static void R_VR_DebugEndSession_f( void ) {
+	VR_DebugEndSession();
 }
 
 static void R_VR_Screenshot_f( void ) {
@@ -138,6 +143,7 @@ void R_VR_Register( void ) {
 
 	ri.Cmd_AddCommand( "vr_recenter", R_VR_Recenter_f );
 	ri.Cmd_AddCommand( "vr_screenshot", R_VR_Screenshot_f );
+	ri.Cmd_AddCommand( "vr_debugEndSession", R_VR_DebugEndSession_f );
 }
 
 void R_VR_Print( int isError, const char *msg ) {
@@ -171,6 +177,18 @@ void R_VR_BeginFrame( void ) {
 	float dim;
 
 	r_vrFrame = qfalse;
+
+	if ( VR_GetExitReason() != VR_EXIT_NONE && !r_vrExitHandled ) {
+		// the user quit from the headset's system menu, or the headset was lost
+		r_vrExitHandled = qtrue;
+#ifdef __ANDROID__
+		ri.Printf( PRINT_ALL, "VR: the headset session ended, quitting\n" );
+		ri.Cmd_ExecuteText( EXEC_APPEND, "quit\n" );
+#else
+		ri.Printf( PRINT_ALL, "VR: the headset session ended, switching to the flat screen\n" );
+		ri.Cmd_ExecuteText( EXEC_APPEND, "vid_restart\n" );	// VR_Init stays flat from now on
+#endif
+	}
 
 	if ( !vk_vr_ready() || glConfig.smpActive ) {
 		if ( vr_active && vr_active->integer ) {

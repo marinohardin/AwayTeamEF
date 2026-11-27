@@ -42,6 +42,9 @@ Public License, version 2 or (at your option) any later version.
 #include <openxr/openxr_platform.h>
 
 #include <math.h>
+#ifndef _WIN32
+#include <time.h>
+#endif
 
 #include "vr_local.h"	// controller input (vr_input.c)
 
@@ -293,6 +296,11 @@ static struct {
 	float				comfortVignette;
 	vrSwapchain_t		vignette;			// filled once with a radial mask (vr_move: vignette)
 	int					vignetteState;		// 0 empty, 1 acquired for its fill this frame, 2 filled
+
+	// ending: our own exit request (shutdown, vid_restart) vs the runtime ending the session
+	int					exitRequested;		// we called xrRequestExitSession
+	vrExitReason_t		exitReason;			// the runtime ended the session or lost the headset
+	int					disabled;			// after a runtime-side end: VR_Init stays flat for this run
 } vr;
 
 static PFN_xrEnumerateDisplayRefreshRatesFB qxrEnumerateDisplayRefreshRatesFB;
@@ -352,6 +360,10 @@ int VR_Init( PFN_vkGetInstanceProcAddr getInstanceProcAddr ) {
 
 	if ( VR_Initialized() ) {
 		return 1;
+	}
+	if ( vr.disabled ) {
+		VR_Log( 0, "VR: the headset session ended earlier in this run, staying flat\n" );
+		return 0;
 	}
 
 	vr.vkGetInstanceProcAddr = getInstanceProcAddr;
@@ -522,6 +534,12 @@ void VR_SetOptions( const vrOptions_t *options ) {
 	}
 }
 
+/*
+The whole OpenXR side goes, while the Vulkan device and instance it made are still alive:
+the session is ended (VR_DestroySession), then the instance. Some runtimes (the Meta XR
+Simulator) free their own objects on the device, such as its queue wrappers, as late as
+xrDestroyInstance or just after it, so vkDestroyDevice must come after this.
+*/
 void VR_Shutdown( void ) {
 	VR_DestroySession();
 	VR_Input_Shutdown();
@@ -961,12 +979,114 @@ int VR_CreateSession( VkInstance instance, VkPhysicalDevice physicalDevice, VkDe
 	return 1;
 }
 
+static void VR_PollEvents( void );
+
+static double VR_Seconds( void ) {
+#ifdef _WIN32
+	return (double)GetTickCount64() / 1000.0;
+#else
+	struct timespec ts;
+	clock_gettime( CLOCK_MONOTONIC, &ts );
+	return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+#endif
+}
+
+static void VR_SleepMs( int ms ) {
+#ifdef _WIN32
+	Sleep( (DWORD)ms );
+#else
+	struct timespec ts;
+	ts.tv_sec = ms / 1000;
+	ts.tv_nsec = (long)( ms % 1000 ) * 1000000L;
+	nanosleep( &ts, NULL );
+#endif
+}
+
+/*
+Ends a running session the way OpenXR wants: xrRequestExitSession, then the runtime moves
+through STOPPING (VR_HandleSessionState calls xrEndSession there) to IDLE and EXITING. Until
+STOPPING arrives the frame loop must keep going, so empty frames are submitted meanwhile.
+Bounded: a runtime that doesn't answer (a paused Android activity, a dead simulator) gets
+xrEndSession after the timeout anyway, and the session is destroyed regardless.
+*/
+static void VR_StopSession( void ) {
+	double deadline;
+	XrResult res;
+
+	if ( vr.frameBegun ) {
+		VR_EndFrame( NULL );	// a frame left open by an error
+	}
+	VR_PollEvents();	// the runtime may already be stopping
+	if ( !vr.sessionRunning ) {
+		return;
+	}
+
+	vr.exitRequested = 1;
+	res = qxrRequestExitSession( vr.session );
+	if ( XR_FAILED( res ) ) {
+		VR_Log( 0, "VR: xrRequestExitSession: %s\n", VR_ResultString( res ) );
+	}
+
+	deadline = VR_Seconds() + 2.0;
+	while ( XR_SUCCEEDED( res ) && vr.sessionRunning && VR_Seconds() < deadline ) {
+		VR_PollEvents();
+		if ( !vr.sessionRunning ) {
+			break;
+		}
+		if ( vr.sessionState == XR_SESSION_STATE_SYNCHRONIZED || vr.sessionState == XR_SESSION_STATE_VISIBLE ||
+			vr.sessionState == XR_SESSION_STATE_FOCUSED || vr.sessionState == XR_SESSION_STATE_READY ) {
+			XrFrameWaitInfo wi;
+			XrFrameBeginInfo bi;
+			XrFrameEndInfo ei;
+
+			memset( &wi, 0, sizeof( wi ) );
+			wi.type = XR_TYPE_FRAME_WAIT_INFO;
+			memset( &vr.frameState, 0, sizeof( vr.frameState ) );
+			vr.frameState.type = XR_TYPE_FRAME_STATE;
+			if ( XR_FAILED( qxrWaitFrame( vr.session, &wi, &vr.frameState ) ) ) {
+				VR_SleepMs( 5 );
+				continue;
+			}
+			memset( &bi, 0, sizeof( bi ) );
+			bi.type = XR_TYPE_FRAME_BEGIN_INFO;
+			if ( XR_FAILED( qxrBeginFrame( vr.session, &bi ) ) ) {
+				continue;
+			}
+			memset( &ei, 0, sizeof( ei ) );
+			ei.type = XR_TYPE_FRAME_END_INFO;
+			ei.displayTime = vr.frameState.predictedDisplayTime;
+			ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+			qxrEndFrame( vr.session, &ei );
+		} else {
+			VR_SleepMs( 5 );
+		}
+	}
+
+	if ( vr.sessionRunning ) {
+		res = qxrEndSession( vr.session );
+		VR_Log( 0, "VR: the runtime did not stop the session in time; xrEndSession: %s\n", VR_ResultString( res ) );
+		vr.sessionRunning = 0;
+		return;
+	}
+
+	// after xrEndSession the runtime reports IDLE, then EXITING: wait briefly for EXITING
+	deadline = VR_Seconds() + 0.5;
+	while ( vr.sessionState != XR_SESSION_STATE_EXITING && vr.sessionState != XR_SESSION_STATE_LOSS_PENDING &&
+		VR_Seconds() < deadline ) {
+		VR_PollEvents();
+		if ( vr.sessionState != XR_SESSION_STATE_EXITING ) {
+			VR_SleepMs( 5 );
+		}
+	}
+}
+
 void VR_DestroySession( void ) {
 	int eye;
 
 	if ( vr.session == XR_NULL_HANDLE ) {
 		return;
 	}
+	VR_StopSession();
 	VR_Input_DetachSession();
 
 	for ( eye = 0; eye < VR_MAX_EYES; eye++ ) {
@@ -985,17 +1105,31 @@ void VR_DestroySession( void ) {
 		qxrDestroySpace( vr.space );
 		vr.space = XR_NULL_HANDLE;
 	}
-	if ( vr.sessionRunning ) {
-		qxrEndSession( vr.session );
-	}
 	qxrDestroySession( vr.session );
+	VR_Log( 0, "VR: session destroyed\n" );
 
 	vr.session = XR_NULL_HANDLE;
 	vr.sessionRunning = 0;
 	vr.sessionState = XR_SESSION_STATE_UNKNOWN;
+	vr.exitRequested = 0;
 	vr.frameBegun = 0;
 	vr.frameActive = 0;
 	vr.frozenValid = 0;
+}
+
+vrExitReason_t VR_GetExitReason( void ) {
+	return vr.exitReason;
+}
+
+void VR_DebugEndSession( void ) {
+	if ( vr.session == XR_NULL_HANDLE || !vr.sessionRunning ) {
+		VR_Log( 0, "VR: no running session\n" );
+		return;
+	}
+	// as if the user had quit from the headset's system menu: the runtime stops the session,
+	// and it ends in EXITING without our own exit request
+	VR_Log( 0, "VR: debug: asking the runtime to end the session\n" );
+	qxrRequestExitSession( vr.session );
 }
 
 // ---------------------------------------------------------------------------
@@ -1044,8 +1178,19 @@ static void VR_HandleSessionState( XrSessionState state ) {
 		break;
 	case XR_SESSION_STATE_EXITING:
 	case XR_SESSION_STATE_LOSS_PENDING:
-		// the headset went away or the user quit from the system menu; stay flat until restart
-		VR_Log( 0, "VR: session ending\n" );
+		if ( vr.sessionRunning ) {	// LOSS_PENDING can come without STOPPING
+			qxrEndSession( vr.session );
+			vr.sessionRunning = 0;
+		}
+		if ( !vr.exitRequested && vr.exitReason == VR_EXIT_NONE ) {
+			// the user quit from the headset's system menu, or the runtime lost the headset:
+			// the renderer drops to flat (desktop) or quits (Quest)
+			vr.exitReason = state == XR_SESSION_STATE_EXITING ? VR_EXIT_RUNTIME : VR_EXIT_LOST;
+			vr.disabled = 1;
+			VR_Log( 0, "VR: the runtime ended the session (%s)\n", VR_StateName( state ) );
+		} else {
+			VR_Log( 0, "VR: session ending\n" );
+		}
 		break;
 	default:
 		break;
@@ -1073,6 +1218,10 @@ static void VR_PollEvents( void ) {
 			break;
 		case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
 			VR_Log( 1, "VR: OpenXR instance loss pending\n" );
+			if ( vr.exitReason == VR_EXIT_NONE ) {
+				vr.exitReason = VR_EXIT_LOST;
+				vr.disabled = 1;
+			}
 			break;
 		default:
 			break;

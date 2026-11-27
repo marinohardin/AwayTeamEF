@@ -42,9 +42,33 @@ normal create-info structs:
 6. If any later step fails, VR is switched off and the game carries on flat with the
    instance and device it already has.
 
-Teardown runs in reverse: the session and its swapchains go before `vkDestroyDevice`, and the XR instance goes before
-`vkDestroyInstance`. A `vid_restart` that keeps the instance rebuilds only the device and
-the session.
+Teardown (quit, `vid_restart`) runs in this order, all while the Vulkan device and instance are alive:
+
+1. `vkDeviceWaitIdle`, so nothing still uses the eye images.
+2. The session is ended the OpenXR way: `xrRequestExitSession`, empty frames until the runtime
+   reports STOPPING, `xrEndSession`, then a short wait for IDLE and EXITING. Both waits are bounded
+   (2 s and 0.5 s), so a runtime that doesn't answer can't hang the quit.
+3. `xrDestroySwapchain` for every swapchain, `xrDestroySpace`, `xrDestroySession`, the action set, and
+   `xrDestroyInstance`.
+4. Only then `vkDestroyDevice` and `vkDestroyInstance`, which OpenXR created.
+
+The Meta XR Simulator keeps its own wrappers around our device and queue alive until the session's
+exit has reached its frontend; destroying the device first made it crash on quit.
+A map change keeps the device, the instance and the session (the renderer
+restarts with the context kept).
+
+**The runtime ends the session.** If the session reaches EXITING or LOSS_PENDING without our own
+exit request (the user quit from the headset's system menu, or the headset was lost), VR is off for
+the rest of the run: the Quest build quits, and a desktop build carries on in the flat window (the
+renderer already draws flat while no session runs; at the main menu it also does a `vid_restart`,
+which comes back flat). The command `vr_debugEndSession` asks the runtime to end the session, to test
+this path.
+
+**Android pause and resume** (code review; no headset yet). The Quest menu button only drops the
+session from FOCUSED to VISIBLE: frames continue and the controls are released. Taking the headset
+off sends STOPPING, then IDLE, and pauses the activity. SDL blocks the game thread while the activity
+is paused, so the events are handled on resume, in order: `xrEndSession` at STOPPING, then
+`xrBeginSession` at READY. Quitting from the system menu ends in EXITING, which quits the game.
 
 The runtime cvar `vr_enable` (latched) defaults to 1 in the Android build and to 0 on the desktop. So
 a desktop `EF_VR` build still renders flat unless someone asks for VR. `r_smp 1` disables VR for
@@ -221,8 +245,6 @@ stays flat.
 
 ## Known issues
 
-- Quitting while the simulator is attached can crash inside the simulator's own telemetry during
-  `xrDestroyInstance`. It happens after the game has shut down; not seen to affect anything else.
 - The 2D alpha is a coverage approximation (see The 2D layer).
 - Entering an eye pass twice in one frame (a second world scene, such as a portal camera view drawn
   as its own scene) clears that eye again; the last scene wins. Not seen in SP so far.

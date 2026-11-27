@@ -27,9 +27,11 @@ Order of calls, all from the render thread:
               VR_GetCanvasImageIndex()             which canvas image takes the 2D pass (-1: none)
               VR_GetDimmerImageIndex( &alpha )     a dimmer image to fill this frame (-1: none)
               VR_EndFrame( &layers )               releases the images, xrEndFrame with the layers
-  teardown    VR_DestroySession()                  before vkDestroyDevice
-              VR_Shutdown()                        before vkDestroyInstance (also destroys
-                                                   the session if still there)
+  teardown    VR_Shutdown()                        ends and destroys the session, then the XR
+                                                   instance; before vkDestroyDevice and
+                                                   vkDestroyInstance
+              VR_DestroySession()                  the session alone (ended first), before
+                                                   vkDestroyDevice, if the instance stays
 */
 #ifndef EF_VR_H
 #define EF_VR_H
@@ -131,6 +133,16 @@ int			VR_CreateSession( VkInstance instance, VkPhysicalDevice physicalDevice, Vk
 				uint32_t queueFamilyIndex, uint32_t queueIndex );
 void		VR_DestroySession( void );
 void		VR_Shutdown( void );
+
+// the runtime ended the session on its own (the user quit from the headset's system menu) or
+// lost the headset. Once set, VR_Init stays flat for the rest of the run.
+typedef enum {
+	VR_EXIT_NONE,
+	VR_EXIT_RUNTIME,	// EXITING without our own exit request
+	VR_EXIT_LOST		// LOSS_PENDING, or the instance is being lost
+} vrExitReason_t;
+vrExitReason_t VR_GetExitReason( void );
+void		VR_DebugEndSession( void );	// vr_debugEndSession: as if the runtime ended it
 
 // the eye swapchains (valid from VR_CreateSession to VR_DestroySession)
 int			VR_GetEyeSwapchain( int eye, vrSwapchainInfo_t *info );

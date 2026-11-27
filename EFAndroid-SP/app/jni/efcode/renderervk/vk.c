@@ -2189,7 +2189,7 @@ static qboolean vk_create_device( VkPhysicalDevice physical_device, int device_i
 static void vk_destroy_instance( void ) {
 #ifdef EF_VR
 	if ( vk_vr ) {
-		VR_Shutdown();	// the XR instance goes before the VkInstance it made
+		VR_Shutdown();	// normally done in vk_shutdown already; before the VkInstance it made
 		vk_vr = qfalse;
 	}
 #endif
@@ -5529,9 +5529,17 @@ __cleanup:
 #ifdef EF_VR
 	if ( vk_vr ) {
 		if ( vk.device != VK_NULL_HANDLE ) {
-			qvkDeviceWaitIdle( vk.device );
+			qvkDeviceWaitIdle( vk.device );	// nothing may still use the eye images
 		}
-		VR_DestroySession();	// its swapchains belong to this device
+		if ( code != REF_KEEP_CONTEXT ) {
+			// the instance goes too: end and destroy the whole OpenXR side while the device
+			// and the VkInstance it made are alive (the runtime may use them until
+			// xrDestroyInstance returns)
+			VR_Shutdown();
+			vk_vr = qfalse;
+		} else {
+			VR_DestroySession();	// its swapchains belong to this device
+		}
 	}
 #endif
 	if ( vk.device != VK_NULL_HANDLE ) {
