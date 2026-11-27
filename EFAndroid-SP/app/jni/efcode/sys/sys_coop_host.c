@@ -340,7 +340,8 @@ static qboolean CoopAnswer( const char *packet, int len, const struct sockaddr_i
 	playing = SP_IsActive() && SP_CurMap()[0];
 	info[0] = 0;
 	CoopSetInfo( info, "coopProtocol", va( "%d", VSP_COOP_PROTOCOL ) );
-	CoopSetInfo( info, "version", EF_APP_VERSION );
+	CoopSetInfo( info, "version", VSP_COOP_COMPAT );
+	CoopSetInfo( info, "appVersion", EF_APP_VERSION );
 	CoopSetInfo( info, "hostname", coopHostName );
 	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	if ( Cvar_VariableString( "coop_name" )[0] )
