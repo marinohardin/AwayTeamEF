@@ -112,8 +112,13 @@ so a press uses what is boxed. In order:
    the real head. That is why switches used to need odd angles, above all when the player had
    turned in the room instead of with the stick.
 
-What Use will act on gets light-blue corner brackets in the world (other scanned things keep their
-own colour). Without tracked hands or head, Use is the flat one. A co-op guest's Use is still the
+What Use will act on gets corner brackets in the world, drawn like a scanned thing's label: the
+thing's own colour (amber when it has none), the same thickness. For a switch area the brackets go
+round the switch or console it belongs to, not the invisible area in front of it: the smallest
+drawn thing (not a person, not another trigger, smaller than the area, so not the lift it works)
+that the area touches or comes within 8 units of. When the console is part of the level's
+geometry, a small box marks where the area faces the wall. This is only the drawing; Use still
+acts on the area. Without tracked hands or head, Use is the flat one. A co-op guest's Use is still the
 flat one, judged on the host, except that its hand can face a switch. `cg_vrGunInfo 2` prints each
 press ("VR use: ...").
 

@@ -463,6 +463,97 @@ static vec4_t	cg_vrBoxColor;
 
 static int		cg_vrUsePickTime = -1;	// cg.time of the frame whose box is Use's own target
 static vrUsePick_t	cg_vrUsePick;
+static qboolean	cg_vrBoxOwnBounds;		// Use's target: box cg_vrBoxMins/Maxs, not the entity's own bounds
+static vec3_t	cg_vrBoxMins, cg_vrBoxMaxs;
+
+// the label's colour for a thing (CG_DrawCrosshairNames): its own, or amber
+static void CG_VR_ThingColor( const gentity_t *ent, vec4_t color ) {
+	VectorCopy( ent->startRGBA, color );
+	if ( !color[0] && !color[1] && !color[2] ) {
+		color[0] = 0.9f;
+		color[1] = 0.7f;
+		color[2] = 0.0f;
+	}
+	color[3] = 1.0f;
+}
+
+static void CG_VR_EntBounds( const gentity_t *ent, vec3_t mn, vec3_t mx ) {
+	if ( ent->s.solid == SOLID_BMODEL ) {
+		VectorCopy( ent->absmin, mn );
+		VectorCopy( ent->absmax, mx );
+	} else {
+		VectorAdd( ent->currentOrigin, ent->mins, mn );
+		VectorAdd( ent->currentOrigin, ent->maxs, mx );
+	}
+}
+
+/*
+A switch area (a use trigger) is an invisible box in front of the switch; boxing it outlines empty
+space round the player. The thing to box is the switch or console itself: the smallest drawn entity
+(not a person, not another trigger) that the area touches or nearly touches, and smaller than the
+area (so the lift or door the switch works isn't taken). Without one (the console is part of the
+level's geometry) it is the wall the area faces: a small box where a line from its middle, along
+the way it wants to be faced, meets the world. Display only: Use still acts on the trigger.
+*/
+#define VR_USE_SHOW_MAX	64
+static gentity_t *CG_VR_TriggerShow( const gentity_t *trig, vec3_t mn, vec3_t mx ) {
+	gentity_t *list[VR_USE_SHOW_MAX], *best = NULL;
+	vec3_t tmn, tmx, emn, emx, size, mid, end;
+	float tvol, vol, bestVol = 0.0f;
+	trace_t tr;
+	int i, n, axis;
+
+	VectorCopy( trig->absmin, tmn );
+	VectorCopy( trig->absmax, tmx );
+	VectorSubtract( tmx, tmn, size );
+	tvol = size[0] * size[1] * size[2];
+	for ( axis = 0; axis < 3; axis++ ) {
+		emn[axis] = tmn[axis] - 8.0f;
+		emx[axis] = tmx[axis] + 8.0f;
+	}
+	n = gi.EntitiesInBox( emn, emx, list, VR_USE_SHOW_MAX );
+	for ( i = 0; i < n; i++ ) {
+		gentity_t *e = list[i];
+
+		if ( e == trig || !e->inuse || e->client || e->s.number == 0 || ( e->svFlags & SVF_NOCLIENT )
+			|| ( e->s.eFlags & EF_NODRAW ) || !e->s.modelindex
+			|| ( ( e->contents & CONTENTS_TRIGGER ) && !( e->contents & CONTENTS_SOLID ) ) ) {	// a mover's contents are all bits
+			continue;
+		}
+		CG_VR_EntBounds( e, emn, emx );
+		VectorSubtract( emx, emn, size );
+		vol = size[0] * size[1] * size[2];
+		if ( vol >= tvol ) {
+			continue;
+		}
+		if ( !best || vol < bestVol ) {
+			best = e;
+			bestVol = vol;
+		}
+	}
+	if ( best ) {
+		CG_VR_EntBounds( best, mn, mx );
+		return best;
+	}
+
+	VectorAdd( tmn, tmx, mid );
+	VectorScale( mid, 0.5f, mid );
+	if ( VectorLengthSquared( trig->movedir ) > 0.01f ) {
+		VectorMA( mid, 64.0f + 0.5f * VectorLength( size ), trig->movedir, end );
+		gi.trace( &tr, mid, NULL, NULL, end, ENTITYNUM_NONE, MASK_SOLID );
+		if ( tr.fraction < 1.0f && !tr.startsolid ) {
+			VectorMA( tr.endpos, 2.0f, tr.plane.normal, mid );
+			for ( axis = 0; axis < 3; axis++ ) {
+				mn[axis] = mid[axis] - 6.0f;
+				mx[axis] = mid[axis] + 6.0f;
+			}
+			return NULL;
+		}
+	}
+	VectorCopy( tmn, mn );
+	VectorCopy( tmx, mx );
+	return NULL;
+}
 
 void CG_VR_NoteUseBox( const gentity_t *ent, const vec4_t color ) {
 	if ( cg_vrUsePickTime == cg.time && cg_vrUsePick.kind != VR_USE_NONE ) {
@@ -470,18 +561,19 @@ void CG_VR_NoteUseBox( const gentity_t *ent, const vec4_t color ) {
 	}
 	cg_vrBoxEnt = ent->s.number;
 	cg_vrBoxTime = cg.time;
+	cg_vrBoxOwnBounds = qfalse;
 	Vector4Copy( color, cg_vrBoxColor );
 }
 
 /*
-What Use would act on now (G_VRUsePick, the same call the game's Use makes), boxed in its own
-colour; the eye, yaw and pose of this frame are handed to the game's Use (vr_useView), so the
-press uses what is boxed. Player 1 only (host or single player): a guest's Use is the host's.
+What Use would act on now (G_VRUsePick, the same call the game's Use makes), boxed like a scanned
+thing's label (its colour, amber by default); for a switch area, round the switch it belongs to
+(CG_VR_TriggerShow). The eye, yaw and pose of this frame are handed to the game's Use (vr_useView),
+so the press uses what is boxed. Player 1 only (host or single player): a guest's Use is the host's.
 */
 extern bool in_camera;
 
 static void CG_VR_UsePick( void ) {
-	static const vec4_t useColor = { 0.3f, 0.9f, 1.0f, 1.0f };
 	gentity_t *player = &g_entities[0];
 
 	cg_vrUsePickTime = -1;
@@ -498,9 +590,32 @@ static void CG_VR_UsePick( void ) {
 	}
 	cg_vrUsePickTime = cg.time;
 	if ( cg_vrUsePick.kind != VR_USE_NONE && cg_vrUsePick.entityNum < ENTITYNUM_WORLD ) {
+		const gentity_t *picked = &g_entities[cg_vrUsePick.entityNum];
+		const gentity_t *shown = picked;
+
 		cg_vrBoxEnt = cg_vrUsePick.entityNum;
 		cg_vrBoxTime = cg.time;
-		Vector4Copy( useColor, cg_vrBoxColor );
+		cg_vrBoxOwnBounds = qfalse;
+		if ( cg_vrUsePick.kind == VR_USE_TRIGGER ) {
+			shown = CG_VR_TriggerShow( picked, cg_vrBoxMins, cg_vrBoxMaxs );
+			cg_vrBoxOwnBounds = qtrue;
+			if ( !shown ) {
+				shown = picked;
+			}
+		}
+		CG_VR_ThingColor( shown, cg_vrBoxColor );
+		if ( cg_vrGunInfo.integer == 2 ) {
+			static int next;
+			if ( cg.time >= next || cg.time < next - 2000 ) {
+				next = cg.time + 1000;
+				CG_Printf( "VR use box: pick %d %s kind %d via %d, shown %d %s, box %.0f %.0f %.0f .. %.0f %.0f %.0f\n",
+					picked->s.number, picked->classname, cg_vrUsePick.kind, cg_vrUsePick.via, shown->s.number,
+					shown->classname, cg_vrBoxOwnBounds ? cg_vrBoxMins[0] : picked->absmin[0],
+					cg_vrBoxOwnBounds ? cg_vrBoxMins[1] : picked->absmin[1], cg_vrBoxOwnBounds ? cg_vrBoxMins[2] : picked->absmin[2],
+					cg_vrBoxOwnBounds ? cg_vrBoxMaxs[0] : picked->absmax[0], cg_vrBoxOwnBounds ? cg_vrBoxMaxs[1] : picked->absmax[1],
+					cg_vrBoxOwnBounds ? cg_vrBoxMaxs[2] : picked->absmax[2] );
+			}
+		}
 	}
 }
 
@@ -522,12 +637,11 @@ void CG_VR_AddUseBox( void ) {
 		return;
 	}
 
-	if ( ent->s.solid == SOLID_BMODEL ) {
-		VectorCopy( ent->absmin, mn );
-		VectorCopy( ent->absmax, mx );
+	if ( cg_vrBoxOwnBounds && cg_vrUsePickTime == cg_vrBoxTime ) {
+		VectorCopy( cg_vrBoxMins, mn );
+		VectorCopy( cg_vrBoxMaxs, mx );
 	} else {
-		VectorAdd( ent->currentOrigin, ent->mins, mn );
-		VectorAdd( ent->currentOrigin, ent->maxs, mx );
+		CG_VR_EntBounds( ent, mn, mx );
 	}
 	for ( axis = 0; axis < 3; axis++ ) {
 		mn[axis] -= 1.0f;	// just outside, so a console set into a wall isn't hidden by it

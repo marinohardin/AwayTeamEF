@@ -335,7 +335,7 @@ for the wheel here and for the menu cursor (vr_input_engine.c).
 static int VR_Pointer_Trace( int wantMode, float *px, float *py, float *xrFrom, float *xrTo ) {
 	vrQuadMode_t mode;
 	vrBodyHand_t hand;
-	float centre[3], yaw, size[2], head[3], rel[3], xr[3];
+	float centre[3], yaw, pitch, size[2], head[3], rel[3], xr[3];
 	vec3_t q, right, up, normal, d;
 	float scale, denom, t, lx, ly;
 	int i;
@@ -358,11 +358,14 @@ static int VR_Pointer_Trace( int wantMode, float *px, float *py, float *xrFrom, 
 	}
 	VR_Wheel_FromXr( rel, q );
 	VectorScale( q, scale, q );
+	// the quad's axes: turned by its yaw, then tilted by its pitch (a soft-following menu faces a
+	// head that looks up or down; every other quad is upright, pitch 0)
+	pitch = VR_GetLastQuadPitch();
 	xr[0] = cos( yaw ); xr[1] = 0.0f; xr[2] = -sin( yaw );
 	VR_Wheel_FromXr( xr, right );
-	xr[0] = 0.0f; xr[1] = 1.0f; xr[2] = 0.0f;
+	xr[0] = sin( pitch ) * sin( yaw ); xr[1] = cos( pitch ); xr[2] = sin( pitch ) * cos( yaw );
 	VR_Wheel_FromXr( xr, up );
-	xr[0] = sin( yaw ); xr[1] = 0.0f; xr[2] = cos( yaw );	// faces the head
+	xr[0] = cos( pitch ) * sin( yaw ); xr[1] = -sin( pitch ); xr[2] = cos( pitch ) * cos( yaw );	// faces the head
 	VR_Wheel_FromXr( xr, normal );
 
 	denom = DotProduct( hand.axis[0], normal );

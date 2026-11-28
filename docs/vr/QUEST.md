@@ -251,13 +251,19 @@ From the first session on a headset (2026-11-27); the numbers are the owner's.
   mipmap/MSAA cure for sub-pixel highlights), and the flare visibility test, which reads its
   result one frame late while the previous frame may still be drawing. Headset checks:
   `r_flares 0`; and `vr_msaa 0` (then `vid_restart`) against the default 4.
-- **10. The HUD and the menu layer may float too far away.** *Changed (vr-r3-controls), to judge on a headset.*
-  The HUD is now 1.2 m away and 1.2 m wide (was 1.8 and 1.5), the menu 1.0 m and 1.3 m (was 2.0 and 2.0), and
-  the weapon wheel, which was already 1.0 m, is unchanged. The cvars are archived and a saved config holds the
-  old numbers, so a new default alone would never have reached the headset: a one-time reset (`vr_layoutVersion`)
-  puts the four cvars on the new values. The pointer needs nothing more, because it intersects the quad as it was
-  submitted. If it is still wrong, set `vr_menuDistance`, `vr_menuWidth`, `vr_hudDistance` and `vr_hudWidth`
-  (keep the width about 1.2 to 1.3 times the distance for the same angular size).
+- **10. The HUD and the menu layer may float too far away; menus lag behind the head.** *Changed (vr-menu,
+  round 4), to judge on a headset.* Round 3 moved the HUD to 1.2 m (1.2 m wide) and the menu to 1.0 m (1.3 m
+  wide), and its one-time reset does reach a saved config (checked in the simulator: a config holding 2.0 m
+  came up at 1.0 m). What still looked far and lagging: the loading and connecting screens weren't counted
+  as menus, so they went on the HUD's layer (1.2 m, turning only once the head had looked 30° away, then
+  catching up), and the menus themselves stayed where they opened. Now menus, the loading screen and the
+  connecting screen share the menu layer at about arm's length (0.7 m, 0.9 m wide; `vr_layoutVersion` 2
+  resets a saved config once) and follow the head smoothly, a little behind it (`vr_menuFollow`,
+  `vr_menuFollowLag` 0.25 s): upright, tilted toward a head that looks up or down, with the pointer and laser
+  on the tilted panel. The intro movies and cutscenes stay on the big screen; the weapon wheel is unchanged.
+  If the follow is uncomfortable, `vr_menuFollow 0` keeps a menu where it opened and `vr_menuHeadLocked 1`
+  locks it to the head; `vr_menuDistance`/`vr_menuWidth` set the size (keep the width about 1.3 times the
+  distance).
 - **Start screen address entry and the network search are untested on the headset.** The address is
   typed on an on-screen number pad (the system keyboard hung the app when the old text field was
   tapped; the cause could not be confirmed without a headset), and the search is only verified against
@@ -275,6 +281,9 @@ From the first session on a headset (2026-11-27); the numbers are the owner's.
   now picks from the hand, the head and the switch areas, and a switch that wants to be faced
   accepts the head or the hand ([MOVEMENT.md](MOVEMENT.md#how-use-picks-a-target)); the ping
   goes where the hand points ([COOP.md](COOP.md#the-ping)).
+  Near a switch the highlight used to box the invisible use area in front of it, in a faint light
+  blue; it now boxes the switch or console itself, drawn like the scanned-thing box (its colour,
+  amber by default), and Use acts exactly as before (vr-menu, round 4).
 - **The start screen's step into the game is untested on a headset.** The Quest should switch from
   the flat panel to VR when `QuestActivity` starts, because it carries the VR category. If it opens
   flat instead, start the game directly with

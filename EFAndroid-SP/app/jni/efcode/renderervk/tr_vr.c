@@ -33,6 +33,8 @@ static cvar_t	*vr_hudFollowAngle;
 static cvar_t	*vr_menuDistance;
 static cvar_t	*vr_menuWidth;
 static cvar_t	*vr_menuHeadLocked;
+static cvar_t	*vr_menuFollow;
+static cvar_t	*vr_menuFollowLag;
 static cvar_t	*vr_menuDim;
 static cvar_t	*vr_cutsceneScreen;
 static cvar_t	*vr_theaterDistance;
@@ -143,26 +145,33 @@ void R_VR_Register( void ) {
 	vr_hudFollowAngle = R_VR_Cvar( "vr_hudFollowAngle", "30", CVAR_ARCHIVE_ND, "0", "90", CV_FLOAT,
 		"VR: degrees the head may turn away before the HUD follows it (vr_hudFollow 2)." );
 
-	vr_menuDistance = R_VR_Cvar( "vr_menuDistance", "1.0", CVAR_ARCHIVE_ND, "0.5", "5", CV_FLOAT,
+	vr_menuDistance = R_VR_Cvar( "vr_menuDistance", "0.7", CVAR_ARCHIVE_ND, "0.4", "5", CV_FLOAT,
 		"VR: distance of the menu screen in metres." );
-	vr_menuWidth = R_VR_Cvar( "vr_menuWidth", "1.3", CVAR_ARCHIVE_ND, "0.3", "6", CV_FLOAT,
+	vr_menuWidth = R_VR_Cvar( "vr_menuWidth", "0.9", CVAR_ARCHIVE_ND, "0.3", "6", CV_FLOAT,
 		"VR: width of the menu screen in metres." );
 	vr_menuHeadLocked = R_VR_Cvar( "vr_menuHeadLocked", "0", CVAR_ARCHIVE_ND, "0", "1", CV_INTEGER,
-		"VR: 0 the menu stays where it opened, 1 it is locked to the head." );
+		"VR: 1 = the menu is locked to the head (over vr_menuFollow)." );
+	vr_menuFollow = R_VR_Cvar( "vr_menuFollow", "1", CVAR_ARCHIVE_ND, "0", "1", CV_INTEGER,
+		"VR: 1 = the menu follows the head smoothly, a little behind it; 0 = it stays where it opened." );
+	vr_menuFollowLag = R_VR_Cvar( "vr_menuFollowLag", "0.25", CVAR_ARCHIVE_ND, "0", "2", CV_FLOAT,
+		"VR: how far the following menu lags behind the head: seconds to close most of the gap (0 = none)." );
 	vr_menuDim = R_VR_Cvar( "vr_menuDim", "0.6", CVAR_ARCHIVE_ND, "0", "1", CV_FLOAT,
 		"VR: how much the frozen world behind a menu is darkened (0 none, 1 black)." );
 
 	// The layer cvars are archived, so a config saved by an older build still holds the old default
 	// distances and sizes, and a new default would never reach it. Version 1 of the layout moved the
-	// HUD and the menu closer (K10): once, those four go to the new defaults.
+	// HUD and the menu closer (K10): once, those four go to the new defaults. Version 2 brought the
+	// menu to about arm's length (0.7 m, 0.9 m wide) and made it follow the head.
 	vr_layoutVersion = R_VR_Cvar( "vr_layoutVersion", "0", CVAR_ARCHIVE_ND, "0", "100", CV_INTEGER,
 		"VR: which defaults the HUD and menu placement cvars were last reset to (set by the game)." );
 	if ( vr_layoutVersion->integer < 1 ) {
 		ri.Cvar_Set( "vr_hudDistance", "1.2" );
 		ri.Cvar_Set( "vr_hudWidth", "1.2" );
-		ri.Cvar_Set( "vr_menuDistance", "1.0" );
-		ri.Cvar_Set( "vr_menuWidth", "1.3" );
-		ri.Cvar_Set( "vr_layoutVersion", "1" );
+	}
+	if ( vr_layoutVersion->integer < 2 ) {
+		ri.Cvar_Set( "vr_menuDistance", "0.7" );
+		ri.Cvar_Set( "vr_menuWidth", "0.9" );
+		ri.Cvar_Set( "vr_layoutVersion", "2" );
 	}
 
 	vr_cutsceneScreen = R_VR_Cvar( "vr_cutsceneScreen", "1", CVAR_ARCHIVE_ND, "0", "1", CV_INTEGER,
@@ -392,7 +401,8 @@ void R_VR_EndFrame( void ) {
 		layers.quadMode = VR_QUAD_MENU;
 		layers.placement.distance = vr_menuDistance->value;
 		layers.placement.width = vr_menuWidth->value;
-		layers.placement.follow = vr_menuHeadLocked->integer ? 1 : 0;
+		layers.placement.follow = vr_menuHeadLocked->integer ? 1 : vr_menuFollow->integer ? VR_QUAD_FOLLOW_SOFT : 0;
+		layers.placement.followLag = vr_menuFollowLag->value;
 		layers.laser = vr_menuLaser->integer;
 		break;
 	case VRF_THEATER:

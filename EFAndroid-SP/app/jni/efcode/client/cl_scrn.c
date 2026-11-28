@@ -1134,8 +1134,9 @@ void SCR_UpdateScreen( void ) {
 
 #ifdef EF_VR
 	{
-		// for the VR renderer: 1 = a menu is up (the world is frozen behind it), 2 = a cinematic
-		// plays (it goes on the cutscene screen). Read by the renderer at its next frame.
+		// for the VR renderer: 1 = a menu, or a loading or connecting screen, is up (the world is
+		// frozen behind it), 2 = a cinematic plays (it goes on the cutscene screen). Read by the
+		// renderer at its next frame.
 		static cvar_t *vr_uiState;
 		int state = 0;
 
@@ -1146,6 +1147,10 @@ void SCR_UpdateScreen( void ) {
 			state = 1;
 		} else if ( clc.state == CA_CINEMATIC || CL_InGameCinematicActive() ) {
 			state = 2;
+		} else if ( SP_IsLoading() || ( clc.state >= CA_CONNECTING && clc.state < CA_ACTIVE ) ) {
+			// a loading or connecting screen: on the menu's layer (in front of the eyes, following
+			// the head), not on the HUD's, which only turns once the head has looked well away
+			state = 1;
 		}
 		if ( VR_HM_Active() ) {
 			// Holomatch H1: the live world behind menus, the theater screen when following a

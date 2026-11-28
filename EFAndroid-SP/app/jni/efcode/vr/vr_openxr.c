@@ -244,8 +244,10 @@ typedef struct {
 typedef struct {
 	int					placed;
 	float				yaw;			// radians about +Y; 0 looks down -Z
+	float				pitch;			// radians, + = up (soft follow only; otherwise 0)
 	float				position[3];	// in vr.space
 	int					turning;		// lazy follow: catching up with the head
+	XrTime				time;			// soft follow: the display time it was last placed for
 } vrQuadAnchor_t;
 
 static struct {
@@ -285,7 +287,7 @@ static struct {
 	vrQuadAnchor_t		anchors[VR_NUM_QUAD_MODES];	// by vrQuadMode_t
 	int					lastQuadMode;	// -1 = no quad last frame
 	int					lastQuadLocal;	// it went out in vr.space (not head-locked)
-	float				lastQuadCentre[3], lastQuadYaw, lastQuadSize[2];
+	float				lastQuadCentre[3], lastQuadYaw, lastQuadPitch, lastQuadSize[2];
 
 	// head origin for VR_GetEyeOffset
 	int					recenterPending;
@@ -1693,10 +1695,36 @@ static float VR_AngleDiff( float a, float b ) {
 	return d;
 }
 
+// the head's pitch (radians, + = looking up), from the same view as VR_HeadPose
+static float VR_HeadPitch( void ) {
+	const XrQuaternionf *q = &vr.views[0].pose.orientation;
+	float fy = 2.0f * ( q->x * q->w - q->y * q->z );	// the forward (-Z) vector's Y
+
+	if ( fy > 1.0f ) fy = 1.0f;
+	if ( fy < -1.0f ) fy = -1.0f;
+	return asinf( fy );
+}
+
+// soft follow: one angle eased toward its target, a small dead band absorbing head jitter
+static float VR_EaseAngle( float current, float target, float k ) {
+	const float band = 2.0f * (float)M_PI / 180.0f;
+	const float diff = VR_AngleDiff( target, current );
+
+	if ( diff > band ) {
+		return current + ( diff - band ) * k;
+	}
+	if ( diff < -band ) {
+		return current + ( diff + band ) * k;
+	}
+	return current;
+}
+
+#define VR_SOFT_PITCH_LIMIT	( 60.0f * (float)M_PI / 180.0f )
+
 // where the quad goes this frame; returns the space to submit it in
 static XrSpace VR_PlaceQuad( vrQuadMode_t mode, const vrQuadPlacement_t *p, XrPosef *pose ) {
 	vrQuadAnchor_t *a = &vr.anchors[mode];
-	float head[3], headYaw;
+	float head[3], headYaw, headPitch = 0.0f;
 
 	if ( p->follow == 1 && vr.viewSpace != XR_NULL_HANDLE ) {
 		pose->orientation.x = pose->orientation.y = pose->orientation.z = 0.0f;
@@ -1708,16 +1736,57 @@ static XrSpace VR_PlaceQuad( vrQuadMode_t mode, const vrQuadPlacement_t *p, XrPo
 	}
 
 	VR_HeadPose( head, &headYaw );
+	if ( p->follow == VR_QUAD_FOLLOW_SOFT ) {
+		headPitch = VR_HeadPitch();
+		if ( headPitch > VR_SOFT_PITCH_LIMIT ) headPitch = VR_SOFT_PITCH_LIMIT;
+		if ( headPitch < -VR_SOFT_PITCH_LIMIT ) headPitch = -VR_SOFT_PITCH_LIMIT;
+	}
 
 	if ( !a->placed || (int)mode != vr.lastQuadMode ) {
 		// placed in front of the head when the mode starts (a menu opens, a cutscene begins)
 		a->placed = 1;
 		a->yaw = headYaw;
+		a->pitch = headPitch;
 		a->turning = 0;
+		a->time = vr.frameState.predictedDisplayTime;
 		a->position[0] = head[0];
 		a->position[1] = head[1];
 		a->position[2] = head[2];
 	}
+
+	if ( p->follow == VR_QUAD_FOLLOW_SOFT ) {
+		// ease toward the head's yaw and pitch, by the display time that went by (an exponential
+		// approach: framerate-independent, no overshoot), and stay at the head's position
+		float dt = (float)( vr.frameState.predictedDisplayTime - a->time ) * 1e-9f, k;
+
+		if ( dt < 0.0f || dt > 0.25f ) {
+			dt = 1.0f / 72.0f;	// a stall or a new time base: one frame's worth
+		}
+		k = p->followLag > 0.001f ? 1.0f - expf( -dt / p->followLag ) : 1.0f;
+		a->time = vr.frameState.predictedDisplayTime;
+		a->yaw = VR_EaseAngle( a->yaw, headYaw, k );
+		a->pitch = VR_EaseAngle( a->pitch, headPitch, k );
+		a->position[0] = head[0];
+		a->position[1] = head[1];
+		a->position[2] = head[2];
+
+		{
+			// upright (no roll), turned to face the head: yaw about +Y, then pitch about +X
+			const float sy = sinf( a->yaw * 0.5f ), cy = cosf( a->yaw * 0.5f );
+			const float sp = sinf( a->pitch * 0.5f ), cp = cosf( a->pitch * 0.5f );
+			const float hd = cosf( a->pitch ) * p->distance;
+
+			pose->orientation.x = cy * sp;
+			pose->orientation.y = sy * cp;
+			pose->orientation.z = -sy * sp;
+			pose->orientation.w = cy * cp;
+			pose->position.x = a->position[0] - sinf( a->yaw ) * hd;
+			pose->position.y = a->position[1] + sinf( a->pitch ) * p->distance + p->height;
+			pose->position.z = a->position[2] - cosf( a->yaw ) * hd;
+		}
+		return vr.space;
+	}
+	a->pitch = 0.0f;
 
 	if ( p->follow == 2 ) {
 		// lazy follow: the quad keeps still while the head looks around it, and swings round
@@ -1745,6 +1814,10 @@ static XrSpace VR_PlaceQuad( vrQuadMode_t mode, const vrQuadPlacement_t *p, XrPo
 	pose->position.y = a->position[1] + p->height;
 	pose->position.z = a->position[2] - cosf( a->yaw ) * p->distance;
 	return vr.space;
+}
+
+float VR_GetLastQuadPitch( void ) {
+	return vr.lastQuadMode >= 0 && vr.lastQuadLocal ? vr.lastQuadPitch : 0.0f;
 }
 
 int VR_GetLastQuad( vrQuadMode_t *mode, float centre[3], float *yaw, float size[2] ) {
@@ -2015,7 +2088,8 @@ void VR_EndFrame( const vrFrameLayers_t *layers ) {
 		vr.lastQuadCentre[0] = quad.pose.position.x;
 		vr.lastQuadCentre[1] = quad.pose.position.y;
 		vr.lastQuadCentre[2] = quad.pose.position.z;
-		vr.lastQuadYaw = 2.0f * atan2f( quad.pose.orientation.y, quad.pose.orientation.w );
+		vr.lastQuadYaw = vr.anchors[layers->quadMode].yaw;
+		vr.lastQuadPitch = vr.anchors[layers->quadMode].pitch;
 		vr.lastQuadSize[0] = quad.size.width;
 		vr.lastQuadSize[1] = quad.size.height;
 		if ( layers->laser && vr.lastQuadLocal && VR_BuildLaserQuad( &laserQuad ) ) {
@@ -2027,9 +2101,13 @@ void VR_EndFrame( const vrFrameLayers_t *layers ) {
 	}
 
 	if ( layers && layers->debug ) {
-		VR_Log( 0, "VR frame %u: world %d, dim %.2f, quad mode %d at %.3f %.3f %.3f yaw %.4f size %.3f x %.3f, laser %d from %.4f %.4f %.4f to %.4f %.4f %.4f, "
+		float hp[3], hy;
+
+		VR_HeadPose( hp, &hy );
+		VR_Log( 0, "VR frame %u: world %d, dim %.2f, quad mode %d at %.3f %.3f %.3f yaw %.4f pitch %.4f (head yaw %.4f pitch %.4f) size %.3f x %.3f, laser %d from %.4f %.4f %.4f to %.4f %.4f %.4f, "
 			"%d layers%s\n", vr.frameNumber, (int)projection, ( layers->dim && vr.dimmer.released ) ? vr.dimmerAlpha : 0.0f,
 			vr.lastQuadMode, vr.lastQuadCentre[0], vr.lastQuadCentre[1], vr.lastQuadCentre[2], vr.lastQuadYaw,
+			vr.lastQuadMode >= 0 ? vr.lastQuadPitch : 0.0f, hy, VR_HeadPitch(),
 			vr.lastQuadSize[0], vr.lastQuadSize[1], laserOn, vr.laserFrom[0], vr.laserFrom[1], vr.laserFrom[2],
 			vr.laserTo[0], vr.laserTo[1], vr.laserTo[2], layerCount, vr.frameActive ? "" : " (not active)" );
 	}

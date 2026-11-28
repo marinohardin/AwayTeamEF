@@ -94,9 +94,18 @@ typedef struct {
 	float		distance;		// metres in front of the head
 	float		width;			// metres; the height follows the canvas' aspect
 	float		height;			// metres above (+) or below (-) eye level
-	int			follow;			// 0 world-locked where placed, 1 head-locked, 2 lazy yaw follow
+	int			follow;			// 0 world-locked where placed, 1 head-locked, 2 lazy yaw follow,
+								// 3 soft follow (VR_QUAD_FOLLOW_SOFT)
 	float		followAngle;	// lazy follow: degrees of head yaw before the quad turns after it
+	float		followLag;		// soft follow: seconds the quad takes to close most (63 %) of the gap
 } vrQuadPlacement_t;
+
+/*
+Soft follow (menus): every frame the quad eases toward the head's yaw and pitch, a little behind it,
+so it stays in front of the eyes without a dead zone and a snap; it stays upright (no roll) and faces
+the head. Head jitter of less than about two degrees doesn't move it.
+*/
+#define VR_QUAD_FOLLOW_SOFT	3
 
 typedef struct {
 	vrProjection_t	projection;
@@ -179,6 +188,8 @@ void		VR_EndFrame( const vrFrameLayers_t *layers );
 // (OpenXR axes, metres), yaw about +Y (radians, 0 = facing +Z, toward a head looking down -Z)
 // and size in metres. Returns 0 when no quad went out last frame or it was head-locked.
 int			VR_GetLastQuad( vrQuadMode_t *mode, float centre[3], float *yaw, float size[2] );
+// the same quad's pitch (radians, + = tilted to face a head looking up; 0 = upright, as the HUD)
+float		VR_GetLastQuadPitch( void );
 // the red menu laser, from the weapon hand to the menu cursor: both ends in the reference space
 // (OpenXR axes, metres), set by the engine's input every frame while a menu has the keys; NULL
 // ends it. It goes out as one thin quad layer after the 2D quad (VR_EndFrame, layers.laser).

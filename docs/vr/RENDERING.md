@@ -81,7 +81,7 @@ Each frame is one of three kinds (`R_VR_FrameKind` in `tr_vr.c`):
 | Kind | When | Eyes | 2D quad |
 |---|---|---|---|
 | Game | otherwise | fresh, both eyes | HUD: lazy follow, translucent |
-| Menu | `vr_uiState` 1 (a UI has the keys) | frozen, dimmed | menu: world-locked (or `vr_menuHeadLocked`), translucent |
+| Menu | `vr_uiState` 1 (a UI has the keys, or loading) | frozen, dimmed | menu: soft follow (or `vr_menuFollow 0`, `vr_menuHeadLocked`), translucent |
 | Theater | `cg_cameraActive`, or `vr_uiState` 2 (Bink or in-game cinematic) | frozen, dimmed | big screen, opaque |
 
 - `RE_BeginFrame` calls `VR_BeginFrame( wantEyes, dim )`. That polls the events, runs
@@ -149,11 +149,18 @@ and an sRGB image means the compositor decodes it. So:
   default. Lazy follow keeps the HUD level and at the head's position; it turns only once the head
   looks more than `vr_hudFollowAngle` away, then eases back (about 8 % of the gap per frame) until
   within 2°. That keeps it readable without being glued to the eyes.
-- **Menus** (`vr_menuDistance` 1 m, `vr_menuWidth` 1.3 m, `vr_menuDim` 0.6, `vr_menuHeadLocked` 0): placed
-  in front of the head when the menu opens and then world-locked. The world behind is frozen (the last
-  eye images, resubmitted with their own poses, so it stays put when the head turns) and dimmed.
-  The distances were 1.8 m (HUD) and 2 m (menu) at first; they are closer since round 3 (K10). They are
-  archived cvars, so `vr_layoutVersion` resets a saved config to the new numbers once.
+- **Menus** (`vr_menuDistance` 0.7 m, `vr_menuWidth` 0.9 m, `vr_menuDim` 0.6, `vr_menuFollow` 1,
+  `vr_menuFollowLag` 0.25 s, `vr_menuHeadLocked` 0): placed in front of the head when the menu opens, then
+  a soft follow: every frame the quad eases toward the head's yaw and pitch (an exponential approach by
+  the display time that went by: about 63 % of the gap in `vr_menuFollowLag` seconds, so it is the same at
+  any frame rate), with a 2° band that absorbs head jitter, and it keeps to the head's position. It stays
+  upright (no roll) and is tilted to face a head that looks up or down (pitch limited to 60°). The pointer
+  intersects the quad as submitted, tilt included (`VR_GetLastQuadPitch`). `vr_menuFollow 0` keeps the
+  menu where it opened; `vr_menuHeadLocked 1` locks it to the head (no laser then). The world behind is
+  frozen (the last eye images, resubmitted with their own poses, so it stays put when the head turns)
+  and dimmed. The distances were 1.8 m (HUD) and 2 m (menu) at first, then 1.2 m and 1 m (round 3, K10),
+  and the menu is at about arm's length since round 4. They are archived cvars, so `vr_layoutVersion`
+  (now 2) resets a saved config to the new numbers once.
   - **Opening from a running game** holds the first `VR_MENU_SETTLE` (3) frames: the world stays frozen, the
     2D layer re-shows its last image (a frame that doesn't acquire a new canvas image: the runtime shows the
     last released one, as it does for the frozen eyes) and nothing is dimmed, so the single-player menu's
@@ -172,8 +179,8 @@ and an sRGB image means the compositor decodes it. So:
 - **Dimmer.** A 16×16 swapchain cleared to black with alpha = the dim value, shown as a head-locked
   8 m × 8 m quad 1 m away between the projection and the 2D quad. It is cleared only when the value changes.
   (`XR_KHR_composition_layer_color_scale_bias` would do this without a layer, but the simulator lacks it.)
-- **Detection.** `cl_scrn.c` sets `vr_uiState` to 1 while a UI owns the keys (the UI VM or the SP UI),
-  2 while a Bink or in-game cinematic plays, else 0. The renderer reads `cg_cameraActive` for scripted
+- **Detection.** `cl_scrn.c` sets `vr_uiState` to 1 while a UI owns the keys (the UI VM or the SP UI)
+  or a loading or connecting screen is up, 2 while a Bink or in-game cinematic plays, else 0. The renderer reads `cg_cameraActive` for scripted
   cameras. No game-module change.
 - **No pillarbox bars on the HUD.** In play, `SCR_DrawScreenField` blacks out the sides before the
   world is drawn over them (`cl_viewmode 1`). In VR the world isn't in the 2D image, so those bars
@@ -199,7 +206,7 @@ and an sRGB image means the compositor decodes it. So:
 | `vr_msaa` | 4 | latched; eye MSAA samples |
 | `vr_refreshRate` | 72 | latched; Hz, the closest offered rate |
 | `vr_hudDistance`, `vr_hudWidth`, `vr_hudHeight`, `vr_hudFollow`, `vr_hudFollowAngle` | 1.2, 1.2, −0.1, 2, 30 | HUD quad |
-| `vr_menuDistance`, `vr_menuWidth`, `vr_menuHeadLocked`, `vr_menuDim`, `vr_menuLaser` | 1.0, 1.3, 0, 0.6, 1 | menu quad, and its laser |
+| `vr_menuDistance`, `vr_menuWidth`, `vr_menuFollow`, `vr_menuFollowLag`, `vr_menuHeadLocked`, `vr_menuDim`, `vr_menuLaser` | 0.7, 0.9, 1, 0.25, 0, 0.6, 1 | menu quad, and its laser |
 | `vr_debugFrames` | 0 | log what every frame submits; `vr_screenshot <n>` writes n frames in a row, numbered by that frame |
 | `vr_cutsceneScreen`, `vr_theaterDistance`, `vr_theaterWidth`, `vr_theaterDim` | 1, 4.0, 4.4, 0.85 | big screen |
 | `vr_uiState` | | read-only, set by the client |
