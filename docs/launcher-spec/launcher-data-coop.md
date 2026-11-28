@@ -472,10 +472,10 @@ Case B — otherwise `VSP_FindGameData(&basepath, &dataFolder)` (§4.1):
 
 | State | Path text | Status text | Icon / color |
 |---|---|---|---|
-| found, but `pak1.pk3` and/or `pak2.pk3` missing in both HomeBase and dataFolder | dataFolder with `~` | `"Patch 1.2 missing · add <pak1.pk3 and pak2.pk3> with Add Game Files…"` (missing names joined by `" and "`); tooltip: "These game files are from the original CD (version 1.0). The game also needs <names> from the 1.1 and 1.2 patches: copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) with Add Game Files…." | `exclamationmark.triangle.fill`, orange. Logged `Launcher: patch files missing (…) in "…"` |
+| found, but `pak1.pk3` and/or `pak2.pk3` missing in both HomeBase and dataFolder | dataFolder with `~` | `"Patch 1.2 missing · add <pak1.pk3 and pak2.pk3> with Add Game Files…"` (missing names joined by `" and "`); tooltip: "These game files are from the original CD (version 1.0). The game also needs <names> from the 1.1 and 1.2 patches: copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) or the Expansion Pack's CD or its image with Add Game Files…." | `exclamationmark.triangle.fill`, orange. Logged `Launcher: patch files missing (…) in "…"` |
 | found, basepath non-nil (in place, or next to the app) | dataFolder with `~` | "Ready · using the files in this folder" | `checkmark.circle.fill`, green |
 | found, basepath nil (homepath copy) | dataFolder with `~` | "Ready · copied into the app's own folder" | same |
-| not found | "No game files yet" | "Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe." | `exclamationmark.triangle.fill`, orange |
+| not found | "No game files yet" | "Choose the Elite Force folder (the one with BaseEF), the GOG setup .exe, or an image of the CD (.iso)." | `exclamationmark.triangle.fill`, orange |
 
 Then:
 
@@ -707,20 +707,23 @@ nil).
 
 - Can choose directories **and** files; allowed file type `exe`; single
   selection.
-- Prompt (OK button): "Choose". Message: "Choose your Elite Force folder, or GOG's installer".
+- Prompt (OK button): "Choose". Message: "Choose your game folder, GOG installer or CD image".
 - Accessory view (always disclosed; fixed text width 480, centered, insets 12/20):
-  1. Small-font wrapping text: "Select the folder where Star Trek: Voyager – Elite Force is installed (the one containing BaseEF with pak0.pk3), the BaseEF folder itself, or GOG's Windows installer (the setup .exe). By default the game files are copied into the app's own folder in Application Support, so the original folder or CD is no longer needed."
+  1. Small-font wrapping text: "Select the folder where Star Trek: Voyager – Elite Force is installed (the one containing BaseEF with pak0.pk3), the BaseEF folder itself, GOG's Windows installer (the setup .exe), or an image of the game's CD (.iso, or .bin/.cue). By default the game files are copied into the app's own folder in Application Support, so the original folder or CD is no longer needed."
   2. Checkbox "Use BaseEF files in place rather than copy" (default off, not remembered).
   3. Status line (small, secondary), live with the checkbox: on → "Files will be read from this folder; nothing is copied."; off → "Files will be copied into the app's data folder (about 600 MB for a standard install)."
   (Port: on Windows an `IFileOpenDialog` with `IFileDialogCustomize` (checkbox +
   static text); on Qt a non-native `QFileDialog` with extra widgets, or a small
   pre-dialog with the checkbox. A native dialog rarely allows folder **or** file
-  in one go: two buttons ("Choose Folder…", "Choose GOG Installer…") are an
+  in one go: two buttons ("Choose Folder…", "Choose Installer or ISO…") are an
   acceptable equivalent.)
 - Cancel → log "Game folder selection cancelled", return NO.
 
 **Validation** of the chosen path (`D:754-814`):
 
+0. **Not a directory and extension `.iso`/`.bin`/`.img`/`.cue`/`.cdr`** (any case): a CD
+   image → copy out of it with onlyNew=NO (§4.3b); an image without `pak0.pk3`
+   (the Expansion Pack's) is refused. Success → remove `GameFolder`, return YES.
 1. **Not a directory and extension `.exe`** (any case): GOG installer →
    `UnpackInstaller(exe, onlyNew=NO)` (§4.3). Success (≥1 file and HomeBase has
    pak0) → remove `GameFolder`, return YES. Failure → back to the panel (errors
@@ -837,6 +840,24 @@ Launcher side (`UnpackInstaller`, `D:541-600`):
    −1. Log `GOG installer: unpacked <names> (<size>) to "<HomeBase>"`. Return
    count.
 
+### 4.3b CD images (`sys_iso.c`)
+
+The game's CD and the Expansion Pack's CD store BaseEF's `.pk3` files as plain
+ISO 9660 files (`SETUP/BASEEF/PAK0.PK3` on the game's; `Setup/baseef/pak1-3.pk3`
+on the Expansion Pack's, so it also brings patch 1.2). `sys_iso.c` (portable C,
+no dependencies; compiled into the Mac app and into `eflauncher`) reads the
+primary volume descriptor of a 2048-byte-sector image (`.iso`/`.img`/`.cdr`) or
+a raw 2352-byte one (`.bin`, MODE1 or MODE2 form 1, or the `.bin` a `.cue`
+names), found from the content, and lists the `.pk3` files of every `BaseEF`
+directory (any case; names lower-cased). Every `.pk3` must end in a zip end
+record or the image is refused ("This disc image can't be used"). Copying is a
+byte copy to `<to>.part`, dated like the disc, renamed into place. Progress panel
+"Copying from the disc image"; failure "Copying from the disc image failed".
+Logged `Disc image: …`. In the Windows/Linux core `lc_is_installer` is true for
+disc images too and `lc_plan_unpack_installer` plans the copy (job kind
+`KIND_DISC`), so the UIs route them like GOG's installer. Add Game Files takes
+images with onlyNew=YES; "Nothing to add" then says "this disc's .pk3 files".
+
 ### 4.4 Copying (chooser copy, Add Game Files) and the progress panel
 
 **CopyGameFiles(srcBase)** (`D:452-527`):
@@ -861,9 +882,9 @@ usage" (falls back to plain free size); 0 = unknown (no check).
 **Add Game Files…** (`VSP_AddGameFiles`, `D:921-1040`):
 
 - Open panel: files and folders, **multiple selection**, prompt "Add", message
-  "Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), or GOG's installer (setup_….exe)". Cancel → 0.
+  "Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), an image of the CD (.iso), or GOG's installer (setup_….exe)". Cancel → 0.
 - `external` = BaseEF of the remembered in-place folder, if any.
-- Every picked `.exe` file → `UnpackInstaller(path, onlyNew=YES, external)`;
+- Every picked CD image → the §4.3b copy (onlyNew=YES); every picked `.exe` file → `UnpackInstaller(path, onlyNew=YES, external)`;
   if only installers were picked, return their total.
 - Every other pick: a directory → its BaseEF child if present, else itself; list
   its top-level entries; a file → itself. Keep: not dot-files, extension `pk3`,

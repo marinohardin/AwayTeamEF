@@ -57,8 +57,8 @@ static bool pickFiles( HWND owner, const wchar_t *title, bool multi, bool exeOnl
 	if ( CoCreateInstance( CLSID_FileOpenDialog, 0, CLSCTX_INPROC_SERVER, IID_IFileOpenDialog, (void **)&d ) != S_OK ) return false;
 	DWORD opt = 0; d->GetOptions( &opt ); d->SetOptions( opt | FOS_FORCEFILESYSTEM | ( multi ? FOS_ALLOWMULTISELECT : 0 ) );
 	d->SetTitle( title );
-	COMDLG_FILTERSPEC f1[] = { { L"GOG installer (*.exe)", L"*.exe" }, { L"All files", L"*.*" } };
-	COMDLG_FILTERSPEC f2[] = { { L"Game files (*.pk3, setup .exe)", L"*.pk3;*.exe" }, { L"All files", L"*.*" } };
+	COMDLG_FILTERSPEC f1[] = { { L"GOG installer or CD image (*.exe, *.iso, *.bin, *.cue)", L"*.exe;*.iso;*.bin;*.cue;*.img" }, { L"All files", L"*.*" } };
+	COMDLG_FILTERSPEC f2[] = { { L"Game files (*.pk3, setup .exe, CD image)", L"*.pk3;*.exe;*.iso;*.bin;*.cue;*.img" }, { L"All files", L"*.*" } };
 	if ( exeOnly ) d->SetFileTypes( 2, f1 ); else d->SetFileTypes( 2, f2 );
 	bool ok = false;
 	if ( d->Show( owner ) == S_OK ) {
@@ -178,7 +178,7 @@ static int unpackInstaller( HWND owner, const str &exe, bool onlyNew )
 	}
 	if ( !job || lc_copyjob_count( job ) == 0 ) {
 		if ( job ) lc_copyjob_free( job );
-		lc_nothing_to_add_alert( 1, present, t, sizeof t, x, sizeof x );
+		lc_nothing_to_add_alert( lc_is_disc_image( exe.c_str( ) ) ? 2 : 1, present, t, sizeof t, x, sizeof x );
 		Alert( owner, t, x, { "OK" }, 0 );
 		return 0;
 	}
@@ -202,7 +202,7 @@ struct ChooserDlg : Wnd {
 	{
 		if ( id == 11 ) sync( );
 		else if ( id == 12 && code == BN_CLICKED ) { str p; if ( pickFolder( hwnd, L"Choose", &p ) ) { path = p; end( 1 ); } }
-		else if ( id == 13 && code == BN_CLICKED ) { std::vector<str> f; if ( pickFiles( hwnd, L"Choose GOG's installer", false, true, &f ) && !f.empty( ) ) { path = f[0]; end( 2 ); } }
+		else if ( id == 13 && code == BN_CLICKED ) { std::vector<str> f; if ( pickFiles( hwnd, L"Choose GOG's installer or a CD image", false, true, &f ) && !f.empty( ) ) { path = f[0]; end( 2 ); } }
 		else if ( id == IDCANCEL ) end( 0 );
 	}
 };
@@ -215,19 +215,19 @@ static bool choosePath( HWND owner, str *path, bool *inPlace )
 	}
 	ChooserDlg d;
 	const int W0 = 520;
-	str explain = "Select the folder where Star Trek: Voyager \xE2\x80\x93 Elite Force is installed (the one containing BaseEF with pak0.pk3), the BaseEF folder itself, or GOG's Windows installer (the setup .exe). By default the game files are copied into the app's own data folder, so the original folder or CD is no longer needed.";
+	str explain = "Select the folder where Star Trek: Voyager \xE2\x80\x93 Elite Force is installed (the one containing BaseEF with pak0.pk3), the BaseEF folder itself, GOG's Windows installer (the setup .exe), or an image of the game's CD (.iso, or .bin/.cue). By default the game files are copied into the app's own data folder, so the original folder or CD is no longer needed.";
 	int eh = textHeight( W( explain ), W0 - 40, F( 12 ) ) * 96 / g_dpi;
 	int H = 20 + 22 + 8 + eh + 14 + 22 + 6 + 18 + 22 + 30 + 20;
-	d.create( W( "Choose your Elite Force folder, or GOG's installer" ).c_str( ), W0, H, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner );
+	d.create( W( "Choose your game folder, GOG installer or CD image" ).c_str( ), W0, H, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner );
 	int y = 20;
-	d.label( 20, y, W0 - 40, 22, "Choose your Elite Force folder, or GOG's installer", 15, 700 ); y += 30;
+	d.label( 20, y, W0 - 40, 22, "Choose your game folder, GOG installer or CD image", 15, 700 ); y += 30;
 	d.label( 20, y, W0 - 40, eh + 2, explain.c_str( ), 12, 400, R_TEXT2 ); y += eh + 14;
 	d.chk = d.check( 20, y, W0 - 40, 22, "Use BaseEF files in place rather than copy", 11, false ); y += 26;
 	d.status = d.label( 40, y, W0 - 60, 18, "", 11, 400, R_TEXT2 ); y += 18 + 22;
 	d.sync( );
 	int x = W0 - 20;
 	x -= 84; d.button( x, y, 84, 28, "Cancel", IDCANCEL ); x -= 8;
-	x -= 190; d.button( x, y, 190, 28, "Choose GOG Installer\xE2\x80\xA6", 13 ); x -= 8;
+	x -= 200; d.button( x, y, 200, 28, "Choose Installer or ISO\xE2\x80\xA6", 13 ); x -= 8;
 	x -= 150; d.button( x, y, 150, 28, "Choose Folder\xE2\x80\xA6", 12, true );
 	int r = d.runModal( );
 	if ( r == 0 ) return false;
@@ -289,7 +289,7 @@ int dataAddGameFiles( HWND owner )
 	if ( const char *t = testEnv( "VOYAGERSP_TEST_ADD" ) ) picks.push_back( t );
 	else {
 		AddDlg d; const int W0 = 520;
-		str msg = "Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), or GOG's installer (setup_\xE2\x80\xA6.exe)";
+		str msg = "Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), an image of the CD (.iso), or GOG's installer (setup_\xE2\x80\xA6.exe)";
 		int eh = textHeight( W( msg ), W0 - 40, F( 13 ) ) * 96 / g_dpi;
 		d.create( L"Add Game Files", W0, 20 + eh + 22 + 30 + 20, WS_POPUP | WS_CAPTION | WS_SYSMENU, 0, owner );
 		d.label( 20, 20, W0 - 40, eh + 2, msg.c_str( ), 13, 400 );

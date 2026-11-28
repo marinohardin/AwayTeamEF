@@ -1542,7 +1542,7 @@ static NSStackView *HStackOf( NSArray *views )
 		else
 		{
 			shown = @"No game files yet";
-			[status setStringValue: @"Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe."];
+			[status setStringValue: @"Choose the Elite Force folder (the one with BaseEF), the GOG setup .exe, or an image of the CD (.iso)."];
 			symbol = @"exclamationmark.triangle.fill";
 			color = [NSColor systemOrangeColor];
 		}

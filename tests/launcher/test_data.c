@@ -258,7 +258,7 @@ static void TestFind( void )
 		char line[256];
 		memset( &none, 0, sizeof( none ) );
 		lc_data_status_text( &none, line, sizeof( line ), NULL, 0 );
-		CHECK_STR( line, "Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe." );
+		CHECK_STR( line, "Choose the Elite Force folder (the one with BaseEF), the GOG setup .exe, or an image of the CD (.iso)." );
 	}
 }
 
@@ -518,6 +518,198 @@ static void TestInstaller( void )
 	CHECK( strncmp( err, "it can't be read", 16 ) == 0 );
 }
 
+/* ---- CD images (sys_iso.c through lc_plan_unpack_installer) ---- */
+
+#define DISC_SECTORS 32
+
+typedef struct { const char *name; int dir; int sector; const unsigned char *data; size_t size; } discRec;
+
+static void PutRec( unsigned char *dir, size_t *o, const discRec *r )
+{
+	unsigned char *d = dir + *o;
+	size_t nl = r->name ? strlen( r->name ) : 1, len = 33 + nl + ( ( 33 + nl ) & 1 );
+	unsigned size = r->dir ? 2048 : (unsigned)r->size;
+
+	memset( d, 0, len );
+	d[0] = (unsigned char)len;
+	d[2] = (unsigned char)r->sector; d[3] = (unsigned char)( r->sector >> 8 );
+	d[10] = (unsigned char)size; d[11] = (unsigned char)( size >> 8 ); d[12] = (unsigned char)( size >> 16 );
+	d[18] = 101; d[19] = 4; d[20] = 23; d[21] = 12; d[22] = 0; d[23] = 0; d[24] = 0;	/* 2001-04-23 12:00 UTC */
+	d[25] = r->dir ? 2 : 0;
+	d[32] = (unsigned char)nl;
+	if ( r->name )
+		memcpy( d + 33, r->name, nl );
+	*o += len;
+}
+
+/* a tiny "zip": its bytes, then an end record */
+static unsigned char *FakePk3( size_t n, unsigned char c )
+{
+	unsigned char *b = malloc( n );
+	memset( b, c, n );
+	memset( b + n - 22, 0, 22 );
+	memcpy( b + n - 22, "PK\x05\x06", 4 );
+	return b;
+}
+
+/* an ISO 9660 image: /SETUP/BASEEF/ with the given .pk3 files (sectors 21 on), and SETUP/README.TXT.
+   raw: 2352-byte MODE1 sectors. */
+static void MakeDisc( const char *path, int raw, const char *const *names, unsigned char *const *data, const size_t *sizes, int n )
+{
+	unsigned char *img = calloc( DISC_SECTORS, 2048 ), *pvd = img + 16 * 2048;
+	discRec self = { NULL, 1, 0, NULL, 0 }, up = { NULL, 1, 18, NULL, 0 };
+	size_t o;
+	int i, next = 21;
+	FILE *f;
+
+	pvd[0] = 1; memcpy( pvd + 1, "CD001", 5 ); pvd[6] = 1;
+	memset( pvd + 40, ' ', 32 ); memcpy( pvd + 40, "TESTDISC", 8 );
+	pvd[80] = DISC_SECTORS;
+	pvd[128] = 0x00; pvd[129] = 0x08; pvd[130] = 0x08; pvd[131] = 0x00;
+	o = 0; self.sector = 18; PutRec( pvd + 156, &o, &self );
+	img[17 * 2048] = 255; memcpy( img + 17 * 2048 + 1, "CD001", 5 );
+	/* root */
+	o = 0; PutRec( img + 18 * 2048, &o, &self ); PutRec( img + 18 * 2048, &o, &up );
+	{ discRec r = { "SETUP", 1, 19, NULL, 0 }; PutRec( img + 18 * 2048, &o, &r ); }
+	/* SETUP */
+	o = 0; self.sector = 19; PutRec( img + 19 * 2048, &o, &self ); PutRec( img + 19 * 2048, &o, &up );
+	{ discRec r = { "BASEEF", 1, 20, NULL, 0 }; PutRec( img + 19 * 2048, &o, &r ); }
+	{ discRec r = { "README.TXT;1", 0, 30, (const unsigned char *)"hi", 2 }; PutRec( img + 19 * 2048, &o, &r ); }
+	/* SETUP/BASEEF */
+	o = 0; self.sector = 20; PutRec( img + 20 * 2048, &o, &self ); PutRec( img + 20 * 2048, &o, &up );
+	for ( i = 0; i < n; i++ ) {
+		discRec r = { names[i], 0, next, data[i], sizes[i] };
+		PutRec( img + 20 * 2048, &o, &r );
+		memcpy( img + (size_t)next * 2048, data[i], sizes[i] );
+		next += (int)( ( sizes[i] + 2047 ) / 2048 );
+	}
+	f = lc_fopen( path, "wb" );
+	if ( f ) {
+		if ( !raw )
+			fwrite( img, 2048, DISC_SECTORS, f );
+		else
+			for ( i = 0; i < DISC_SECTORS; i++ ) {
+				unsigned char s[2352];
+				memset( s, 0, sizeof( s ) );
+				memset( s + 1, 0xff, 10 );
+				s[15] = 1;
+				memcpy( s + 16, img + (size_t)i * 2048, 2048 );
+				memset( s + 16 + 2048, 0xee, 2352 - 16 - 2048 );	/* EDC/ECC: must not end up in the files */
+				fwrite( s, 1, sizeof( s ), f );
+			}
+		fclose( f );
+	}
+	free( img );
+}
+
+static int SameAs( const char *path, const unsigned char *data, size_t n )
+{
+	FILE *f = lc_fopen( path, "rb" );
+	unsigned char *b = malloc( n + 1 );
+	int same = f && fread( b, 1, n + 1, f ) == n && !memcmp( b, data, n );
+	if ( f )
+		fclose( f );
+	free( b );
+	return same;
+}
+
+static void TestDiscImage( void )
+{
+	const char *root = tu_dir( "data-disc" );
+	const char *home = tu_dir( "data-disc-home" );
+	const char *names[2] = { "PAK0.PK3;1", "PAK1.PK3;1" };
+	unsigned char *data[2] = { FakePk3( 3000, 'a' ), FakePk3( 700, 'b' ) };
+	size_t sizes[2] = { 3000, 700 };
+	char err[512] = "", title[128], text[1024], found[LC_MAX_PATH];
+	volatile unsigned long long progress = 0;
+	volatile signed char cancel = 0;
+	lc_copyjob *j;
+	int present = -1;
+
+	MakeDisc( tu_path( root, "game.iso" ), 0, names, data, sizes, 2 );
+	MakeDisc( tu_path( root, "game.bin" ), 1, names, data, sizes, 2 );
+	tu_text( root, "game.cue", "FILE \"game.bin\" BINARY\r\n  TRACK 01 MODE1/2352\r\n    INDEX 01 00:00:00\r\n" );
+	MakeDisc( tu_path( root, "expansion.iso" ), 0, names + 1, data + 1, sizes + 1, 1 );
+	tu_text( root, "junk.iso", "not a disc" );
+
+	CHECK( lc_is_disc_image( tu_path( root, "game.iso" ) ) );
+	CHECK( lc_is_disc_image( tu_path( root, "GAME.BIN" ) ) );
+	CHECK( lc_is_installer( tu_path( root, "game.cue" ) ) );
+	CHECK( !lc_is_disc_image( tu_path( root, "setup.exe" ) ) );
+	tu_dir( "data-disc/folder.iso" );
+	CHECK( !lc_is_disc_image( tu_path( root, "folder.iso" ) ) );
+
+	/* the chooser: everything on the game's disc */
+	j = lc_plan_unpack_installer( tu_path( root, "game.iso" ), 0, home, NULL, &present, err, sizeof( err ) );
+	CHECK( j != NULL );
+	CHECK_STR( err, "" );
+	CHECK( lc_copyjob_count( j ) == 2 && lc_copyjob_total( j ) == 3700 && lc_copyjob_is_unpack( j ) );
+	lc_copyjob_title( j, title, sizeof( title ) );
+	CHECK_STR( title, "Copying from the disc image" );
+	lc_copyjob_failure_texts( j, "Can't read pak0.pk3", title, sizeof( title ), text, sizeof( text ) );
+	CHECK_STR( title, "Copying from the disc image failed" );
+	CHECK( lc_copyjob_run( j, &progress, &cancel, err, sizeof( err ) ) == 1 );
+	CHECK( progress == 3700 );
+	lc_copyjob_free( j );
+	CHECK( SameAs( tu_path( home, "pak0.pk3" ), data[0], sizes[0] ) );		/* lower-cased like an install */
+	CHECK( SameAs( tu_path( home, "pak1.pk3" ), data[1], sizes[1] ) );
+	CHECK( lc_file_mtime( tu_path( home, "pak0.pk3" ) ) == 988027200 );		/* the disc's date */
+	CHECK( !lc_child_ci( home, "pak0.pk3.part", found, sizeof( found ) ) );
+	CHECK( !lc_child_ci( home, "readme.txt", found, sizeof( found ) ) );
+
+	/* Add Game Files: all there already */
+	CHECK( lc_plan_unpack_installer( tu_path( root, "game.iso" ), 1, home, NULL, &present, err, sizeof( err ) ) == NULL );
+	CHECK_STR( err, "" );
+	CHECK( present == 2 );
+	lc_nothing_to_add_alert( 2, present, title, sizeof( title ), text, sizeof( text ) );
+	CHECK_STR( text, "The game already has all of this disc's .pk3 files." );
+
+	/* a raw .bin through its .cue: the same bytes (no sector headers or ECC) */
+	home = tu_dir( "data-disc-home2" );
+	j = lc_plan_unpack_installer( tu_path( root, "game.cue" ), 0, home, NULL, &present, err, sizeof( err ) );
+	CHECK( j != NULL && lc_copyjob_count( j ) == 2 );
+	if ( j ) {
+		progress = 0;
+		CHECK( lc_copyjob_run( j, &progress, &cancel, err, sizeof( err ) ) == 1 );
+		lc_copyjob_free( j );
+	}
+	CHECK( SameAs( tu_path( home, "pak0.pk3" ), data[0], sizes[0] ) );
+	CHECK( SameAs( tu_path( home, "pak1.pk3" ), data[1], sizes[1] ) );
+
+	/* the Expansion Pack's disc: refused by the chooser, added by Add Game Files */
+	home = tu_dir( "data-disc-home3" );
+	CHECK( lc_plan_unpack_installer( tu_path( root, "expansion.iso" ), 0, home, NULL, &present, err, sizeof( err ) ) == NULL );
+	CHECK( strncmp( err, "it has no pak0.pk3", 18 ) == 0 );
+	j = lc_plan_unpack_installer( tu_path( root, "expansion.iso" ), 1, home, NULL, &present, err, sizeof( err ) );
+	CHECK( j != NULL && lc_copyjob_count( j ) == 1 );
+	lc_copyjob_free( j );
+
+	/* not a disc, missing, damaged */
+	CHECK( lc_plan_unpack_installer( tu_path( root, "junk.iso" ), 1, home, NULL, &present, err, sizeof( err ) ) == NULL );
+	CHECK_STR( err, "it isn't a CD image this app can read (no ISO 9660 file system)" );
+	lc_installer_error_alert( tu_path( root, "junk.iso" ), err, title, sizeof( title ), text, sizeof( text ) );
+	CHECK_STR( title, "This disc image can't be used" );
+	CHECK( strncmp( text, "junk.iso\n\nThis app can't use it: it isn't a CD image", 52 ) == 0 );
+	CHECK( lc_plan_unpack_installer( tu_path( root, "missing.iso" ), 1, home, NULL, &present, err, sizeof( err ) ) == NULL );
+	CHECK( strncmp( err, "it can't be read", 16 ) == 0 );
+	data[0][3000 - 22] = 'X';		/* no zip end record: refused before copying */
+	MakeDisc( tu_path( root, "bad.iso" ), 0, names, data, sizes, 2 );
+	CHECK( lc_plan_unpack_installer( tu_path( root, "bad.iso" ), 0, home, NULL, &present, err, sizeof( err ) ) == NULL );
+	CHECK_STR( err, "pak0.pk3 on it can't be read (the image is incomplete or damaged)" );
+	/* cut short */
+	{
+		FILE *f = lc_fopen( tu_path( root, "short.iso" ), "wb" ), *g = lc_fopen( tu_path( root, "game.iso" ), "rb" );
+		char b[22 * 2048];
+		size_t got = g ? fread( b, 1, sizeof( b ), g ) : 0;
+		if ( f ) { fwrite( b, 1, got, f ); fclose( f ); }
+		if ( g ) fclose( g );
+	}
+	CHECK( lc_plan_unpack_installer( tu_path( root, "short.iso" ), 0, home, NULL, &present, err, sizeof( err ) ) == NULL );
+	CHECK( err[0] != 0 );
+	free( data[0] );
+	free( data[1] );
+}
+
 int main( void )
 {
 	TestZip( );
@@ -527,5 +719,6 @@ int main( void )
 	TestCopyJob( );
 	TestAddFiles( );
 	TestInstaller( );
+	TestDiscImage( );
 	return TEST_DONE( );
 }

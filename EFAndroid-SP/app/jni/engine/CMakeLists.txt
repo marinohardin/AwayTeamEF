@@ -201,7 +201,8 @@ if(APPLE)
     ${EF}/sys/con_log.c ${EF}/sys/con_tty.c ${EF}/sys/sys_autoupdater.c
     ${EF}/sys/sys_unix.c ${EF}/sys/sys_main.c ${EF}/sys/sys_osx.m
     ${EF}/sys/sys_osx_data.m ${EF}/sys/sys_osx_launcher.m ${EF}/sys/sys_osx_server.m
-    ${EF}/launcher/lc_controls.c)	# the launcher's key binding sets (the rest of launcher/ is Windows/Linux)
+    ${EF}/launcher/lc_controls.c	# the launcher's key binding sets (the rest of launcher/ is Windows/Linux)
+    ${EF}/sys/sys_iso.c)		# the game files from a CD image (.iso/.bin/.cue)
   if(EF_GOG)
     list(APPEND SYS_SRC ${EF}/sys/sys_osx_gog.c)
   endif()

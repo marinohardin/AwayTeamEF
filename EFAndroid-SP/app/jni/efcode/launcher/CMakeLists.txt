@@ -22,6 +22,7 @@ set(LC_SOURCES
   ${CMAKE_CURRENT_LIST_DIR}/lc_update.c
   ${CMAKE_CURRENT_LIST_DIR}/lc_launch.c
   ${CMAKE_CURRENT_LIST_DIR}/lc_data.c
+  ${CMAKE_CURRENT_LIST_DIR}/../sys/sys_iso.c	# CD images (.iso/.bin/.cue): plain C, no dependencies
   # core-b: servers, queries, hosting, router port mapping, co-op
   ${CMAKE_CURRENT_LIST_DIR}/lc_server.c
   ${CMAKE_CURRENT_LIST_DIR}/lc_net.c
