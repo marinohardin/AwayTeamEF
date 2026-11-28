@@ -734,6 +734,17 @@ int lc_tag_bots( const lc_player *p, int n, int humans )
 	return humans < 0 || pinged == humans;
 }
 
+int lc_status_humans( const lc_server_status *st )
+{
+	int i, pinged = 0;
+	if ( st->humans >= 0 )
+		return st->humans;
+	for ( i = 0; i < st->playerCount; i++ )
+		if ( st->players[i].ping > 0 )
+			pinged++;
+	return pinged;
+}
+
 /* ---- efservers (7.8) ------------------------------------------------------------------------------ */
 
 static void pct_encode( const char *in, char *out, size_t n )
@@ -1069,8 +1080,15 @@ static void store_status_locked( lc_browser *b, const char *address, const lc_se
 		int r;
 		for ( r = 0; r < s->n; r++ )
 			if ( !strcmp( s->rows[r].info.address, address ) ) {
+				lc_server_info *in = &s->rows[r].info;
 				s->rows[r].isCmod = st->isCmod;
 				lc_strlcpy( s->rows[r].cmodVersion, st->cmodVersion, sizeof( s->rows[r].cmodVersion ) );
+				/* a server without g_humanplayers in its info: count its people from the
+				   players' pings, so it shows a number and Only servers with people can tell */
+				if ( in->humans < 0 || in->humansCounted ) {
+					in->humans = lc_status_humans( st );
+					in->humansCounted = st->humans < 0;
+				}
 			}
 	}
 }
