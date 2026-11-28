@@ -21,6 +21,12 @@ extern "C" {
 
 #define LC_COOP_PORT		29760
 #define LC_COOP_PROTOCOL	8	// = VSP_COOP_PROTOCOL (sys_coop_net.h)
+/* the co-op compatibility version (= VSP_COOP_COMPAT, sys_coop_net.h): what the "version" key of every
+   co-op message carries, and the only version two copies compare. It is the first release whose co-op
+   this build still plays with, not the app's own version, so a patch release that changes nothing co-op
+   depends on still pairs with the releases before it. The app's own version travels as "appVersion",
+   only to be shown. docs/coop-compat.md says when to bump it. */
+#define LC_COOP_COMPAT		"1.5.0"
 
 typedef struct {
 	/* "ok" (a co-op game of this version answered), "mismatch" (answered, other co-op/app version:
@@ -37,8 +43,15 @@ typedef struct {
 	char warning[512];			/* lc_coop_check_paks: the Expansion Pack differs ("" otherwise) */
 } lc_coop_query;
 
-/* the app version this build was compiled with (EF_APP_VERSION): co-op needs host and guest to match */
+/* the app version this build was compiled with (EF_APP_VERSION): shown, never compared */
 const char *lc_coop_app_version( void );
+/* LC_COOP_COMPAT: with LC_COOP_PROTOCOL, what host and guest must share to play together */
+const char *lc_coop_compat_version( void );
+/* the version a co-op infostring's sender runs, to show: its "appVersion", or for a copy from before
+   1.5.1 (which sent only that) its "version"; "?" if neither */
+void lc_coop_shown_version( const char *info, char *out, size_t size );
+/* host and guest can play together: the same co-op protocol and compatibility version */
+int lc_coop_compatible( const char *info );
 /* §6.4, blocking (run on a thread) */
 void lc_coop_query_run( const char *address, double timeoutSeconds, lc_coop_query *out );
 /* infostring value; "" if absent */

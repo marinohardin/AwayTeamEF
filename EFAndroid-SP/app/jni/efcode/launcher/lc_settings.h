@@ -12,6 +12,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 #define LC_SETTINGS_H
 
 #include "lc_common.h"
+#include "lc_controls.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -60,7 +61,8 @@ typedef struct {
 	int brightness;				/* preset index, or LC_BRIGHTNESS_CUSTOM */
 } lc_gfx;
 
-/* load the mode's values (fallback to the other mode's file, then defaults) as §2.5;
+/* load the values from the newer of the two mode configs (a tie: this mode's; an empty
+   one: the other's; neither: defaults) as §2.5;
    *fromConfig = 1 when a config file supplied them. screenW/H = the usable screen size
    (logical pixels, 0 = unknown): when the config gives no custom size, the 1920x1080
    default becomes the biggest listed size that fits (a small laptop screen), else 1024x768.
@@ -107,6 +109,14 @@ void lc_first_name( const char *fullName, char *out, size_t size );	/* first wor
 void lc_coop_safe_name( const char *in, char *out, size_t size );
 /* name field's initial value: hmconfig's `name`, else first name of the user */
 void lc_player_name_from_config( const lc_cfg *hm, const char *fullUserName, char *out, size_t size );
+
+/* ---- key bindings: the Controls buttons (lc_controls.h) ----------------------------------
+   Rewrites both modes' configs (single player and Holomatch) in <homeBase> only, never a mod
+   folder's. Returns 1 when both were written (or, for the original set, had nothing to remove);
+   else 0 with why in err. */
+int lc_controls_apply( const char *homeBase, lc_controls_set set, char *err, size_t errSize );
+/* 1 when both modes' configs bind exactly the recommended keys */
+int lc_controls_recommended_in_use( const char *homeBase );
 
 #ifdef __cplusplus
 }

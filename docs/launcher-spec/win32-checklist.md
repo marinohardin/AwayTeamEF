@@ -19,7 +19,7 @@ Status: done = implemented as specified; DEV = deviates (reason); TODO = not don
 | 2.11/2.12 footer, Esc/Return, Ctrl+Q, Alt+F4 | done |
 | 3 Play args, loopback wait (1.5 s), join address, co-op password in process | done |
 | 3.9 Start Server, already-running alert, `--host-server` spawn | done |
-| 4.2 chooser | done as a pre-dialog with in-place checkbox + "Choose Folder…" / "Choose GOG Installer…" (the spec's accepted equivalent) |
+| 4.2 chooser | done as a pre-dialog with in-place checkbox + "Choose Folder…" / "Choose Installer or ISO…" (GOG setup or CD image) (the spec's accepted equivalent) |
 | 4.3/4.4 GOG unpack, copy, Add Game Files…, progress panel, alerts | done (alert texts from the core) |
 | 5.x in-game File menu equivalents | not UI: core-a console commands |
 | 6.1 Co-op sheet (shown in EF_COOP builds, `lc_coop_ui_enabled()`), NAT, Check (with the Mac's pak compare and Join Anyway), Host, Character, Connect | done (cross-built; not verified end to end against a second PC) |

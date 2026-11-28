@@ -18,6 +18,8 @@ menu does). It offers:
     in points, Retina resolution, anti-aliasing, texture detail, V-Sync, and
     a brightness preset (Standard, or cMod's Plain, Full Contrast, Extra Bright
     and Full Bright, from cMod by Noah Metzger; see "Brightness" below);
+  - the key bindings: the recommended ones or the game's original ones, in
+    both modes' configs (see "Key bindings" below, and launcher/lc_controls.c);
   - the Holomatch player name;
   - cMod's game modules by Noah Metzger (Contents/Resources/cmod): use them
     (cl_cmodModules), see qcommon/files.c, and their HUD… sheet: widescreen
@@ -62,6 +64,8 @@ Test hooks (environment variables):
                                 "already running" question
   VOYAGERSP_TEST_LAUNCHER_HUD=<file.png>      render the HUD… sheet (cMod's HUD settings)
                                 and quit
+  VOYAGERSP_TEST_LAUNCHER_CONTROLS=recommended|original  press that Controls button and
+                                answer its question yes (before a snapshot)
   VOYAGERSP_TEST_LAUNCHER_ABOUT=<file.png>    show it, choose About from the app
                                 menu, render the panel, close it and quit
   VOYAGERSP_TEST_UPDATE=<version>|none  the latest release, instead of asking
@@ -100,6 +104,7 @@ Test hooks (environment variables):
 #include "sys_osx_launcher.h"
 #include "sys_osx_coop.h"
 #include "launcher_titles.h"
+#include "../launcher/lc_controls.h"
 
 #define KEY_LAUNCHERMODE	@"LauncherMode"
 #define KEY_UPDATECHECK		@"CheckForUpdates"		// NO: never ask GitHub on its own
@@ -196,6 +201,77 @@ BOOL VSP_TestEnvIs( const char *name, const char *value )
 static NSString *ConfigPath( BOOL holomatch )
 {
 	return [VSP_HomeBase() stringByAppendingPathComponent: holomatch ? @"hmconfig.cfg" : @"efspconfig.cfg"];
+}
+
+/* ------------------------------------------------------------------------
+   Key bindings
+
+   The Controls group's buttons rewrite the bindings of both modes' configs
+   in baseEF (launcher/lc_controls.c): the recommended set, or none so that
+   the game's default.cfg applies (the original ones). A mod folder's own
+   config (the engine saves one there after a server's fs_game) is left alone. The engine runs default.cfg and
+   then the config, and writes every binding back to the config when it quits.
+   ------------------------------------------------------------------------ */
+
+// A config's bytes as a C string (nil: no file).
+static NSMutableData *ConfigBytes( NSString *path )
+{
+	NSMutableData *d = [NSMutableData dataWithContentsOfFile: path];
+	char nul = 0;
+
+	[d appendBytes: &nul length: 1];
+	return d;
+}
+
+static NSDate *ModDate( NSString *path );
+
+// One config with the set's bindings; NO (and why) if it couldn't be written. A missing
+// file is left alone for the original set (default.cfg's bindings already).
+static BOOL ApplyControlsTo( NSString *path, int holomatch, lc_controls_set set, NSString **why )
+{
+	NSMutableData *text = ConfigBytes( path );
+	NSError *error = nil;
+	char *out;
+	BOOL ok;
+
+	if( !text && set == LC_CONTROLS_ORIGINAL )
+		return YES;
+	if( !( out = lc_controls_rewrite( text ? [text bytes] : NULL, holomatch, set ) ) )
+		return NO;
+	NSDate *date = text ? ModDate( path ) : nil;
+	ok = [[NSData dataWithBytes: out length: strlen( out )] writeToFile: path options: NSDataWritingAtomic error: &error];
+	free( out );
+	// bindings aren't graphics: keep the file's date, which LoadGraphics uses to pick the
+	// newer of the two configs (the mode that ran last)
+	if( ok && date )
+		[[NSFileManager defaultManager] setAttributes: @{ NSFileModificationDate: date } ofItemAtPath: path error: NULL];
+	if( !ok && why )
+		*why = [NSString stringWithFormat: @"%@ couldn't be saved: %@", [path lastPathComponent], [error localizedDescription]];
+	return ok;
+}
+
+// Both modes' configs in baseEF with the set's bindings (never a mod folder's).
+// NO (and why) if one couldn't be written.
+static BOOL ApplyControls( lc_controls_set set, NSString **why )
+{
+	[[NSFileManager defaultManager] createDirectoryAtPath: VSP_HomeBase() withIntermediateDirectories: YES attributes: nil error: NULL];
+	for( int holomatch = 0; holomatch <= 1; holomatch++ )
+		if( !ApplyControlsTo( ConfigPath( holomatch ), holomatch, set, why ) )
+			return NO;
+	LLog( @"Launcher: %@ key bindings in both configs", set == LC_CONTROLS_RECOMMENDED ? @"recommended" : @"original" );
+	return YES;
+}
+
+// Both modes' configs bind exactly the recommended keys.
+static BOOL RecommendedControlsInUse( void )
+{
+	for( int holomatch = 0; holomatch <= 1; holomatch++ )
+	{
+		NSMutableData *text = ConfigBytes( ConfigPath( holomatch ) );
+		if( !text || !lc_controls_is_recommended( [text bytes], holomatch ) )
+			return NO;
+	}
+	return YES;
 }
 
 // The "seta name value" lines of a config file, names lowercased.
@@ -332,14 +408,31 @@ static NSArray<NSString *> *BrightnessArgs( int b, NSUInteger room )
 	return @[ @"+exec", VSP_BRIGHTNESS_CFG ];
 }
 
-// Graphics from the config last used (or the other mode's, or defaults).
+static NSDate *ModDate( NSString *path )
+{
+	return [[[NSFileManager defaultManager] attributesOfItemAtPath: path error: NULL] fileModificationDate];
+}
+
+// Graphics from the newer of the two mode configs (a tie: this mode's; an empty one: the
+// other's; neither: defaults). SP and Holomatch keep separate configs, but the launcher shows
+// one set of graphics: whichever mode ran last, or had them changed in its Video menu, wrote
+// what the player chose most recently. Play passes them on, so the other file catches up.
 static gfx_t LoadGraphics( BOOL holomatch, BOOL *fromConfig )
 {
-	NSDictionary *cfg = ReadConfig( ConfigPath( holomatch ) );
+	NSString *path = ConfigPath( holomatch ), *other = ConfigPath( !holomatch );
+	NSDate *pathDate = ModDate( path ), *otherDate = ModDate( other );
+	NSDictionary *cfg;
 	gfx_t g;
 
+	if( otherDate && ( !pathDate || [otherDate compare: pathDate] == NSOrderedDescending ) )
+	{
+		NSString *t = path;
+		path = other;
+		other = t;
+	}
+	cfg = ReadConfig( path );
 	if( ![cfg count] )
-		cfg = ReadConfig( ConfigPath( !holomatch ) );
+		cfg = ReadConfig( other );
 	*fromConfig = [cfg count] > 0;
 	g.brightness = MatchBrightness( cfg );	// first run: Standard
 
@@ -518,6 +611,7 @@ NSView *VSP_Group( NSString *caption, NSView *content )
 - (void)installUpdateMenu;
 - (void)removeUpdateMenu;
 - (void)checkForUpdates: (id)sender;
+- (void)applyControls: (lc_controls_set)set ask: (BOOL)ask;
 @end
 
 @implementation VSPModeCard
@@ -689,6 +783,7 @@ static NSStackView *HStackOf( NSArray *views )
 	NSTextField *brightnessHint;
 	NSButton *retina, *vsync;
 	NSTextField *nameLabel, *name, *nameHint, *mastersSummary;
+	NSTextField *controlsHint;
 	NSButton *loopbackFix;
 	NSButton *cmodModules;			// cl_cmodModules (cMod's game modules, by Noah Metzger)
 	NSTextField *cmodLabel;
@@ -796,7 +891,7 @@ static NSStackView *HStackOf( NSArray *views )
 	NSStackView *root, *header, *headerText, *cardRow, *folderRow, *folderText, *footer, *middle;
 	NSScrollView *scroll;
 	NSView *document;
-	NSGridView *grid, *nameGrid, *serverGrid;
+	NSGridView *grid, *nameGrid, *serverGrid, *controlsGrid;
 	NSButton *config, *browse;
 	NSImageView *appIcon, *stvTitle, *efTitle;
 	NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey: @"CFBundleShortVersionString"];
@@ -951,6 +1046,29 @@ static NSStackView *HStackOf( NSArray *views )
 		[[serverGrid rowAtIndex: [names count]] setTopPadding: -2];
 	}
 
+	// key bindings, for both modes
+	{
+		NSButton *recommended = [NSButton buttonWithTitle: @"Use Recommended" target: self action: @selector(useRecommendedControls:)];
+		NSButton *original = [NSButton buttonWithTitle: @"Restore Original" target: self action: @selector(restoreOriginalControls:)];
+		NSStackView *buttons = HStackOf( @[ recommended, original ] );
+
+		[recommended setToolTip: @"WASD to move, the mouse to aim and fire, E to use, Space/X to jump, "
+			@"F5 quicksave, etc., in single player and Holomatch"];
+		[original setToolTip: @"The key bindings the game came with, in single player and Holomatch"];
+		[buttons setSpacing: 8];
+		controlsHint = VSP_WrapLabel( @"", [NSFont systemFontOfSize: 11], [NSColor secondaryLabelColor] );
+		[controlsHint setPreferredMaxLayoutWidth: 400];
+		controlsGrid = [NSGridView gridViewWithViews: @[
+			@[ VSP_Label( @"Key bindings:", [NSFont systemFontOfSize: 13], nil ), buttons ],
+			@[ [NSGridCell emptyContentView], controlsHint ] ]];
+		[controlsGrid setRowSpacing: 4];
+		[controlsGrid setColumnSpacing: 10];
+		[[controlsGrid columnAtIndex: 0] setXPlacement: NSGridCellPlacementTrailing];
+		[[controlsGrid columnAtIndex: 0] setWidth: 112];
+		[controlsGrid setRowAlignment: NSGridRowAlignmentFirstBaseline];
+		[self showControls];
+	}
+
 	// Holomatch player name
 	nameLabel = VSP_Label( @"Player name:", [NSFont systemFontOfSize: 13], nil );
 	name = [NSTextField textFieldWithString: @""];
@@ -1080,7 +1198,7 @@ static NSStackView *HStackOf( NSArray *views )
 	// them scroll when the window is shorter than all of them (a 13" MacBook Air's screen). The
 	// window can be made taller up to all of them, and shorter down to a few rows of them.
 	middle = [NSStackView stackViewWithViews: @[ graphicsGroup, serverGroup,
-		VSP_Group( @"Holomatch", nameGrid ), VSP_Group( @"Game Files", folderRow ) ]];
+		VSP_Group( @"Controls", controlsGrid ), VSP_Group( @"Holomatch", nameGrid ), VSP_Group( @"Game Files", folderRow ) ]];
 	[middle setOrientation: NSUserInterfaceLayoutOrientationVertical];
 	[middle setAlignment: NSLayoutAttributeLeading];
 	[middle setSpacing: 16];
@@ -1408,7 +1526,7 @@ static NSStackView *HStackOf( NSArray *views )
 				[patch componentsJoinedByString: @" and "]]];
 			[status setToolTip: [NSString stringWithFormat: @"These game files are from the original CD (version 1.0). "
 				@"The game also needs %@ from the 1.1 and 1.2 patches: copy them from a patched installation "
-				@"(GOG, Steam, or a PC with patch 1.2) with Add Game Files….", [patch componentsJoinedByString: @" and "]]];
+				@"(GOG, Steam, or a PC with patch 1.2) or the Expansion Pack's CD or its image with Add Game Files….", [patch componentsJoinedByString: @" and "]]];
 			symbol = @"exclamationmark.triangle.fill";
 			color = [NSColor systemOrangeColor];
 			LLog( @"Launcher: patch files missing (%@) in \"%@\"", [patch componentsJoinedByString: @", "], dataFolder );
@@ -1424,7 +1542,7 @@ static NSStackView *HStackOf( NSArray *views )
 		else
 		{
 			shown = @"No game files yet";
-			[status setStringValue: @"Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe."];
+			[status setStringValue: @"Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso."];
 			symbol = @"exclamationmark.triangle.fill";
 			color = [NSColor systemOrangeColor];
 		}
@@ -1597,6 +1715,66 @@ static NSStackView *HStackOf( NSArray *views )
 - (void)cmodChanged: (id)sender
 {
 	[hudButton setEnabled: [cmodModules isEnabled] && [cmodModules state] == NSControlStateValueOn];
+}
+
+// The Controls group's line under its buttons: which bindings are in use.
+- (void)showControls
+{
+	[controlsHint setStringValue: RecommendedControlsInUse() ?
+		@"The recommended key bindings are in use, in single player and Holomatch. "
+		@"Change them in the game's Controls menu." :
+		@"Sets the keys of single player and Holomatch alike. Your other settings stay as they are."];
+}
+
+- (void)useRecommendedControls: (id)sender		{ [self applyControls: LC_CONTROLS_RECOMMENDED ask: YES]; }
+- (void)restoreOriginalControls: (id)sender		{ [self applyControls: LC_CONTROLS_ORIGINAL ask: YES]; }
+
+- (void)applyControls: (lc_controls_set)set ask: (BOOL)ask
+{
+	void ( ^apply )( void ) = ^{
+		NSString *why = nil;
+
+		if( !ApplyControls( set, &why ) )
+		{
+			NSAlert *e = [[NSAlert alloc] init];
+			[e setMessageText: @"The key bindings couldn't be changed."];
+			[e setInformativeText: why ? why : @"Out of memory."];
+			if( VSP_TestEnvIs( "VOYAGERSP_TEST_NODIALOG", "1" ) || !ask )
+				LLog( @"Launcher: %@", [e informativeText] );
+			else
+				[e beginSheetModalForWindow: self->window completionHandler: nil];
+		}
+		[self showControls];
+	};
+	NSAlert *a;
+
+	if( !ask )
+	{
+		apply();
+		return;
+	}
+	a = [[NSAlert alloc] init];
+	if( set == LC_CONTROLS_RECOMMENDED )
+	{
+		[a setMessageText: @"Use the recommended key bindings?"];
+		[a setInformativeText: @"WASD to move, the mouse to aim and fire, E to use, Space/X to jump, "
+			@"F5 quicksave, etc. They replace your key bindings in single player and Holomatch; "
+			@"your other settings stay as they are."];
+		[a addButtonWithTitle: @"Use Recommended"];
+	}
+	else
+	{
+		[a setMessageText: @"Restore the game's original key bindings?"];
+		[a setInformativeText: @"The keys the game came with replace your key bindings in single player and "
+			@"Holomatch; your other settings stay as they are."];
+		[a addButtonWithTitle: @"Restore Original"];
+	}
+	[a addButtonWithTitle: @"Cancel"];
+	[[a buttons][1] setKeyEquivalent: @"\033"];
+	[a beginSheetModalForWindow: window completionHandler: ^( NSModalResponse r ) {
+		if( r == NSAlertFirstButtonReturn )
+			apply();
+	}];
 }
 
 // The HUD… sheet: cMod's HUD settings (from cMod by Noah Metzger). They only
@@ -2437,6 +2615,9 @@ qboolean Sys_MacLauncher( int argc, char **argv, char *commandLine, int size )
 			[l selectMode: MODE_HOLOMATCH];
 			setenv( "VOYAGERSP_TEST_LAUNCHER_PLAY", "1", 1 );
 		}
+		if( getenv( "VOYAGERSP_TEST_LAUNCHER_CONTROLS" ) )
+			[l applyControls: VSP_TestEnvIs( "VOYAGERSP_TEST_LAUNCHER_CONTROLS", "original" ) ?
+				LC_CONTROLS_ORIGINAL : LC_CONTROLS_RECOMMENDED ask: NO];
 		if( getenv( "VOYAGERSP_TEST_LAUNCHER_HUD" ) )
 		{
 			[l snapshotHud: getenv( "VOYAGERSP_TEST_LAUNCHER_HUD" )];

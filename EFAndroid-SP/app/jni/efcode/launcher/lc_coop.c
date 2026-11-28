@@ -30,6 +30,29 @@ const char *lc_coop_app_version( void )
 	return EF_APP_VERSION;
 }
 
+const char *lc_coop_compat_version( void )
+{
+	return LC_COOP_COMPAT;
+}
+
+void lc_coop_shown_version( const char *info, char *out, size_t size )
+{
+	lc_coop_info_value( info, "appVersion", out, size );
+	if ( !out[0] )
+		lc_coop_info_value( info, "version", out, size );
+	if ( !out[0] )
+		lc_strlcpy( out, "?", size );
+}
+
+int lc_coop_compatible( const char *info )
+{
+	char version[64], protocol[16];
+
+	lc_coop_info_value( info, "version", version, sizeof( version ) );
+	lc_coop_info_value( info, "coopProtocol", protocol, sizeof( protocol ) );
+	return protocol[0] && atoi( protocol ) == LC_COOP_PROTOCOL && !strcmp( version, LC_COOP_COMPAT );
+}
+
 /* a name the game can show and the command line can carry (LDC 6.2 CoopSafeName, without the
    transliteration: ASCII only, no quotes, backslash, semicolon or percent) */
 static void safe_name( const char *in, char *out, size_t size )
@@ -161,7 +184,7 @@ void lc_coop_describe( const char *info, char *out, size_t size )
 	lc_coop_info_value( info, "player", player, sizeof( player ) );
 	lc_coop_info_value( info, "guest", guest, sizeof( guest ) );
 	lc_coop_info_value( info, "needPassword", needPw, sizeof( needPw ) );
-	lc_coop_info_value( info, "version", ver, sizeof( ver ) );
+	lc_coop_shown_version( info, ver, sizeof( ver ) );
 	lc_coop_info_value( info, "coopProtocol", proto, sizeof( proto ) );
 	lc_coop_info_value( info, "players", pl, sizeof( pl ) );
 	lc_coop_info_value( info, "maxPlayers", mp, sizeof( mp ) );
@@ -326,13 +349,12 @@ void lc_coop_query_run( const char *address, double timeout, lc_coop_query *out 
 				continue;
 			lc_sock_close( fd );
 			lc_strlcpy( out->info, info, sizeof( out->info ) );
-			lc_coop_info_value( info, "version", version, sizeof( version ) );
+			lc_coop_shown_version( info, version, sizeof( version ) );
+			fix_utf8( version, sizeof( version ) );
 			lc_coop_info_value( info, "coopProtocol", protocol, sizeof( protocol ) );
-			if ( !version[0] )
-				lc_strlcpy( version, "?", sizeof( version ) );
 			if ( !protocol[0] )
 				lc_strlcpy( protocol, "?", sizeof( protocol ) );
-			if ( atoi( protocol ) != LC_COOP_PROTOCOL || strcmp( version, EF_APP_VERSION ) ) {
+			if ( !lc_coop_compatible( info ) ) {
 				lc_snprintf( msg, sizeof( msg ), "The host runs Elite Force %s (co-op version %s), and this %s runs %s (co-op version %d). Both need the same version to play together.",
 					version, protocol, LC_PLATFORM_NOUN, EF_APP_VERSION, LC_COOP_PROTOCOL );
 				set_result( out, "mismatch", shown, msg );
@@ -447,20 +469,19 @@ int lc_coop_lan_take( lc_coop_lan_result *r, const char *from, int local, const 
 
 void lc_coop_lan_check( lc_coop_lan_result *r, const char *dataFolder )
 {
-	char ours[256], hostPaks[256], text[1024], version[64], protocol[16], guest[8];
+	char ours[256], hostPaks[256], text[1024], version[64], guest[8];
 	int i, havePaks = 0;
 
 	for ( i = 0; i < r->count; i++ ) {
 		lc_coop_lan_game *g = &r->games[i];
 		g->usable = 0;
 		g->reason[0] = 0;
-		lc_coop_info_value( g->info, "version", version, sizeof( version ) );
-		lc_coop_info_value( g->info, "coopProtocol", protocol, sizeof( protocol ) );
+		lc_coop_shown_version( g->info, version, sizeof( version ) );
 		lc_coop_info_value( g->info, "guest", guest, sizeof( guest ) );
 		fix_utf8( version, sizeof( version ) );
-		if ( atoi( protocol ) != LC_COOP_PROTOCOL || strcmp( version, EF_APP_VERSION ) ) {
+		if ( !lc_coop_compatible( g->info ) ) {
 			lc_snprintf( g->reason, sizeof( g->reason ), "Another version: the host runs Elite Force %s, this %s runs %s",
-				version[0] ? version : "?", LC_PLATFORM_NOUN_LC, EF_APP_VERSION );
+				version, LC_PLATFORM_NOUN_LC, EF_APP_VERSION );
 			continue;
 		}
 		if ( !havePaks ) {

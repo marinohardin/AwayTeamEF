@@ -18,7 +18,10 @@ BaseEF folder). By default the .pk3 files (and old saves) are copied into (b);
 the "Use BaseEF files in place rather than copy" checkbox instead remembers
 the chosen folder and uses it as fs_basepath. GOG's Windows installer
 (setup_….exe) can be chosen too: its BaseEF .pk3 files are unpacked into (b)
-(sys_osx_gog.c), and Add Game Files… takes it as well.
+(sys_osx_gog.c), and Add Game Files… takes it as well. So does an image of
+the game's CD or the Expansion Pack's (.iso, a raw .bin or its .cue): the
+.pk3 files of its BaseEF folder are copied out of it (sys_iso.c). The
+chooser refuses an image without pak0.pk3 (the Expansion Pack's).
 
 Normally the launcher (sys_osx_launcher.m) runs first: it shows where the
 game data was found (VSP_FindGameData, the same lookup) and offers the
@@ -76,6 +79,7 @@ Test hooks (environment variables, for automated tests without clicking):
 #include "../qcommon/qcommon.h"
 #include "sys_local.h"
 #include "sys_osx_gog.h"
+#include "sys_iso.h"
 
 #import <Cocoa/Cocoa.h>
 #include <sys/stat.h>
@@ -105,6 +109,7 @@ void SNDDMA_PauseOutput( qboolean pause );	// sdl_snd.c
 #define KEY_GAMEFOLDER	@"GameFolder"
 #define KEY_PANELSIZERESET	@"ChooserPanelSizeReset"
 #define MSG_USE_BASEEF	@"Install the game on a Windows PC instead (from GOG, or the CD with the 1.2 patch), copy its BaseEF folder to this Mac, and choose that folder."
+#define MSG_USE_DISC	@"Choose an image of the Elite Force CD or the Expansion Pack's CD (.iso, or .bin with its .cue), or the folder of the CD or of an installation."
 #define MSG_PAK0_ON_CD	@"pak0.pk3 is missing — minimum CD installs leave it on the CD; copy it from BaseEF on the CD into this BaseEF folder, or choose a full installation."
 
 extern NSString *Sys_MacAppBundlePath( void );
@@ -255,10 +260,22 @@ static void ErrorAlert( NSString *title, NSString *text )
 - (void)dealloc { [installer release]; free( file.parts ); [super dealloc]; }
 @end
 
+// A file to copy out of a CD image, in a copy job's src
+@interface VSPIsoItem : NSObject
+{
+@public
+	isoImage_t disc;		// the image's layout (no file list)
+	isoFile_t file;
+}
+@end
+
+@implementation VSPIsoItem
+@end
+
 @interface VSPCopyJob : NSObject
 {
 @public
-	NSArray *src, *dst;		// parallel arrays of paths (src: or a VSPGogItem)
+	NSArray *src, *dst;		// parallel arrays of paths (src: or a VSPGogItem / VSPIsoItem)
 	unsigned long long total;
 	volatile unsigned long long copied;
 	volatile BOOL cancel, done, failed;
@@ -352,7 +369,10 @@ static void CopyWorker( VSPCopyJob *job )
 
 			[fm createDirectoryAtPath: [to stringByDeletingLastPathComponent]
 				withIntermediateDirectories: YES attributes: nil error: NULL];
-			if( [from isKindOfClass: [VSPGogItem class]] ?
+			if( [from isKindOfClass: [VSPIsoItem class]] ?
+				!ISO_ExtractFile( &((VSPIsoItem *)from)->disc, &((VSPIsoItem *)from)->file, [to fileSystemRepresentation],
+					&job->copied, (volatile signed char *)&job->cancel, err, sizeof( err ) ) :
+				[from isKindOfClass: [VSPGogItem class]] ?
 				!GOG_ExtractFile( [((VSPGogItem *)from)->installer fileSystemRepresentation], &((VSPGogItem *)from)->file,
 					[to fileSystemRepresentation], &job->copied, &job->cancel, err, sizeof( err ) ) :
 				!CopyOneFile( job, [from fileSystemRepresentation], [to fileSystemRepresentation], err, sizeof( err ) ) )
@@ -386,6 +406,7 @@ static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NS
 	NSButton *cancel;
 	NSModalSession session;
 	BOOL ok, unpack = [src count] && [[src objectAtIndex: 0] isKindOfClass: [VSPGogItem class]];
+	BOOL disc = [src count] && [[src objectAtIndex: 0] isKindOfClass: [VSPIsoItem class]];
 
 	job = [[[VSPCopyJob alloc] init] autorelease];
 	job->src = [src copy];
@@ -395,7 +416,7 @@ static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NS
 
 	panel = [[[NSPanel alloc] initWithContentRect: NSMakeRect( 0, 0, 440, 120 )
 		styleMask: NSWindowStyleMaskTitled backing: NSBackingStoreBuffered defer: NO] autorelease];
-	[panel setTitle: unpack ? @"Unpacking the GOG installer" : @"Copying game files"];
+	[panel setTitle: unpack ? @"Unpacking the GOG installer" : disc ? @"Copying from the disc image" : @"Copying game files"];
 	label = [NSTextField labelWithString: [NSString stringWithFormat: unpack ? @"Unpacking game files to %@ …" :
 		@"Copying game files to %@ …", dstBase]];
 	[label setFrame: NSMakeRect( 20, 80, 400, 20 )];
@@ -436,6 +457,10 @@ static BOOL RunCopyJob( NSArray *src, NSArray *dst, unsigned long long total, NS
 			ErrorAlert( @"Unpacking the GOG installer failed",
 				[NSString stringWithFormat: @"%@.\n\nThe partly unpacked files were removed. If the download is "
 					"damaged, download it again from GOG; otherwise: %@", job->error, MSG_USE_BASEEF] );
+		else if( !job->cancel && disc )
+			ErrorAlert( @"Copying from the disc image failed",
+				[NSString stringWithFormat: @"%@.\n\nThe partly copied files were removed. If the image is damaged, "
+					"make it again from the CD, or choose the folder of the CD or of an installation instead.", job->error] );
 		else if( !job->cancel )
 			ErrorAlert( @"Copying the game files failed",
 				[NSString stringWithFormat: @"%@\n\nThe partial copy was removed.", job->error] );
@@ -608,6 +633,91 @@ static int UnpackInstaller( NSString *exe, BOOL onlyNew, NSString *external )
 }
 
 /* ------------------------------------------------------------------------
+   CD images
+   ------------------------------------------------------------------------ */
+
+static BOOL IsDiscImage( NSString *path )
+{
+	return !IsDir( path ) && ISO_IsImageName( [path fileSystemRepresentation] );
+}
+
+// Copy the BaseEF .pk3 files of a CD image (.iso, raw .bin, .cue) into
+// HomeBase(), with a progress panel; with onlyNew, the ones the game doesn't
+// have yet (same name and size). Without onlyNew (the chooser) an image
+// without pak0.pk3 is refused. Says why when it can't. Returns the number of
+// files copied, or -1 on failure.
+static int CopyFromDiscImage( NSString *image, BOOL onlyNew, NSString *external )
+{
+	NSFileManager *fm = [NSFileManager defaultManager];
+	NSString *dstBase = HomeBase();
+	NSMutableArray *src = [NSMutableArray array], *dst = [NSMutableArray array];
+	unsigned long long total = 0, copied = 0, freeBytes;
+	isoImage_t img;
+	char err[512];
+	int present = 0;
+
+	MacLog( @"Disc image: reading \"%@\"", image );
+	if( !ISO_ReadImage( [image fileSystemRepresentation], &img, err, sizeof( err ) ) )
+	{
+		MacLog( @"Disc image: can't be used: %s", err );
+		ErrorAlert( @"This disc image can't be used",
+			[NSString stringWithFormat: @"%@\n\nThis app can't use it: %s.\n\n%@", [image lastPathComponent], err, MSG_USE_DISC] );
+		return -1;
+	}
+	MacLog( @"Disc image: \"%s\" (%u-byte sectors), %d .pk3 files in BaseEF", img.label, img.sectorSize, img.numFiles );
+	if( !onlyNew && !img.hasPak0 )
+	{
+		MacLog( @"Disc image: can't be used: no pak0.pk3" );
+		ISO_Free( &img );
+		ErrorAlert( @"This disc image can't be used",
+			[NSString stringWithFormat: @"%@\n\nIt has no pak0.pk3 (it looks like the Expansion Pack's CD). Choose the game's own CD "
+				"first, then add this one with Add Game Files….", [image lastPathComponent]] );
+		return -1;
+	}
+	for( int i = 0; i < img.numFiles; i++ )
+	{
+		NSString *name = [NSString stringWithUTF8String: img.files[i].name], *have;
+		VSPIsoItem *item;
+
+		if( onlyNew && ( ( have = ChildCI( dstBase, name ) ) || ( external && ( have = ChildCI( external, name ) ) ) ) &&
+			[[fm attributesOfItemAtPath: [have stringByResolvingSymlinksInPath] error: NULL] fileSize] == img.files[i].size )
+		{
+			present++;
+			continue;
+		}
+		item = [[[VSPIsoItem alloc] init] autorelease];
+		item->disc = img;
+		item->disc.files = NULL;
+		item->disc.numFiles = 0;
+		item->file = img.files[i];
+		[src addObject: item];
+		[dst addObject: ChildCI( dstBase, name ) ? ChildCI( dstBase, name ) : [dstBase stringByAppendingPathComponent: name]];
+		total += img.files[i].size;
+	}
+	MacLog( @"Disc image: %d .pk3 files (%@ to copy), %d already present", img.numFiles, FormatBytes( total ), present );
+	ISO_Free( &img );
+	if( ![src count] )
+	{
+		ErrorAlert( @"Nothing to add", @"The game already has all of this disc's .pk3 files." );
+		return 0;
+	}
+	[fm createDirectoryAtPath: dstBase withIntermediateDirectories: YES attributes: nil error: NULL];
+	freeBytes = FreeSpace( dstBase );
+	if( freeBytes && freeBytes < total + 64ull * 1024 * 1024 )
+	{
+		ErrorAlert( @"Not enough disk space",
+			[NSString stringWithFormat: @"Copying the game files needs %@, but only %@ is free.",
+				FormatBytes( total + 64ull * 1024 * 1024 ), FormatBytes( freeBytes )] );
+		return -1;
+	}
+	if( !RunCopyJob( src, dst, total, dstBase, &copied ) )
+		return -1;
+	MacLog( @"Disc image: copied %@ (%@) to \"%@\"", [[dst valueForKey: @"lastPathComponent"] componentsJoinedByString: @", "],
+		FormatBytes( copied ), dstBase );
+	return (int)[src count];
+}
+
+/* ------------------------------------------------------------------------
    Chooser
    ------------------------------------------------------------------------ */
 
@@ -649,8 +759,8 @@ static NSTextField *WrappingLabel( NSString *text, NSFont *font )
 	if( !( self = [super init] ) )
 		return nil;
 	info = WrappingLabel( @"Select the folder where Star Trek: Voyager – Elite Force is installed "
-		"(the one containing BaseEF with pak0.pk3), the BaseEF folder itself, or GOG's Windows installer "
-		"(the setup .exe). "
+		"(the one containing BaseEF with pak0.pk3), the BaseEF folder itself, GOG's Windows installer "
+		"(the setup .exe), or an image of the game's CD (.iso, or .bin/.cue). "
 		"By default the game files are copied into the app's own folder in Application Support, "
 		"so the original folder or CD is no longer needed.",
 		[NSFont systemFontOfSize: [NSFont smallSystemFontSize]] );
@@ -737,17 +847,17 @@ static NSString *ChoiceProblem( NSString *chosen, BOOL inPlace, NSString **outBa
 @implementation VSPChooserDelegate
 - (BOOL)panel: (id)sender shouldEnableURL: (NSURL *)url
 {
-	return IsDir( [url path] ) || IsInstaller( [url path] );
+	return IsDir( [url path] ) || IsInstaller( [url path] ) || IsDiscImage( [url path] );
 }
 
 - (BOOL)panel: (id)sender validateURL: (NSURL *)url error: (NSError **)outError
 {
 	NSString *chosen = [url path], *base, *problem;
 
-	if( IsInstaller( chosen ) )
+	if( IsInstaller( chosen ) || IsDiscImage( chosen ) )
 		return YES;
 	if( !IsDir( chosen ) )
-		problem = @"Choose a folder, or GOG's installer (the setup .exe).";
+		problem = @"Choose a folder, GOG's installer (the setup .exe), or an image of the CD (.iso).";
 	else if( !( problem = ChoiceProblem( chosen, [opts inPlace], &base ) ) )
 		return YES;
 	MacLog( @"Rejected \"%@\" in the open panel: %@", chosen, problem );
@@ -890,7 +1000,7 @@ static BOOL RunChooser( NSString **outBasepath )
 			[op setDelegate: delegate];
 			[op setAllowsMultipleSelection: NO];
 			[op setPrompt: @"Choose"];
-			[op setMessage: @"Choose your Elite Force folder, or GOG's installer"];
+			[op setMessage: @"Choose your game folder, GOG installer or CD image"];
 			[op setAccessoryView: [opts view]];
 			if( [op respondsToSelector: @selector(setAccessoryViewDisclosed:)] )
 				[op setAccessoryViewDisclosed: YES];
@@ -919,6 +1029,20 @@ static BOOL RunChooser( NSString **outBasepath )
 			chosen = [[[op URLs] objectAtIndex: 0] path];
 			inPlace = [opts inPlace];
 			MacLog( @"Chosen game folder \"%@\" (in place: %d)", chosen, inPlace );
+		}
+
+		// a CD image: its BaseEF .pk3 files copied into the homepath
+		if( IsDiscImage( chosen ) )
+		{
+			if( CopyFromDiscImage( chosen, NO, nil ) > 0 && Pak0In( HomeBase() ) )
+			{
+				[[NSUserDefaults standardUserDefaults] removeObjectForKey: KEY_GAMEFOLDER];
+				[[NSUserDefaults standardUserDefaults] synchronize];
+				return YES;
+			}
+			if( testChoice )
+				return NO;
+			continue;
 		}
 
 		// GOG's installer: unpacked into the homepath (never in place)
@@ -1107,7 +1231,7 @@ int VSP_AddGameFiles( void )
 		[op setAllowsMultipleSelection: YES];
 		[op setPrompt: @"Add"];
 		[op setMessage: @"Choose .pk3 files, a folder that contains them (such as BaseEF of the Expansion Pack or its CD), "
-			"or GOG's installer (setup_….exe)"];
+			"an image of the CD (.iso), or GOG's installer (setup_….exe)"];
 		VSP_ActivateApp( );
 		if( [op runModal] != NSModalResponseOK )
 			return 0;
@@ -1118,14 +1242,14 @@ int VSP_AddGameFiles( void )
 	if( ( remembered = [[NSUserDefaults standardUserDefaults] stringForKey: KEY_GAMEFOLDER] ) )
 		external = BaseIn( remembered );
 
-	// GOG's installer: its own way, one at a time
+	// GOG's installer and CD images: their own way, one at a time
 	{
 		int unpacked = 0;
 		BOOL any = NO;
 		for( NSString *path in [[picked copy] autorelease] )
-			if( IsInstaller( path ) )
+			if( IsInstaller( path ) || IsDiscImage( path ) )
 			{
-				int n = UnpackInstaller( path, YES, external );
+				int n = IsDiscImage( path ) ? CopyFromDiscImage( path, YES, external ) : UnpackInstaller( path, YES, external );
 				unpacked += MAX( n, 0 );
 				any = YES;
 				[picked removeObject: path];

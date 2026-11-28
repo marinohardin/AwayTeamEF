@@ -181,6 +181,18 @@ static void test_helpers( void )
 	CHECK( lc_tag_bots( p, 4, 2 ) );
 	CHECK( !lc_tag_bots( p, 4, 3 ) );
 	CHECK( lc_tag_bots( p, 4, -1 ) );
+	{
+		/* people by a status: g_humanplayers when sent, else the players with a ping */
+		lc_server_status st;
+		memset( &st, 0, sizeof( st ) );
+		st.humans = -1;
+		CHECK( lc_status_humans( &st ) == 0 );
+		memcpy( st.players, p, sizeof( p ) );
+		st.playerCount = 4;
+		CHECK( lc_status_humans( &st ) == 2 );		/* B and C; A and D are bots */
+		st.humans = 3;
+		CHECK( lc_status_humans( &st ) == 3 );
+	}
 
 	lc_efservers_info_url( "hm_voy1", out, sizeof( out ) );
 	CHECK_STR( out, "https://efservers.com/pk3.php?preview&popup=1&map=hm%5Fvoy1" );
@@ -552,6 +564,38 @@ static void test_browser( void )
 		for ( i = 0; i < count; i++ )
 			if ( !strcmp( rows[i].info.address, addr[2] ) )
 				CHECK( rows[i].isCmod && !strcmp( rows[i].cmodVersion, "v2.0 beta" ) );
+		CHECK( lc_browser_rows( br, 2, 0, 1, NULL, 0, keys, 4, &rows ) == 2 );
+		/* a server whose info doesn't say how many are people: its status's pings count them */
+		memset( &st, 0, sizeof( st ) );
+		st.humans = -1;
+		st.playerCount = 3;
+		st.players[0].ping = 0; st.players[1].ping = 0; st.players[2].ping = 0;		/* only bots */
+		lc_browser_store_status( br, addr[3], &st );
+		count = lc_browser_rows( br, 2, 0, 0, NULL, 0, keys, 4, &rows );
+		for ( i = 0; i < count; i++ )
+			if ( !strcmp( rows[i].info.address, addr[3] ) )
+				CHECK( rows[i].info.humans == 0 && rows[i].info.humansCounted );
+		CHECK( lc_browser_rows( br, 2, 0, 1, NULL, 0, keys, 4, &rows ) == 2 );		/* still hidden */
+		st.players[1].ping = 80;						/* someone joined */
+		lc_browser_store_status( br, addr[3], &st );
+		count = lc_browser_rows( br, 2, 0, 1, NULL, 0, keys, 4, &rows );
+		CHECK( count == 3 );
+		for ( i = 0; i < count; i++ )
+			if ( !strcmp( rows[i].info.address, addr[3] ) )
+				CHECK( rows[i].info.humans == 1 && rows[i].info.humansCounted );
+		st.humans = 2;									/* a status that does say wins, and isn't "counted" */
+		lc_browser_store_status( br, addr[3], &st );
+		count = lc_browser_rows( br, 2, 0, 0, NULL, 0, keys, 4, &rows );
+		for ( i = 0; i < count; i++ )
+			if ( !strcmp( rows[i].info.address, addr[3] ) )
+				CHECK( rows[i].info.humans == 2 && !rows[i].info.humansCounted );
+		/* a server whose info said 2 keeps 2, whatever the pings */
+		st.humans = -1;
+		lc_browser_store_status( br, addr[0], &st );
+		count = lc_browser_rows( br, 2, 0, 0, NULL, 0, keys, 4, &rows );
+		for ( i = 0; i < count; i++ )
+			if ( !strcmp( rows[i].info.address, addr[0] ) )
+				CHECK( rows[i].info.humans == 2 && !rows[i].info.humansCounted );
 	}
 
 	/* the dead master's own source: no answer */

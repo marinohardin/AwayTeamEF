@@ -3,6 +3,22 @@
 #include "lc_test.h"
 #include "lc_test_util.h"
 #include <stdlib.h>
+#ifdef _WIN32
+#	include <sys/utime.h>
+#else
+#	include <utime.h>
+#endif
+
+static void SetMtime( const char *dir, const char *file, long t )
+{
+	char path[LC_MAX_PATH];
+	struct utimbuf u;
+
+	lc_path_join( path, sizeof( path ), dir, file );
+	u.actime = u.modtime = t;
+	CHECK( utime( path, &u ) == 0 );
+	CHECK( lc_file_mtime( path ) == t );
+}
 
 static void TestCfgParsing( void )
 {
@@ -98,6 +114,36 @@ static void TestGraphics( void )
 	tu_text( base, "hmconfig.cfg", "seta r_fbo \"1\"\nseta r_ext_multisample \"3\"\n" );
 	lc_gfx_load( base, 1, 0, 0, &g, &fromConfig );
 	CHECK( g.msaa == 4 );		/* 3 → 4 */
+
+	/* both configs: the newer one wins whichever mode is remembered (SP had Retina off,
+	   then a Holomatch game turned it on: SP shows it on too) */
+	tu_text( base, "efspconfig.cfg", "seta r_highdpi \"0\"\n" );
+	tu_text( base, "hmconfig.cfg", "seta r_highdpi \"1\"\n" );
+	SetMtime( base, "efspconfig.cfg", 1700000000 );
+	SetMtime( base, "hmconfig.cfg", 1700000100 );
+	lc_gfx_load( base, 0, 0, 0, &g, &fromConfig );
+	CHECK( fromConfig == 1 && g.highdpi == 1 );
+	lc_gfx_load( base, 1, 0, 0, &g, &fromConfig );
+	CHECK( g.highdpi == 1 );
+	/* then turned off in an SP game's Video menu: Holomatch shows it off */
+	SetMtime( base, "efspconfig.cfg", 1700000200 );
+	lc_gfx_load( base, 1, 0, 0, &g, &fromConfig );
+	CHECK( g.highdpi == 0 );
+	lc_gfx_load( base, 0, 0, 0, &g, &fromConfig );
+	CHECK( g.highdpi == 0 );
+	/* a tie: the remembered mode's */
+	SetMtime( base, "hmconfig.cfg", 1700000200 );
+	lc_gfx_load( base, 1, 0, 0, &g, &fromConfig );
+	CHECK( g.highdpi == 1 );
+	lc_gfx_load( base, 0, 0, 0, &g, &fromConfig );
+	CHECK( g.highdpi == 0 );
+	/* the newer one empty: the other's */
+	tu_text( base, "hmconfig.cfg", "// nothing\n" );
+	SetMtime( base, "hmconfig.cfg", 1700000300 );
+	lc_gfx_load( base, 1, 0, 0, &g, &fromConfig );
+	CHECK( fromConfig == 1 && g.highdpi == 0 );
+	tu_text( base, "hmconfig.cfg", "seta r_fbo \"1\"\nseta r_ext_multisample \"3\"\n" );
+	SetMtime( base, "hmconfig.cfg", 1700000300 );
 
 	/* presets */
 	lc_gfx_apply_preset( &g, LC_PRESET_PERFORMANCE );

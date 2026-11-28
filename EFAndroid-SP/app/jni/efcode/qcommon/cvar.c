@@ -307,7 +307,7 @@ If the variable already exists, the value will not be set unless CVAR_ROM
 The flags will be or'ed in if the variable exists.
 ============
 */
-cvar_t *Cvar_Get( const char *var_name, const char *var_value, int flags ) {
+static cvar_t *Cvar_GetInternal( const char *var_name, const char *var_value, int flags ) {
 	cvar_t	*var;
 	long	hash;
 	int	index;
@@ -463,6 +463,96 @@ cvar_t *Cvar_Get( const char *var_name, const char *var_value, int flags ) {
 	hashTable[hash] = var;
 
 	return var;
+}
+
+/*
+============
+Pending values (cfg_overlay.h)
+
+In a mod folder, the main config's values for cvars nobody has registered yet:
+the engine registering one takes the main config's value, a game module
+registering one keeps the mod's (its own setting). A +set on the command line
+drops one: the launcher's choice wins, as it does over any config.
+============
+*/
+typedef struct cvarPending_s {
+	struct cvarPending_s	*next;
+	char					*name;
+	char					*value;
+} cvarPending_t;
+
+static cvarPending_t *cvar_pending;
+
+static cvarPending_t **Cvar_FindPending( const char *name ) {
+	cvarPending_t **p;
+
+	for ( p = &cvar_pending; *p; p = &(*p)->next ) {
+		if ( !Q_stricmp( (*p)->name, name ) )
+			return p;
+	}
+	return NULL;
+}
+
+void Cvar_DropPending( const char *name ) {
+	cvarPending_t **p = Cvar_FindPending( name ), *d;
+
+	if ( !p )
+		return;
+	d = *p;
+	*p = d->next;
+	Z_Free( d->name );
+	Z_Free( d->value );
+	Z_Free( d );
+}
+
+void Cvar_ClearPending( void ) {
+	while ( cvar_pending )
+		Cvar_DropPending( cvar_pending->name );
+}
+
+void Cvar_SetPending( const char *name, const char *value ) {
+	cvarPending_t *p;
+
+	Cvar_DropPending( name );
+	p = Z_Malloc( sizeof( *p ) );
+	p->name = CopyString( name );
+	p->value = CopyString( value );
+	p->next = cvar_pending;
+	cvar_pending = p;
+}
+
+cvar_t *Cvar_Get( const char *var_name, const char *var_value, int flags ) {
+	cvar_t *var = Cvar_GetInternal( var_name, var_value, flags );
+	cvarPending_t **p;
+
+	if ( !cvar_pending || !var || ( var->flags & CVAR_USER_CREATED ) )
+		return var;		// only a set so far: not registered
+	p = Cvar_FindPending( var->name );
+	if ( !p )
+		return var;
+	if ( !( var->flags & ( CVAR_VM_CREATED | CVAR_ROM | CVAR_INIT ) ) ) {
+		char *value = CopyString( (*p)->value );
+
+		Cvar_DropPending( var->name );
+		Cvar_Set2( var->name, value, qtrue );	// being registered: as a latched value would be
+		Z_Free( value );
+	} else {
+		Cvar_DropPending( var->name );		// a game module's own setting: the mod's value stays
+	}
+	return var;
+}
+
+// Archived cvars the engine registered (not a game module, not only set by a config)
+void Cvar_ForEachEngineArchived( void ( *fn )( const char *name, const char *value, void *ctx ), void *ctx ) {
+	cvar_t *var;
+
+	for ( var = cvar_vars; var; var = var->next ) {
+		if ( !var->name || !Q_stricmp( var->name, "cl_cdkey" ) )
+			continue;
+		if ( !( var->flags & CVAR_ARCHIVE ) || ( var->flags & ( CVAR_VM_CREATED | CVAR_USER_CREATED ) ) )
+			continue;
+		fn( var->name, var->latchedString ? var->latchedString : var->string, ctx );
+	}
 }
 
 /*

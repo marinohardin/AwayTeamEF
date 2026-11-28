@@ -106,7 +106,10 @@ macOS README. The local `main` tracks upstream and can be renamed `upstream-main
    launchers look for a `macos-v*` release that has their own download (setup `.exe` or
    `-windows-x64.zip`; `.AppImage`). Don't make `windows-v`/`linux-v` releases any more.
    1. Bump `EF_APP_VERSION` in `EFAndroid-SP/app/jni/engine/CMakeLists.txt` to the same
-      version (CI's Windows/Linux builds take theirs from the tag), commit, and push the tag:
+      version (CI's Windows/Linux builds take theirs from the tag). Leave the co-op
+      compatibility version (`VSP_COOP_COMPAT`) alone unless co-op changed (a new major.minor
+      line always changes it; the configure step says so): `docs/coop-compat.md`, and CI's
+      `coop-compat` job checks it. Commit, and push the tag:
       `git tag macos-v<version> && git push origin macos-v<version>`.
    2. CI (`.github/workflows/build.yml`) builds all three platforms and puts the Windows zip and
       installer and the Linux AppImage into the draft release for the tag, creating it from

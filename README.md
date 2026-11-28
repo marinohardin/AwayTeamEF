@@ -53,7 +53,8 @@ details and its known limits, and report any issues.
 
 **1. Get the game.** Any PC copy works: GOG, Steam, or the CD with patch 1.2. The game must
 include `pak0.pk3`, `pak1.pk3` and `pak2.pk3`. With GOG, you can simply choose the setup `.exe` you
-downloaded, no PC needed. The Expansion Pack is optional.
+downloaded, no PC needed. CD images work too: choose the game's `.iso`, then add the Expansion
+Pack's `.iso`, which carries patch 1.2. The Expansion Pack is optional.
 
 **2. Download AwayTeamEF** from the [Releases page](https://github.com/marinohardin/AwayTeamEF/releases/latest):
 
@@ -67,7 +68,7 @@ Windows and Linux need a graphics driver with Vulkan 1.1. The Windows build isn'
 if Windows says "Windows protected your PC", click **More info**, then **Run anyway**.
 
 **3. Open it and choose your game files.** The launcher looks for them, or click **Choose…**
-and pick the folder with `BaseEF` in it (or GOG's setup `.exe`). Then pick **Single Player**,
+and pick the folder with `BaseEF` in it (or GOG's setup `.exe`, or the CD's `.iso`). Then pick **Single Player**,
 **Co-op…** or **Holomatch** and click **Play**.
 
 Steps for each platform, Steam Deck setup, and where saves live:

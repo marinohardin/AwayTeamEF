@@ -47,6 +47,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 #	include <sys/types.h>
 #	include <sys/wait.h>
 #	include <unistd.h>
+#	include <utime.h>
 #	if defined( __APPLE__ )
 #		include <mach-o/dyld.h>
 #	endif
@@ -362,6 +363,25 @@ int64_t lc_file_mtime( const char *path )
 	return t / 10000000 - 11644473600LL;
 }
 
+int lc_file_set_mtime( const char *path, int64_t t )
+{
+	wchar_t *w = Wide( path );
+	HANDLE h = w ? CreateFileW( w, FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL ) : INVALID_HANDLE_VALUE;
+	int64_t ft = ( t + 11644473600LL ) * 10000000;
+	FILETIME f;
+	int ok;
+
+	free( w );
+	if ( h == INVALID_HANDLE_VALUE )
+		return 0;
+	f.dwLowDateTime = (DWORD)ft;
+	f.dwHighDateTime = (DWORD)( ft >> 32 );
+	ok = SetFileTime( h, NULL, NULL, &f ) != 0;
+	CloseHandle( h );
+	return ok;
+}
+
 FILE *lc_fopen( const char *path, const char *mode )
 {
 	wchar_t *w = Wide( path ), *m = Wide( mode );
@@ -496,6 +516,15 @@ int64_t lc_file_mtime( const char *path )
 {
 	struct stat st;
 	return stat( path, &st ) ? -1 : (int64_t)st.st_mtime;
+}
+
+int lc_file_set_mtime( const char *path, int64_t t )
+{
+	struct utimbuf u;
+
+	u.actime = (time_t)t;
+	u.modtime = (time_t)t;
+	return utime( path, &u ) == 0;
 }
 
 FILE *lc_fopen( const char *path, const char *mode )

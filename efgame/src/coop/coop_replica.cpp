@@ -101,6 +101,29 @@ typedef struct
 	char	path[MAX_QPATH];
 } repSound_t;
 
+// The co-op layout guard. Host and guest put these structs into and out of the replica byte for
+// byte, so two copies only play together when the layouts agree, and copies are paired by the
+// co-op compatibility version (VSP_COOP_COMPAT, efcode/sys/sys_coop_net.h), not the app version.
+// A size changed: the replica changed. Set VSP_COOP_COMPAT and LC_COOP_COMPAT (efcode/launcher/
+// lc_coop.h) to the version being released, then the number here (docs/coop-compat.md). Same
+// sizes on every platform the releases build for (macOS arm64, Windows and Linux x86_64).
+// (Sizes alone miss a reorder or a changed type of the same size: those need the bump too.)
+#define COOP_LAYOUT_CHECK( what, size ) \
+	static_assert( what == size, #what " changed: co-op's replica changed, so bump VSP_COOP_COMPAT and " \
+		"LC_COOP_COMPAT to the new release's version, then this number (docs/coop-compat.md)" )
+COOP_LAYOUT_CHECK( sizeof( gentity_t ), 1320 );
+COOP_LAYOUT_CHECK( sizeof( gclient_t ), 3416 );
+COOP_LAYOUT_CHECK( sizeof( gNPC_t ), 680 );
+COOP_LAYOUT_CHECK( sizeof( parms_t ), 1024 );
+COOP_LAYOUT_CHECK( offsetof( level_locals_t, LEVEL_LOCALS_T_SAVESTOP ), 1644 );
+COOP_LAYOUT_CHECK( sizeof( camera_t ), 396 );
+COOP_LAYOUT_CHECK( sizeof( playerState_t ), 544 );
+COOP_LAYOUT_CHECK( sizeof( entityState_t ), 232 );
+COOP_LAYOUT_CHECK( sizeof( usercmd_t ), 28 );
+COOP_LAYOUT_CHECK( sizeof( repGlobals_t ), 68 );
+COOP_LAYOUT_CHECK( sizeof( repSound_t ), 80 );
+#undef COOP_LAYOUT_CHECK
+
 static repSound_t	rep_sounds[REP_SOUNDS];		// host: the newest at rep_soundSeq % REP_SOUNDS
 static int			rep_soundSeq;
 static int			rep_soundSeen;				// guest: the newest one played (or skipped on joining)
