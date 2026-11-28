@@ -1172,6 +1172,7 @@ static void CG_LabelViewEntity( gentity_t *crossEnt, char *name, qboolean scanAl
 	qboolean	doBottomLeft = qfalse;
 	qboolean	doBottomRight = qfalse;
 	qboolean	doSizes = qtrue;
+	const qboolean	vrBox = cg_vrPose.active ? qtrue : qfalse;
 	float		w;
 	char		showName[1024];
 	char		showRank[1024];
@@ -1279,6 +1280,12 @@ static void CG_LabelViewEntity( gentity_t *crossEnt, char *name, qboolean scanAl
 	else
 	{
 		doSizes = qfalse;
+	}
+
+	if ( vrBox )
+	{	// VR: corners drawn in the world; the text goes to a fixed place on the HUD
+		CG_VR_NoteUseBox( crossEnt, color );
+		doTopLeft = doTopRight = doBottomLeft = doBottomRight = qfalse;
 	}
 
 	//NOTE: maybe print color-coded "Primary/Secondary Objective" on top if an objective?
@@ -1424,6 +1431,12 @@ static void CG_LabelViewEntity( gentity_t *crossEnt, char *name, qboolean scanAl
 							}
 						}
 					}
+				}
+
+				if ( vrBox )
+				{
+					x = 320;
+					y = 96;
 				}
 
 				if ( !drawHealth )
@@ -1580,7 +1593,7 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 	//FIXME: debounce this to about 10fps?
 
 	vec3_t	vrForward;
-	if ( CG_VR_AimRay( start, vrForward ) )
+	if ( CG_VR_PointRay( start, vrForward ) )
 	{	// VR: what the weapon hand points at
 		VectorMA( start, 4096, vrForward, end );
 	}
@@ -1593,6 +1606,30 @@ static void CG_ScanForCrosshairEntity( qboolean scanAll )
 	//YES!  This is very very bad... but it works!  James made me do it.  Really, he did.  Blame James.
 	gi.trace( &trace, start, vec3_origin, vec3_origin, end, 
 		cg.snap->ps.clientNum, MASK_OPAQUE|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE );
+
+	// VR: the hand points at nothing worth a label: what the head looks at (Use falls back the same way)
+	{
+		vec3_t	headStart, headForward;
+		gentity_t *hit = ( trace.entityNum < ENTITYNUM_WORLD ) ? &g_entities[trace.entityNum] : NULL;
+
+		if ( !( hit && ( hit->client || ( hit->infoString && hit->infoString[0] ) ) ) && CG_VR_HeadRay( headStart, headForward ) )
+		{
+			trace_t		headTrace;
+			vec3_t		headEnd;
+
+			VectorMA( headStart, 4096, headForward, headEnd );
+			gi.trace( &headTrace, headStart, vec3_origin, vec3_origin, headEnd,
+				cg.snap->ps.clientNum, MASK_OPAQUE|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE );
+			if ( headTrace.entityNum < ENTITYNUM_WORLD )
+			{
+				hit = &g_entities[headTrace.entityNum];
+				if ( hit->client || ( hit->infoString && hit->infoString[0] ) )
+				{
+					trace = headTrace;
+				}
+			}
+		}
+	}
 
 	/*
 	CG_Trace( &trace, start, vec3_origin, vec3_origin, end, 

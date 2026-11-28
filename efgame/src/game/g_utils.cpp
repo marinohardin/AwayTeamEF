@@ -4,6 +4,7 @@
 #include "coop_public.h"
 #include "g_functions.h"
 #include "g_nav.h"
+#include "vr_shared.h"
 
 #define ACT_ACTIVE		qtrue
 #define ACT_INACTIVE	qfalse
@@ -904,26 +905,29 @@ Try and use an entity in the world, directly ahead of us
 
 #define USE_DISTANCE	64.0f
 
-void TryUse( gentity_t *ent )
+// trace from src along vf and use what is there; qtrue if something answered
+static qboolean G_UseTrace( gentity_t *ent, const vec3_t src, const vec3_t vf, float distance )
 {
 	gentity_t	*target;
 	trace_t		trace;
-	vec3_t		src, dest, vf;
+	vec3_t		dest;
 
-	//cg.refdef.vieworg, basically
-	VectorCopy( ent->client->renderInfo.eyePoint, src );
-	//cg.refdef.viewangles, basically
-	AngleVectors( ent->client->renderInfo.eyeAngles, vf, NULL, NULL );
 	//extend to find end of use trace
-	VectorMA( src, USE_DISTANCE, vf, dest );
+	VectorMA( src, distance, vf, dest );
 
 	//Trace ahead to find a valid target
 	gi.trace( &trace, src, vec3_origin, vec3_origin, dest, ent->s.number, MASK_OPAQUE|CONTENTS_BODY|CONTENTS_ITEM|CONTENTS_CORPSE );
 	
+	if ( VR_DebugShots() )
+	{
+		gi.Printf( "VR use: from %.1f %.1f %.1f dir %.2f %.2f %.2f -> frac %.3f ent %d %s\n", src[0], src[1], src[2], vf[0], vf[1], vf[2],
+			trace.fraction, trace.entityNum, ( trace.entityNum < ENTITYNUM_WORLD && g_entities[trace.entityNum].classname ) ? g_entities[trace.entityNum].classname : "-" );
+	}
+
 	if ( trace.fraction == 1.0f || trace.entityNum < 1 )
 	{
 		//TODO: Play a failure sound
-		return;
+		return qfalse;
 	}
 
 	target = &g_entities[trace.entityNum];
@@ -931,17 +935,80 @@ void TryUse( gentity_t *ent )
 	//Check for a use command
 	if ( ValidUseTarget( target ) )
 	{
+		if ( VR_DebugShots() )
+			gi.Printf( "VR use: used %s\n", target->classname );
 		GEntity_UseFunc( target, ent, ent );
+		return qtrue;
 	}
 	else if ( target->svFlags & SVF_STASIS_DOOR && target->trigger_formation )
 	{
 		// If the door is a stasis door and it's locked....and finally, if the player can't use it...well..then play the NEG sound
 		G_AddEvent( ent, EV_GENERAL_SOUND, G_SoundIndex( "sound/movers/switches/stasisneg.wav" ));
+		return qtrue;
 	}
 	else if ( target->client && target->client->ps.pm_type < PM_DEAD && target->NPC!=NULL && target->client->playerTeam && target->client->playerTeam == ent->client->playerTeam && !(target->NPC->scriptFlags&SCF_NO_RESPONSE) )
 	{
 		NPC_UseResponse ( target, ent, qfalse );
+		return qtrue;
 	}
+	return qfalse;
+}
+
+/*
+G_VRUse
+
+VR: Use acts on what the weapon hand points at, else on what the head looks at (each from where
+it is, a little farther than the flat reach since the hand is out in front of the eyes). The
+flat path looks along the body's own view, which in VR is level and at the standing eye height:
+it never meets a console on a wall at hand height or a crouched player's.
+Returns qtrue when VR handled the use (qfalse: no VR, so the usual use).
+*/
+static qboolean G_VRUse( gentity_t *ent )
+{
+	vrGamePose_t	pose, headPose;
+	vec3_t			eye, org, axis[3];
+	qboolean		tracked = qfalse;
+
+	if ( ent->s.number != 0 || !ent->client || !VR_FetchPose( &pose ) )
+		return qfalse;
+
+	// the body's eye, where the cgame puts the view in VR: the standing eye height even while crouched
+	VectorCopy( ent->currentOrigin, eye );
+	if ( ent->client->ps.pm_flags & PMF_DUCKED )
+		eye[2] += ent->client->standheight + STANDARD_VIEWHEIGHT_OFFSET;
+	else
+		eye[2] += ent->client->ps.viewheight;
+
+	if ( VR_HandToWorld( &pose, VR_HAND_WEAPON, eye, ent->client->ps.viewangles[YAW], org, axis ) )
+	{
+		tracked = qtrue;
+		if ( G_UseTrace( ent, org, axis[0], USE_DISTANCE + 24.0f ) )
+			return qtrue;
+	}
+	headPose = pose;
+	headPose.hand[0] = pose.head;	// VR_HandToWorld places entry 0
+	headPose.hand[0].valid = 1;
+	if ( pose.head.valid && VR_HandToWorld( &headPose, 0, eye, ent->client->ps.viewangles[YAW], org, axis ) )
+	{
+		tracked = qtrue;
+		if ( G_UseTrace( ent, org, axis[0], USE_DISTANCE + 16.0f ) )
+			return qtrue;
+	}
+	return tracked;	// tracked: the body's flat view is not what the player looks at
+}
+
+void TryUse( gentity_t *ent )
+{
+	vec3_t		src, vf;
+
+	if ( G_VRUse( ent ) )
+		return;
+
+	//cg.refdef.vieworg, basically
+	VectorCopy( ent->client->renderInfo.eyePoint, src );
+	//cg.refdef.viewangles, basically
+	AngleVectors( ent->client->renderInfo.eyeAngles, vf, NULL, NULL );
+	G_UseTrace( ent, src, vf, USE_DISTANCE );
 }
 
 void G_ChangeMap (const char *mapname, const char *spawntarget, qboolean hub)
