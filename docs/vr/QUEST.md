@@ -195,6 +195,10 @@ From the first session on a headset (2026-11-27). None is fixed yet; the numbers
 - **10. The HUD and the menu layer may float too far away.** The defaults are `vr_hudDistance`
   and `vr_menuDistance` (see [RENDERING.md](RENDERING.md)); a closer default is worth trying on
   the headset.
+- **R4. Co-op: a flat partner didn't see the VR player's phaser beam where it aimed.** Fixed in
+  the Meta XR Simulator, still to check on a headset: partners now draw it toward where the hand
+  points (see [COOP.md](COOP.md#what-flat-partners-see)). A partner on an older 1.5.x build sees
+  it end within about 20 units of the real spot, as it does for a flat player.
 - **The start screen's step into the game is untested on a headset.** The Quest should switch from
   the flat panel to VR when `QuestActivity` starts, because it carries the VR category. If it opens
   flat instead, start the game directly with

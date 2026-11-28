@@ -2216,6 +2216,11 @@ void CG_LightningBolt( centity_t *cent, vec3_t origin )
 	{	// VR: the beam leaves the hand along its pointing ray
 		CG_VR_ShotRay( origin, org, forward );
 	}
+	else if ( cent->gent->s.number != COOP_ViewClientNum() && cg_thirdPerson.integer != 2 )
+	{	// co-op, a VR partner: its angles look from its eye at where its hand shoots
+		// (COOP_VRAimEntity), so the beam's end is found from there; it is drawn from the gun
+		COOP_VRBeamEye( cent->gent, cent->lerpOrigin, org );
+	}
 
 	VectorMA( org, weaponData[cent->currentState.weapon].range, forward, end );
 	
