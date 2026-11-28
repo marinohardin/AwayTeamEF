@@ -266,6 +266,11 @@ From the first session on a headset (2026-11-27); the numbers are the owner's.
   the Meta XR Simulator, still to check on a headset: partners now draw it toward where the hand
   points (see [COOP.md](COOP.md#what-flat-partners-see)). A partner on an older 1.5.x build sees
   it end within about 20 units of the real spot, as it does for a flat player.
+- **Co-op: as the guest of a Mac on 1.5.0 or 1.5.1, the Quest's player 2 couldn't move or fire, and the host
+  saw its head upside down.** *Fixed (vr-coopguest), in the simulator against a 1.5.1 host.* The VR
+  hand's extra bytes in each command confused a host from before them; the guest now sends them only
+  to a host that says it reads them, and a plain command otherwise (there it aims with the body).
+  See [COOP.md](COOP.md#a-vr-guest-and-an-older-host).
 - **Fixed (not yet tried on a headset): Use on switches and consoles, and the co-op ping.** Use
   now picks from the hand, the head and the switch areas, and a switch that wants to be faced
   accepts the head or the hand ([MOVEMENT.md](MOVEMENT.md#how-use-picks-a-target)); the ping

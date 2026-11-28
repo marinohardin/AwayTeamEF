@@ -1212,6 +1212,10 @@ static void CoopHostConnect( int sock, const char *request, const struct sockadd
 	CoopSetInfo( info, "nonce", nonce );
 	CoopSetInfo( info, "paks", FS_CoopPaks() );
 	CoopHostStateInfo( info );
+	// this host reads a VR guest's extras (COOP_BUTTON_VRBITS and the hand after the command). A
+	// host from before them (1.5.0, 1.5.1) doesn't: the hand's bytes would shift every command
+	// after the first in a packet, so a VR guest sends it plain commands (CoopNet_GuestQueueCmd)
+	CoopSetInfo( info, "vrInput", "1" );
 	CoopSendOOB( sock, from, COOP_ACCEPT, info );
 	Com_Printf( "co-op: %s joined from %s as player 2%s%s\n", coopHost.name, CoopAddressString( from ),
 		coopHost.sex[0] ? va( " (%s)", coopHost.sex ) : "", coopHost.look[0] ? va( " as %s", coopHost.look ) : "" );
@@ -1700,6 +1704,7 @@ static struct {
 	int					textSeq;		// the last console command sent (CoopNet_GuestSendCommand)
 	coopCmd_t			cmds[COOP_INPUT_BACKUP];	// the newest last
 	short				vrMuzzle[3], vrAngles[2];	// a VR guest's weapon hand, for the next commands
+	qboolean			hostVRInput;	// the host reads the VR extras (its accept said "vrInput")
 	int					numCmds;
 	qboolean			unsent;			// a command not sent yet
 
@@ -1873,6 +1878,7 @@ static void CoopGuestStart( const char *address )
 	}
 	coopGuest.sock = fd;
 	coopGuest.state = COOP_GUEST_CONNECTING;
+	coopGuest.hostVRInput = qfalse;
 	Com_sprintf( coopGuest.nonce, sizeof( coopGuest.nonce ), "%08x%08x", arc4random(), arc4random() );
 	Com_Printf( "co-op: joining %s...\n", CoopAddressString( &coopGuest.host ) );
 	CoopGuestSendConnect();
@@ -2035,6 +2041,15 @@ static void CoopGuestReceive( void )
 				continue;
 			coopGuest.session = (unsigned)strtoul( sessionText, NULL, 10 );
 			coopGuest.state = COOP_GUEST_CONNECTED;
+			{
+				char vrInput[8];
+				CoopGetInfo( rest, "vrInput", vrInput, sizeof( vrInput ) );
+				coopGuest.hostVRInput = atoi( vrInput ) > 0 ? qtrue : qfalse;
+#ifdef EF_VR
+				if ( !coopGuest.hostVRInput )
+					Com_Printf( "co-op: the host's version doesn't take a VR hand or lean: player 2 aims straight ahead of the body there\n" );
+#endif
+			}
 			coopGuest.lastHeard = Sys_Milliseconds();
 			coopGuest.statStart = coopGuest.lastHeard;
 			CoopGetInfo( rest, "hostName", rawName, sizeof( rawName ) );
@@ -2114,6 +2129,10 @@ int CoopNet_GuestQueueCmd( int seq, const int *angles, int buttons, int weapon,
 	{
 		memmove( &coopGuest.cmds[0], &coopGuest.cmds[1], sizeof( coopGuest.cmds[0] ) * ( COOP_INPUT_BACKUP - 1 ) );
 		coopGuest.numCmds--;
+	}
+	if ( !coopGuest.hostVRInput )
+	{
+		buttons &= ~COOP_BUTTON_VRBITS;		// an older host: a flat player's command (see the host's accept)
 	}
 	c = &coopGuest.cmds[coopGuest.numCmds++];
 	c->seq = seq;
