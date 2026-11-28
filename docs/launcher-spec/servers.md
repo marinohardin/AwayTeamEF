@@ -1276,9 +1276,20 @@ kept by address across refreshes (`S:5473-5475`). The sort order is **not persis
   address string as shown (after the loopback rewrite, so a server hosted here is favourited
   as `127.0.0.1:<port>`).
 - **Only favorites**: keep only favourites. **Only servers with people**: keep servers with
-  `humans > 0`, or with `humans` unknown (−1) and `players > 0`. Both can be on. Each toggle
+  `humans > 0`, or with `humans` unknown (−1) and `players > 0`. (A server whose info has no
+  `g_humanplayers` is unknown only until its getstatus answer comes in: see 8.6a.) Both can be on. Each toggle
   stores `BrowserOnlyFavorites` / `BrowserOnlyPeople` (booleans) and refreshes.
 - **Globe**: open `https://efservers.com/` in the default browser.
+
+### 8.6a People counted from a status
+
+Whenever a getstatus answer is stored for an address (the fetch's own, or the players panel's),
+every row with that address whose `humans` is unknown (−1), or was itself counted this way, gets
+`humans` = the status's `g_humanplayers` if ≥ 0, else the number of its players with ping > 0
+(bots have ping 0), and `humansCounted` = the status had no `g_humanplayers`. A row whose info
+sent `g_humanplayers` keeps it. A counted Humans cell has the tooltip "Counted from the players'
+pings: this server doesn't say, and bots have ping 0". On the players panel's own answer the
+table is filtered and sorted again (the count may hide or move the row).
 
 ### 8.6 Who's playing (`S:5529-5606`, `S:5716-5746`)
 

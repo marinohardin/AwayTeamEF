@@ -4580,6 +4580,7 @@ static NSColor *AmberColor( void )
 @property (nonatomic, copy) NSArray<NSString *> *listedOn;		// Combined: the masters listing it
 @property (nonatomic) NSInteger players, maxPlayers, humans, gametype, ping;	// humans -1: not reported
 @property (nonatomic) BOOL needPass, thisMac, favorite;
+@property (nonatomic) BOOL humansCounted;	// humans counted from getstatus pings: no g_humanplayers
 @property (nonatomic, readonly) NSString *gametypeName, *playersText, *humansText;
 @property (nonatomic, readonly) NSInteger knownHumans;	// for sorting: ? counts as 0
 // a server running cMod's engine (by Noah Metzger): its version_cmod from getstatus,
@@ -4791,9 +4792,33 @@ static void QueryServerInfo( NSArray<NSString *> *addresses, BOOL broadcast, VSP
 @property (nonatomic) NSInteger humans;			// g_humanplayers, -1: not sent
 @property (nonatomic, copy) NSString *cmodVersion;	// as VSPServerInfo's
 @property (nonatomic, strong) NSDate *when;
+@property (nonatomic, readonly) NSInteger countedHumans;
 @end
 @implementation VSPServerStatus
+// people on the server: its g_humanplayers, else the players with a ping (bots have ping 0)
+- (NSInteger)countedHumans
+{
+	NSInteger pinged = 0;
+
+	if( _humans >= 0 )
+		return _humans;
+	for( VSPPlayer *p in _players )
+		pinged += p.ping > 0;
+	return pinged;
+}
 @end
+
+// a server without g_humanplayers in its info: count its people from its status's
+// player pings, so it shows a number and Only servers with people can tell
+static void ApplyStatus( VSPServerInfo *i, VSPServerStatus *st )
+{
+	i.cmodVersion = st.cmodVersion;
+	if( i.humans < 0 || i.humansCounted )
+	{
+		i.humans = st.countedHumans;
+		i.humansCounted = st.humans < 0;
+	}
+}
 
 static VSPServerStatus *ParseStatusResponse( const char *buf, ssize_t n )
 {
@@ -5416,7 +5441,7 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 		}, ^( NSString *address, VSPServerStatus *st ) {
 			for( VSPServerInfo *i in self->results[key] )
 				if( [i.address isEqualToString: address] )
-					i.cmodVersion = st.cmodVersion;
+					ApplyStatus( i, st );
 			self->statuses[address] = st;		// its players, for when it's selected
 			[self scheduleReload];
 		}, ^( NSUInteger answered ) {
@@ -5575,8 +5600,8 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 			if( answer )
 			{
 				self->statuses[address] = answer;
-				s.cmodVersion = answer.cmodVersion;
-				[self->table reloadData];
+				ApplyStatus( s, answer );
+				[self show];		// its count of people may have changed: filter and sort again
 			}
 			if( current && answer )
 				[self showPlayers];
@@ -5840,6 +5865,8 @@ static NSAttributedString *ColoredName( NSString *s, NSFont *font )
 			[l setTextColor: [NSColor secondaryLabelColor]];
 		if( s.humans < 0 )
 			[l setToolTip: @"This server doesn't say how many of its players are bots"];
+		else if( s.humansCounted )
+			[l setToolTip: @"Counted from the players' pings: this server doesn't say, and bots have ping 0"];
 	}
 	else if( [ident isEqualToString: @"type"] )
 		[l setStringValue: s.gametypeName];

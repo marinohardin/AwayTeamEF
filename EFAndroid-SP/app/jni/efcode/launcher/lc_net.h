@@ -35,6 +35,7 @@ int  lc_query_master_count(const char *master);
 typedef struct {
     char address[24], hostname[128], name[128], map[64];
     int  players, maxPlayers, humans /* -1 unknown */, gametype, ping, needPass;
+    int  humansCounted;   /* humans counted from getstatus pings: the server sends no g_humanplayers */
 } lc_server_info;
 typedef struct { char name[64]; int score, ping; } lc_player;
 typedef struct {
@@ -112,6 +113,9 @@ int  lc_map_state(const lc_map_catalog *c, const char *map);     /* LC_MAP_*; 8.
 int  lc_map_is_builtin(const lc_map_catalog *c, const char *map);
 void lc_sort_players(lc_player *p, int n);                       /* people first, score desc */
 int  lc_tag_bots(const lc_player *p, int n, int humans);
+/* people on a server by its getstatus answer: its g_humanplayers, else the players with a ping
+   (bots have ping 0) */
+int  lc_status_humans(const lc_server_status *st);
 
 /* ---- efservers (7.8) ---- */
 void lc_efservers_info_url(const char *map, char *out, size_t n);

@@ -160,7 +160,8 @@ public:
 				}
 				return QVariant();
 			case 5:
-				return i.humans < 0 ? QVariant( "This server doesn't say how many of its players are bots" ) : QVariant();
+				return i.humans < 0 ? QVariant( "This server doesn't say how many of its players are bots" ) :
+					i.humansCounted ? QVariant( "Counted from the players' pings: this server doesn't say, and bots have ping 0" ) : QVariant();
 			case 7: {
 				QString tip;
 				cmodText( r.isCmod, r.cmodVersion, &tip );
