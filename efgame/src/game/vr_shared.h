@@ -80,6 +80,12 @@ void		CG_VR_AddAimHelpers( const vec3_t muzzle );
 qboolean	CG_VR_HideCrosshair( void );
 // this frame's shot ray (set by CG_VR_AddAimHelpers), for the crosshair-entity scan
 qboolean	CG_VR_AimRay( vec3_t start, vec3_t forward );
+// the head's gaze and the weapon hand's pointing ray (with or without a weapon), for what the
+// player can use; the box drawn round it in the world (the flat box doesn't show in VR)
+qboolean	CG_VR_HeadRay( vec3_t start, vec3_t forward );
+qboolean	CG_VR_PointRay( vec3_t start, vec3_t forward );
+void		CG_VR_NoteUseBox( const gentity_t *ent, const vec4_t color );	// from the HUD label
+void		CG_VR_AddUseBox( void );	// into the scene, once a frame
 // the newest shot ray, drawn at most maxAge ms ago
 qboolean	CG_VR_RecentAimRay( vec3_t start, vec3_t forward, int maxAge );
 
