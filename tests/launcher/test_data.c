@@ -258,7 +258,7 @@ static void TestFind( void )
 		char line[256];
 		memset( &none, 0, sizeof( none ) );
 		lc_data_status_text( &none, line, sizeof( line ), NULL, 0 );
-		CHECK_STR( line, "Choose the Elite Force folder (the one with BaseEF), the GOG setup .exe, or an image of the CD (.iso)." );
+		CHECK_STR( line, "Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso." );
 	}
 }
 

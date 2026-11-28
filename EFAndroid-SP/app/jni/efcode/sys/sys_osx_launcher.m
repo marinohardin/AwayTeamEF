@@ -1526,7 +1526,7 @@ static NSStackView *HStackOf( NSArray *views )
 				[patch componentsJoinedByString: @" and "]]];
 			[status setToolTip: [NSString stringWithFormat: @"These game files are from the original CD (version 1.0). "
 				@"The game also needs %@ from the 1.1 and 1.2 patches: copy them from a patched installation "
-				@"(GOG, Steam, or a PC with patch 1.2) with Add Game Files….", [patch componentsJoinedByString: @" and "]]];
+				@"(GOG, Steam, or a PC with patch 1.2) or the Expansion Pack's CD or its image with Add Game Files….", [patch componentsJoinedByString: @" and "]]];
 			symbol = @"exclamationmark.triangle.fill";
 			color = [NSColor systemOrangeColor];
 			LLog( @"Launcher: patch files missing (%@) in \"%@\"", [patch componentsJoinedByString: @", "], dataFolder );
@@ -1542,7 +1542,7 @@ static NSStackView *HStackOf( NSArray *views )
 		else
 		{
 			shown = @"No game files yet";
-			[status setStringValue: @"Choose the Elite Force folder (the one with BaseEF), the GOG setup .exe, or an image of the CD (.iso)."];
+			[status setStringValue: @"Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso."];
 			symbol = @"exclamationmark.triangle.fill";
 			color = [NSColor systemOrangeColor];
 		}

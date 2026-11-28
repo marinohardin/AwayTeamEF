@@ -475,7 +475,7 @@ Case B — otherwise `VSP_FindGameData(&basepath, &dataFolder)` (§4.1):
 | found, but `pak1.pk3` and/or `pak2.pk3` missing in both HomeBase and dataFolder | dataFolder with `~` | `"Patch 1.2 missing · add <pak1.pk3 and pak2.pk3> with Add Game Files…"` (missing names joined by `" and "`); tooltip: "These game files are from the original CD (version 1.0). The game also needs <names> from the 1.1 and 1.2 patches: copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) or the Expansion Pack's CD or its image with Add Game Files…." | `exclamationmark.triangle.fill`, orange. Logged `Launcher: patch files missing (…) in "…"` |
 | found, basepath non-nil (in place, or next to the app) | dataFolder with `~` | "Ready · using the files in this folder" | `checkmark.circle.fill`, green |
 | found, basepath nil (homepath copy) | dataFolder with `~` | "Ready · copied into the app's own folder" | same |
-| not found | "No game files yet" | "Choose the Elite Force folder (the one with BaseEF), the GOG setup .exe, or an image of the CD (.iso)." | `exclamationmark.triangle.fill`, orange |
+| not found | "No game files yet" | "Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso." | `exclamationmark.triangle.fill`, orange |
 
 Then:
 

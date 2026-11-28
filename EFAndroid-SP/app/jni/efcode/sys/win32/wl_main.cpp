@@ -580,7 +580,7 @@ struct Launcher : Wnd {
 			if ( nMissing > 0 ) {
 				str nm = names[0]; if ( nMissing > 1 ) nm += str( " and " ) + names[1];
 				statusText = fmt( "Patch 1.2 missing \xC2\xB7 add %s with Add Game Files\xE2\x80\xA6", nm.c_str( ) );
-				statusTip = fmt( "These game files are from the original CD (version 1.0). The game also needs %s from the 1.1 and 1.2 patches: copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) with Add Game Files\xE2\x80\xA6.", nm.c_str( ) );
+				statusTip = fmt( "These game files are from the original CD (version 1.0). The game also needs %s from the 1.1 and 1.2 patches: copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) or the Expansion Pack's CD or its image with Add Game Files\xE2\x80\xA6.", nm.c_str( ) );
 				stGlyph = G_TRIANGLE; stRole = R_ORANGE;
 				lc_log( "Launcher: patch files missing (%s) in \"%s\"", nm.c_str( ), G.dataFolder.c_str( ) );
 			} else {
@@ -592,7 +592,7 @@ struct Launcher : Wnd {
 			expText = exp ? "Expansion Pack found \xC2\xB7 Virtual Voyager and its Holomatch maps" : "No Expansion Pack \xC2\xB7 add its files to play Virtual Voyager and its maps";
 		} else {
 			folderPathText = "No game files yet";
-			statusText = "Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe.";
+			statusText = "Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso.";
 			statusTip.clear(); stGlyph = G_TRIANGLE; stRole = R_ORANGE; exGlyph = -1;
 		}
 		setText( ctl( IDC_PATH ), folderPathText ); setTooltip( hwnd, ctl( IDC_PATH ), G.dataFolder.c_str( ) );

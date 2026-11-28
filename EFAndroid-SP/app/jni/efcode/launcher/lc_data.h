@@ -37,7 +37,7 @@ int lc_data_find( int argc, char **argv, lc_data *out );
 #define LC_DATA_OVERRIDDEN_PATH		"Set on the command line"
 #define LC_DATA_OVERRIDDEN_STATUS	"fs_basepath / fs_homepath given on the command line"
 #define LC_DATA_NONE_PATH			"No game files yet"
-#define LC_DATA_NONE_STATUS			"Choose the Elite Force folder (the one with BaseEF), the GOG setup .exe, or an image of the CD (.iso)."
+#define LC_DATA_NONE_STATUS			"Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso."
 /* path with the home folder shown as "~" (Linux; Windows: unchanged) */
 void lc_data_display_path( const char *path, char *out, size_t size );
 /* BaseEF of the remembered in-place folder (the "external" base of lc_plan_add_files), "" if none */
