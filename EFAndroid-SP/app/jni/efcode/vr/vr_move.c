@@ -93,6 +93,8 @@ static struct {
 	vec3_t		eyeWorld;		// vr_debugMove: where the eye ended up, after the wall check
 
 	int			spViewTime;		// when VR_Move_SPView last ran
+	float		eyeCap;			// the game's eye height above its origin, eased: the eye never goes above it
+	int			eyeCapTime;
 	vmRecord_t	hist[VM_HISTORY];
 	int			histCount;
 	int			histNext;
@@ -549,6 +551,28 @@ void VR_Move_SPView( int cgTime, float viewYaw, int standViewHeight, vrMoveTrace
 		VectorCopy( vm.anchor, anchor );
 	}
 	VM_EyeOrigin( anchor, eyeOrigin );
+
+	// never above the game's own eye: a crouched player that stands up in the room (a low ceiling
+	// above) keeps the crouched eye. The cap follows the game's view height, eased 250 units a second.
+	{
+		const int now = Sys_Milliseconds();
+		const float step = 250.0f * (float)( now - vm.eyeCapTime ) * 0.001f;
+		float maxU, u;
+
+		if ( vm.eyeCapTime == 0 || now - vm.eyeCapTime > 250 || now < vm.eyeCapTime ) {
+			vm.eyeCap = (float)viewHeight;
+		} else if ( vm.eyeCap < (float)viewHeight ) {
+			vm.eyeCap = vm.eyeCap + step > (float)viewHeight ? (float)viewHeight : vm.eyeCap + step;
+		} else {
+			vm.eyeCap = vm.eyeCap - step < (float)viewHeight ? (float)viewHeight : vm.eyeCap - step;
+		}
+		vm.eyeCapTime = now;
+		maxU = ( vm.eyeCap - (float)standViewHeight ) / scale;
+		u = vm.head[1] - eyeOrigin[1];
+		if ( u > maxU ) {
+			eyeOrigin[1] += u - maxU;
+		}
+	}
 
 	// the head in a wall: push the eye back to where the trace from the body's eye stops, and fade
 	vm.fade = 0.0f;

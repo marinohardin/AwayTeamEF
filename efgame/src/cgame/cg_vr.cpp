@@ -408,6 +408,121 @@ static void CG_VR_OffHandMarker( void ) {
 	CG_VR_Sprite( org, 0.6f, rgb, 0.7f, cgs.media.yellowParticleShader );
 }
 
+/*
+==============================================================================
+
+THE USE HIGHLIGHT
+
+The box the game draws round a thing the player can use or look up is projected on the screen
+through the body's flat view, which in VR is neither where the head looks nor where the HUD
+plane is. In VR the corners are drawn in the world instead, round the thing, and its text sits
+at a fixed place on the HUD (CG_LabelViewEntity).
+
+==============================================================================
+*/
+
+// the head's gaze: from between the eyes, along where the headset points
+qboolean CG_VR_HeadRay( vec3_t start, vec3_t forward ) {
+	vrGamePose_t p;
+	vec3_t axis[3];
+
+	if ( !cg_vrPose.active || !cg_vrPose.head.valid ) {
+		return qfalse;
+	}
+	p = cg_vrPose;
+	p.hand[0] = p.head;	// VR_HandToWorld places entry 0
+	p.hand[0].valid = 1;
+	if ( !VR_HandToWorld( &p, 0, cg.refdef.vieworg, cg.refdefViewAngles[YAW], start, axis ) ) {
+		return qfalse;
+	}
+	VectorCopy( axis[0], forward );
+	return qtrue;
+}
+
+// the weapon hand's pointing ray, with or without a weapon in it
+qboolean CG_VR_PointRay( vec3_t start, vec3_t forward ) {
+	vec3_t axis[3];
+
+	if ( CG_VR_AimRay( start, forward ) ) {
+		return qtrue;
+	}
+	if ( !cg_vrPose.active || !VR_HandToWorld( &cg_vrPose, VR_HAND_WEAPON, cg.refdef.vieworg,
+			cg.refdefViewAngles[YAW], start, axis ) ) {
+		return qfalse;
+	}
+	VectorCopy( axis[0], forward );
+	return qtrue;
+}
+
+// The label code runs after the 3D scene is built (2D pass), so it only notes what to box; the
+// corners are added to the next frame's scene (CG_VR_AddUseBox).
+static int		cg_vrBoxEnt = -1;
+static int		cg_vrBoxTime;
+static vec4_t	cg_vrBoxColor;
+
+void CG_VR_NoteUseBox( const gentity_t *ent, const vec4_t color ) {
+	cg_vrBoxEnt = ent->s.number;
+	cg_vrBoxTime = cg.time;
+	Vector4Copy( color, cg_vrBoxColor );
+}
+
+// corner brackets round the thing's box, in the world, turned to the head
+void CG_VR_AddUseBox( void ) {
+	const gentity_t *ent;
+	const float *color = cg_vrBoxColor;
+	vec3_t mn, mx, size, head, rgb, a, b;
+	float dist, width, len[3];
+	int corner, axis;
+
+	if ( !cg_vrPose.active || cg_vrBoxEnt < 0 || cg.time - cg_vrBoxTime > 200 || cg.time < cg_vrBoxTime ) {
+		return;
+	}
+	ent = &g_entities[cg_vrBoxEnt];
+	if ( !ent->inuse ) {
+		return;
+	}
+
+	if ( ent->s.solid == SOLID_BMODEL ) {
+		VectorCopy( ent->absmin, mn );
+		VectorCopy( ent->absmax, mx );
+	} else {
+		VectorAdd( ent->currentOrigin, ent->mins, mn );
+		VectorAdd( ent->currentOrigin, ent->maxs, mx );
+	}
+	for ( axis = 0; axis < 3; axis++ ) {
+		mn[axis] -= 1.0f;	// just outside, so a console set into a wall isn't hidden by it
+		mx[axis] += 1.0f;
+	}
+	VectorSubtract( mx, mn, size );
+	CG_VR_HeadWorld( head );
+	VectorAdd( mn, mx, a );
+	VectorScale( a, 0.5f, a );
+	dist = Distance( head, a );
+	width = 0.5f + dist * 0.008f;	// about the same size to the eye at any distance
+	for ( axis = 0; axis < 3; axis++ ) {
+		len[axis] = size[axis] * 0.3f;
+		if ( len[axis] > 8.0f + dist * 0.02f ) {
+			len[axis] = 8.0f + dist * 0.02f;
+		}
+		if ( len[axis] < 1.5f ) {
+			len[axis] = 1.5f;
+		}
+	}
+	rgb[0] = color[0];
+	rgb[1] = color[1];
+	rgb[2] = color[2];
+	for ( corner = 0; corner < 8; corner++ ) {
+		for ( axis = 0; axis < 3; axis++ ) {
+			a[axis] = ( corner & ( 1 << axis ) ) ? mx[axis] : mn[axis];
+		}
+		for ( axis = 0; axis < 3; axis++ ) {
+			VectorCopy( a, b );
+			b[axis] += ( corner & ( 1 << axis ) ) ? -len[axis] : len[axis];
+			CG_VR_Beam( a, b, width, rgb, 0.9f, cgs.media.whiteLaserShader );
+		}
+	}
+}
+
 static int		cg_vrAimRayTime = -1;
 static vec3_t	cg_vrAimStart, cg_vrAimForward;
 
