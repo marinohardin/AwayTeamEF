@@ -403,16 +403,27 @@ static const int windowSizes[][2] = {
 void lc_gfx_load( const char *homeBase, int holomatch, int screenW, int screenH,
 	lc_gfx *g, int *fromConfig )
 {
-	char path[LC_MAX_PATH];
+	char path[LC_MAX_PATH], other[LC_MAX_PATH];
 	lc_cfg cfg;
 	int fc;
 
+	/* SP and Holomatch keep separate configs, but the launcher shows one set of graphics:
+	   the newer file's (a tie goes to this mode's). Whichever mode ran last, or had them
+	   changed in its Video menu, wrote what the player chose most recently; Play then
+	   passes it on, so the other file catches up the next time that mode runs. */
 	lc_config_path( homeBase, holomatch, path, sizeof( path ) );
+	lc_config_path( homeBase, !holomatch, other, sizeof( other ) );
+	if ( lc_file_mtime( other ) > lc_file_mtime( path ) ) {
+		char t[LC_MAX_PATH];
+
+		memcpy( t, path, sizeof( t ) );
+		memcpy( path, other, sizeof( path ) );
+		memcpy( other, t, sizeof( other ) );
+	}
 	lc_cfg_read( path, &cfg );
 	if ( cfg.count == 0 ) {
 		lc_cfg_free( &cfg );
-		lc_config_path( homeBase, !holomatch, path, sizeof( path ) );
-		lc_cfg_read( path, &cfg );
+		lc_cfg_read( other, &cfg );
 	}
 	fc = cfg.count > 0;
 	if ( fromConfig )

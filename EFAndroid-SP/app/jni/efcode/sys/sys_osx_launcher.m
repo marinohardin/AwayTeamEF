@@ -332,14 +332,31 @@ static NSArray<NSString *> *BrightnessArgs( int b, NSUInteger room )
 	return @[ @"+exec", VSP_BRIGHTNESS_CFG ];
 }
 
-// Graphics from the config last used (or the other mode's, or defaults).
+static NSDate *ModDate( NSString *path )
+{
+	return [[[NSFileManager defaultManager] attributesOfItemAtPath: path error: NULL] fileModificationDate];
+}
+
+// Graphics from the newer of the two mode configs (a tie: this mode's; an empty one: the
+// other's; neither: defaults). SP and Holomatch keep separate configs, but the launcher shows
+// one set of graphics: whichever mode ran last, or had them changed in its Video menu, wrote
+// what the player chose most recently. Play passes them on, so the other file catches up.
 static gfx_t LoadGraphics( BOOL holomatch, BOOL *fromConfig )
 {
-	NSDictionary *cfg = ReadConfig( ConfigPath( holomatch ) );
+	NSString *path = ConfigPath( holomatch ), *other = ConfigPath( !holomatch );
+	NSDate *pathDate = ModDate( path ), *otherDate = ModDate( other );
+	NSDictionary *cfg;
 	gfx_t g;
 
+	if( otherDate && ( !pathDate || [otherDate compare: pathDate] == NSOrderedDescending ) )
+	{
+		NSString *t = path;
+		path = other;
+		other = t;
+	}
+	cfg = ReadConfig( path );
 	if( ![cfg count] )
-		cfg = ReadConfig( ConfigPath( !holomatch ) );
+		cfg = ReadConfig( other );
 	*fromConfig = [cfg count] > 0;
 	g.brightness = MatchBrightness( cfg );	// first run: Standard
 
