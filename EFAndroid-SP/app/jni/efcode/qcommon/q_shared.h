@@ -145,11 +145,11 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // the version players and server browsers see; PRODUCT_NAME stays as it was
 // because it also names files (the PID file)
 #if defined( __APPLE__ )
-#define Q3_VERSION "Elite Force for Mac " EF_APP_VERSION
+#define Q3_VERSION "AwayTeamEF for Mac " EF_APP_VERSION
 #elif defined( _WIN32 )
-#define Q3_VERSION "Elite Force for Windows " EF_APP_VERSION
+#define Q3_VERSION "AwayTeamEF for Windows " EF_APP_VERSION
 #else
-#define Q3_VERSION "Elite Force for Linux " EF_APP_VERSION
+#define Q3_VERSION "AwayTeamEF for Linux " EF_APP_VERSION
 #endif
 #else
 #define Q3_VERSION PRODUCT_NAME " " PRODUCT_VERSION

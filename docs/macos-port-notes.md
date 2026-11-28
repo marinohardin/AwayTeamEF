@@ -954,7 +954,7 @@ so selecting a server shows its players without asking again (the refresh button
 
 A server hosted with this app shows no cMod mark even when it runs cMod's qagame: `version_cmod`
 comes from cMod's engine, not its game module, and the game module adds no key of its own. Ours
-reports `version` "Elite Force for Mac ... HM v1.20 compatible" and `version_engine`.
+reports `version` "AwayTeamEF for Mac ... HM v1.20 compatible" and `version_engine`.
 
 ## SP: ambient and mover sound sets load again (2026-11-10)
 
