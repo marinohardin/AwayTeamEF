@@ -41,9 +41,9 @@ typedef struct {
 
 // digital actions (vrInputState_t.buttons), named for the physical button; the controller map
 // onto the game is in vr_input_engine.c, the default bindings in vr_input.c
-#define VR_BUTTON_A			0x0001	// A: use (Holomatch: the holdable item), skips a cutscene
+#define VR_BUTTON_A			0x0001	// A: use
 #define VR_BUTTON_B			0x0002	// B: the weapon wheel while held
-#define VR_BUTTON_X			0x0004	// X: use
+#define VR_BUTTON_X			0x0004	// X: skip a cutscene (Holomatch: use the holdable item)
 #define VR_BUTTON_MENU		0x0008	// the left menu button
 #define VR_BUTTON_Y			0x0040	// Y: the mission objectives (Holomatch: the scores and its objectives)
 #define VR_BUTTON_RSTICK	0x0010	// right thumbstick click: the weapon wheel

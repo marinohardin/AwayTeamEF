@@ -106,20 +106,16 @@ triggers and grips with the hands and nothing else):
 | Weapon hand grip | Alternate fire | `+altattack` |
 | Other hand trigger | Jump | `+moveup` |
 | Other hand grip | Crouch (standing players can also really crouch) | `+movedown` |
-| A or X | Use (in VR the head is the lean; Use + strafe no longer leans). **In a cutscene or a movie the same press also skips it** (the game's use-item key skips a camera scene, Enter skips a movie) | `+use`, and in a cutscene also `+button2` and the Enter key |
+| A | Use (in VR the head is the lean; Use + strafe no longer leans) | `+use` |
+| X | **Skip a cutscene** (the game's use-item key skips a camera scene; Enter skips a movie) | `+button2`, and the Enter key |
 | Y | The mission objectives, shown while held | `+info` |
 | Left thumbstick click | Hold 0.7 s to recentre. A tap does nothing | recentre |
 | Left menu button | Menu | Escape |
 
 In Holomatch (docs: [HOLOMATCH-H1.md](HOLOMATCH-H1.md) §6.1) the same shape holds, with these differences:
-**X is Use and A is the holdable item** (`+button2`; that game needs both, so A isn't a second Use
-there), **Y held shows the scoreboard and the objectives together** (`+info` and `+analysis`; B is the
-wheel, so the scoreboard moved to Y), and a tap of the left thumbstick click is the walk/run toggle.
-
-**Skipping a cutscene.** The game's own skip is its use-item key, not Use, so a Use press (A or X)
-sends that key and Enter as well while a camera scene or a movie is playing (`cg_cameraActive`,
-`skippingCinematic` or `vr_uiState` 2, checked when the button goes down). Outside a cutscene Use is
-only `+use`.
+A is Use (`+use`, objects), **X is the holdable item** (`+button2`, no Enter: that game has an inventory item and
+no cutscenes), **Y held shows the scoreboard and the objectives together** (`+info` and `+analysis`; B is the
+wheel now, so the scoreboard moved to Y), and a tap of the left thumbstick click is the walk/run toggle.
 
 **Weapon wheel** (every mode: single player, co-op and Holomatch). **B** opens it at once and holds it
 open while B is down (nothing else uses a tap of B, so there is no wait); holding the right thumbstick

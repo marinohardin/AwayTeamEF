@@ -24,17 +24,17 @@ modules need no change:
     weapon hand grip     +altattack
     off-hand trigger     +moveup (jump)
     off-hand grip        crouch (vr_move.c)
-    A, X                 +use (the game's Use). In a cutscene or a movie they also skip it: the
-                         game's use-item key (+button2, which skips a camera scene) and the Enter
-                         key (which skips a movie) go with the Use press
+    A                    +use (the game's Use)
+    X                    +button2: skips a cutscene (the game's use-item key) and sends the Enter key,
+                         which skips a movie
     B                    the weapon wheel while held (vr_wheel.c): it opens at once and letting go
                          picks, the same as the right stick click held VR_WHEEL_HOLD ms
     Y                    +info: the mission objectives, while held
     left stick click     held VR_RECENTER_HOLD ms: recentre the head
     left menu button     Escape (the in-game menu)
   in play in Holomatch (VR_HM_Active; docs/vr/HOLOMATCH-H1.md §6.1), different from the above:
-    A                    +button2 (use the holdable item), not Use
-    X                    +use (doors, buttons)
+    A                    +use (doors, buttons), as in single player
+    X                    +button2 (use the holdable item); no Enter key
     Y, held              +info and +analysis: the scoreboard and the objectives
     right stick click    tapped: the last weapon (weapon <n>); held: the weapon wheel
     left stick click     tapped: walk/run toggle (+speed); held: recentre
@@ -68,6 +68,7 @@ does nothing in the new mode until it is released.
 #define VR_ARROW_DELAY		400		// ms before an arrow key repeats
 #define VR_ARROW_REPEAT		120
 #define VR_RECENTER_HOLD	700		// ms the left stick is held in for a recentre
+#define VR_MENU_RESEND		1500	// ms after a menu opens that the cursor is re-sent every frame
 #define VR_WHEEL_HOLD		250		// ms the right stick is held in for the weapon wheel
 
 // logical digital inputs
@@ -76,8 +77,8 @@ enum {
 	IN_ALTATTACK,
 	IN_JUMP,
 	IN_CROUCH,
-	IN_USE,			// A and X (Holomatch: X only): +use
-	IN_ITEM,		// Holomatch A: +button2, use the holdable item
+	IN_USE,			// A: +use
+	IN_ITEM,		// X: +button2 (single player: skips a cutscene, with Enter; Holomatch: the holdable item)
 	IN_INFO,		// Y: +info (the objectives; Holomatch: the scores)
 	IN_ANALYSIS,	// Holomatch Y: the objectives (with the scores)
 	IN_WHEEL,		// B: the weapon wheel
@@ -134,10 +135,10 @@ static struct {
 	int			nextHeldSince;			// when the right stick click went down (in play), 0 = up
 	qboolean	wheelTry;				// B went down: open the wheel at the next frame in play
 	int			wheelBy;				// what opened the wheel: 0 nothing, 1 the stick click, 2 B
-	qboolean	skipping;				// the Use press now held also skips a cutscene
 	qboolean	fireBlocked[NUM_INPUTS];	// a trigger held across the wheel: dead until let go
 	float		cursorFrac[2];
 	qboolean	pointerSeen;			// the hand's ray was on the menu last frame
+	int			menuSince;				// when the menu got the keys, 0 = none
 	float		pointerLast[2];			// where it was, in menu units, when the cursor last followed it
 
 	int			arrowKey;				// held arrow key, 0 = none
@@ -199,12 +200,6 @@ static float VR_Stick( float v ) {
 
 static void VR_Key( int key, qboolean down, int time ) {
 	Com_QueueEvent( time, SE_KEY, key, down, 0, NULL );
-}
-
-// a camera scene or a movie is playing (single player): the game's skip is on its use-item key
-static qboolean VR_InCutscene( void ) {
-	return Cvar_VariableIntegerValue( "cg_cameraActive" ) || Cvar_VariableIntegerValue( "skippingCinematic" ) ||
-		Cvar_VariableIntegerValue( "vr_uiState" ) == 2;
 }
 
 static void VR_GameCmd( int input, qboolean down, int time ) {
@@ -275,23 +270,9 @@ static void VR_GameCmd( int input, qboolean down, int time ) {
 	} else if ( down ) {
 		Cbuf_AddText( va( "%s\n", cmd ) );
 	}
-	if ( input == IN_USE && !vrc.hm ) {
-		// single player: a Use press in a cutscene or a movie skips it. The game's use-item key
-		// (+button2) skips a camera scene and the Enter key skips a movie. Decided when the
-		// button goes down, so its release matches.
-		if ( down ) {
-			vrc.skipping = VR_InCutscene();
-		}
-		if ( vrc.skipping ) {
-			if ( vrc.debugInput->string[0] ) {
-				Com_Printf( "VR input: %s the cutscene skip (+button2 and Enter)\n", down ? "press" : "release" );
-			}
-			Cbuf_AddText( va( "%cbutton2 %d %d\n", down ? '+' : '-', VR_KEYNUM_BASE + IN_ITEM, time ) );
-			VR_Key( K_ENTER, down, time );
-		}
-		if ( !down ) {
-			vrc.skipping = qfalse;
-		}
+	if ( input == IN_ITEM && !vrc.hm ) {
+		// single player: +button2 skips a camera scene and the Enter key skips a movie
+		VR_Key( K_ENTER, down, time );
 	}
 }
 
@@ -460,10 +441,14 @@ static void VR_MenuPointer( int time ) {
 	if ( x > 639.0f ) x = 639.0f;
 	if ( y > 479.0f ) y = 479.0f;
 
-	if ( !vrc.pointerSeen || fabsf( x - vrc.pointerLast[0] ) >= 1.0f || fabsf( y - vrc.pointerLast[1] ) >= 1.0f ) {
+	// a menu that has only just opened may not take the first mouse events (the single-player menu
+	// drops them in its first frames and keeps its cursor in the corner), so for the first
+	// VR_MENU_RESEND ms the cursor is put on the ray every frame, moved or not
+	if ( !vrc.pointerSeen || time - vrc.menuSince < VR_MENU_RESEND ||
+		fabsf( x - vrc.pointerLast[0] ) >= 1.0f || fabsf( y - vrc.pointerLast[1] ) >= 1.0f ) {
 		CL_MouseEvent( -10000, -10000, time );
 		CL_MouseEvent( (int)x, (int)y, time );
-		if ( vrc.debugInput->string[0] ) {
+		if ( vrc.debugInput->string[0] && ( !vrc.pointerSeen || (int)x != (int)vrc.pointerLast[0] || (int)y != (int)vrc.pointerLast[1] ) ) {
 			Com_Printf( "VR pointer: menu cursor to %d %d\n", (int)x, (int)y );
 		}
 		vrc.pointerLast[0] = x;
@@ -506,10 +491,10 @@ void VR_EngineInput( const vrInputState_t *real ) {
 	now[IN_JUMP] = VR_ANALOG( in->trigger[offHand], IN_JUMP );
 	now[IN_CROUCH] = VR_ANALOG( in->squeeze[offHand], IN_CROUCH );
 #undef VR_ANALOG
-	// A and X are both Use. Holomatch keeps A for the holdable item (the one button that game needs
-	// besides Use), so there only X is Use.
-	now[IN_USE] = ( in->buttons & VR_BUTTON_X ) != 0 || ( !vrc.hm && ( in->buttons & VR_BUTTON_A ) != 0 );
-	now[IN_ITEM] = vrc.hm && ( in->buttons & VR_BUTTON_A ) != 0;
+	// A is Use. X is the game's use-item key: it skips a cutscene in single player (with Enter, for
+	// movies) and uses the holdable item in Holomatch.
+	now[IN_USE] = ( in->buttons & VR_BUTTON_A ) != 0;
+	now[IN_ITEM] = ( in->buttons & VR_BUTTON_X ) != 0;
 	// Y shows the objectives; in Holomatch it shows that game's scoreboard and its objectives
 	now[IN_INFO] = ( in->buttons & VR_BUTTON_Y ) != 0;
 	now[IN_ANALYSIS] = vrc.hm && ( in->buttons & VR_BUTTON_Y ) != 0;
@@ -547,6 +532,7 @@ void VR_EngineInput( const vrInputState_t *real ) {
 	if ( mode != vrc.mode ) {
 		VR_LeaveMode( time );
 		vrc.mode = mode;
+		vrc.menuSince = time ? time : 1;
 	}
 
 	// in menus the cursor follows the weapon hand's ray, before a click goes to it
