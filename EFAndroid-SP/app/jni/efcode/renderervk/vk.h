@@ -274,7 +274,7 @@ qboolean vk_vr_eyes_written( void );		// this frame drew both eyes
 qboolean vk_vr_canvas_written( void );		// this frame's canvas went into the 2D layer image
 VkSampleCountFlagBits vk_vr_samples( void );
 VkRenderPass vk_vr_eye_pass( void );
-void vk_vr_request_capture( void );			// vr_screenshot: both eyes and the canvas to TGA files
+void vk_vr_request_capture( int frames );		// vr_screenshot [n]: both eyes and the canvas to TGA files, n frames running
 #endif
 #if defined( USE_FLEXIBLE_DISPLAY ) && !defined( __ANDROID__ )
 qboolean vk_replace_window( void );

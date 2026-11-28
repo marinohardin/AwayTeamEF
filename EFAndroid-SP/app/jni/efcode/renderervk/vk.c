@@ -8673,6 +8673,8 @@ static struct {
 	vrSwapchainInfo_t vignette;
 	VkBuffer		vignette_buffer;	// the mask's pixels, for its one-time fill
 	VkDeviceMemory	vignette_memory;
+	qboolean		laser_ready;
+	vrSwapchainInfo_t laser;
 
 	// per frame
 	int				target;			// -1 the canvas (main pass), else the eye being drawn
@@ -8684,6 +8686,9 @@ static struct {
 	int				capture;		// 0 none, 1 requested, 2 recorded
 	qboolean		capture_eyes;	// the eyes were drawn in the recorded frame (else the canvas only:
 									// a frozen menu or the theater screen draws no eye images)
+	int				capture_more;	// vr_screenshot <n>: frames still to capture after this one
+	qboolean		capture_series;	// files are numbered by the VR frame (VR_GetFrameNumber)
+	unsigned		capture_frame;
 	VkBuffer		capture_buffer;
 	VkDeviceMemory	capture_memory;
 } vk_vr_state;
@@ -8923,6 +8928,7 @@ static void vk_vr_create_resources( void )
 	}
 	vk_vr_state.dimmer_ready = VR_GetDimmerSwapchain( &vk_vr_state.dimmer ) ? qtrue : qfalse;
 	vk_vr_state.vignette_ready = VR_GetVignetteSwapchain( &vk_vr_state.vignette ) ? qtrue : qfalse;
+	vk_vr_state.laser_ready = VR_GetLaserSwapchain( &vk_vr_state.laser ) ? qtrue : qfalse;
 
 	vk_vr_state.ready = qtrue;
 	vk_vr_state.target = -1;
@@ -9041,9 +9047,11 @@ vr_screenshot (debugging, vr_debugCapture 1): the raw bytes of both eye images a
 canvas, copied into a host buffer in the frame's command buffer and written as TGA files
 (screenshots/vr_left.tga, vr_right.tga, vr_canvas.tga) once the frame has finished.
 */
-void vk_vr_request_capture( void ) {
+void vk_vr_request_capture( int frames ) {
 	if ( vk_vr && vk_vr_state.ready && vk_vr_state.capture == 0 ) {
 		vk_vr_state.capture = 1;
+		vk_vr_state.capture_series = frames > 1;
+		vk_vr_state.capture_more = frames > 1 ? frames - 1 : 0;
 	}
 }
 
@@ -9058,6 +9066,7 @@ static void vk_vr_capture_record( void )
 	int eye;
 
 	vk_vr_state.capture_eyes = vk_vr_eyes_written();
+	vk_vr_state.capture_frame = VR_GetFrameNumber();
 
 	Com_Memset( &bdesc, 0, sizeof( bdesc ) );
 	bdesc.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -9175,15 +9184,20 @@ static void vk_vr_capture_finish( void )
 	vk_vr_state.capture = 0;
 	qvkQueueWaitIdle( vk.queue );
 	if ( qvkMapMemory( vk.device, vk_vr_state.capture_memory, 0, VK_WHOLE_SIZE, 0, &data ) == VK_SUCCESS ) {
+		char name[64];
+
 		if ( vk_vr_state.capture_eyes ) {
-			vk_vr_capture_write_tga( "screenshots/vr_left.tga", (const byte *)data, vk_vr_state.eye_width, vk_vr_state.eye_height,
+			Com_sprintf( name, sizeof( name ), vk_vr_state.capture_series ? "screenshots/vr_left_%u.tga" : "screenshots/vr_left.tga", vk_vr_state.capture_frame );
+			vk_vr_capture_write_tga( name, (const byte *)data, vk_vr_state.eye_width, vk_vr_state.eye_height,
 				vk_vr_state.eye_format, qfalse );
-			vk_vr_capture_write_tga( "screenshots/vr_right.tga", (const byte *)data + eyeBytes, vk_vr_state.eye_width, vk_vr_state.eye_height,
+			Com_sprintf( name, sizeof( name ), vk_vr_state.capture_series ? "screenshots/vr_right_%u.tga" : "screenshots/vr_right.tga", vk_vr_state.capture_frame );
+			vk_vr_capture_write_tga( name, (const byte *)data + eyeBytes, vk_vr_state.eye_width, vk_vr_state.eye_height,
 				vk_vr_state.eye_format, qfalse );
-		} else {
+		} else if ( !vk_vr_state.capture_series ) {
 			ri.Printf( PRINT_ALL, "vr_screenshot: no eye images this frame (a frozen menu or the theater screen), the canvas only\n" );
 		}
-		vk_vr_capture_write_tga( "screenshots/vr_canvas.tga", (const byte *)data + eyeBytes * 2, glConfig.vidWidth, glConfig.vidHeight,
+		Com_sprintf( name, sizeof( name ), vk_vr_state.capture_series ? "screenshots/vr_canvas_%u.tga" : "screenshots/vr_canvas.tga", vk_vr_state.capture_frame );
+		vk_vr_capture_write_tga( name, (const byte *)data + eyeBytes * 2, glConfig.vidWidth, glConfig.vidHeight,
 			vk.color_format, qtrue );
 		qvkUnmapMemory( vk.device, vk_vr_state.capture_memory );
 	}
@@ -9191,6 +9205,10 @@ static void vk_vr_capture_finish( void )
 	qvkFreeMemory( vk.device, vk_vr_state.capture_memory, NULL );
 	vk_vr_state.capture_buffer = VK_NULL_HANDLE;
 	vk_vr_state.capture_memory = VK_NULL_HANDLE;
+	if ( vk_vr_state.capture_more > 0 ) {
+		vk_vr_state.capture_more--;
+		vk_vr_state.capture = 1;	// the next frame of the series
+	}
 }
 
 /*
@@ -9322,6 +9340,30 @@ static void vk_vr_end_frame( void )
 	index = VR_GetVignetteImageIndex();
 	if ( vk_vr_state.vignette_ready && index >= 0 && (uint32_t)index < vk_vr_state.vignette.imageCount ) {
 		vk_vr_fill_vignette( vk_vr_state.vignette.images[ index ] );
+	}
+
+	index = VR_GetLaserImageIndex();
+	if ( vk_vr_state.laser_ready && index >= 0 && (uint32_t)index < vk_vr_state.laser.imageCount ) {
+		const VkImage dst = vk_vr_state.laser.images[ index ];
+		VkClearColorValue color;
+		VkImageSubresourceRange range;
+
+		// the menu laser, once: premultiplied red, nearly opaque
+		Com_Memset( &color, 0, sizeof( color ) );
+		color.float32[0] = 0.92f;
+		color.float32[1] = 0.03f;
+		color.float32[2] = 0.03f;
+		color.float32[3] = 0.92f;
+		Com_Memset( &range, 0, sizeof( range ) );
+		range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		range.levelCount = 1;
+		range.layerCount = 1;
+		vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, 0, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT );
+		qvkCmdClearColorImage( vk.cmd->command_buffer, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1, &range );
+		vk_vr_image_barrier( dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT );
 	}
 }
 

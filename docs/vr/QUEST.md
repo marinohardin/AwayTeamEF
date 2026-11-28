@@ -101,26 +101,30 @@ triggers and grips with the hands and nothing else):
 | Right thumbstick, left/right | Turn: snap (a short eased turn, 0.1 s) by default, smooth as an option | view yaw |
 | Right thumbstick, up/down | Next / previous weapon, once per push | `weapnext` / `weapprev` |
 | Right thumbstick click | Hold (0.25 s): the weapon wheel, see below. A tap does nothing (Holomatch: the last weapon) | `weapon <n>` |
+| B | The weapon wheel, the same wheel: it opens at once and letting go picks (see below) | `weapon <n>` |
 | Weapon hand trigger | Fire | `+attack` |
 | Weapon hand grip | Alternate fire | `+altattack` |
 | Other hand trigger | Jump | `+moveup` |
 | Other hand grip | Crouch (standing players can also really crouch) | `+movedown` |
-| X | Use (in VR the head is the lean; Use + strafe no longer leans) | `+use` |
-| A | Enter, and **skip a cutscene** (the game's use-item key skips a camera scene; Enter skips a movie) | `+button2`, and the Enter key |
-| B or Y | The mission objectives, shown while held | `+info` |
+| A | Use (in VR the head is the lean; Use + strafe no longer leans) | `+use` |
+| X | **Skip a cutscene** (the game's use-item key skips a camera scene; Enter skips a movie) | `+button2`, and the Enter key |
+| Y | The mission objectives, shown while held | `+info` |
 | Left thumbstick click | Hold 0.7 s to recentre. A tap does nothing | recentre |
 | Left menu button | Menu | Escape |
 
-In Holomatch (docs: [HOLOMATCH-H1.md](HOLOMATCH-H1.md) §6.1) the same shape holds, with A the holdable
-item (`+button2`, no Enter), **B held the scores** (`+info`), Y the objectives (`+analysis`), and a tap
-of the left thumbstick click the walk/run toggle.
+In Holomatch (docs: [HOLOMATCH-H1.md](HOLOMATCH-H1.md) §6.1) the same shape holds, with these differences:
+A is Use (`+use`, objects), **X is the holdable item** (`+button2`, no Enter: that game has an inventory item and
+no cutscenes), **Y held shows the scoreboard and the objectives together** (`+info` and `+analysis`; B is the
+wheel now, so the scoreboard moved to Y), and a tap of the left thumbstick click is the walk/run toggle.
 
-**Weapon wheel** (every mode: single player, co-op and Holomatch). Holding the right thumbstick
-click for a quarter of a second opens a ring of the weapons the player has, with the game's own
+**Weapon wheel** (every mode: single player, co-op and Holomatch). **B** opens it at once and holds it
+open while B is down (nothing else uses a tap of B, so there is no wait); holding the right thumbstick
+click for a quarter of a second does the same. Either way, letting go of the button that opened it
+picks. It opens a ring of the weapons the player has, with the game's own
 HUD icons, in front of the head, held still in the room while it's open. Point the weapon hand at
 one (a dot shows where the hand points) or push the right stick towards it; the highlighted
 weapon's name shows in the middle, and each new highlight gives a short tick on the weapon hand's
-controller. Letting go of the click switches to it with the ordinary `weapon <n>` command;
+controller. Letting go switches to it with the ordinary `weapon <n>` command;
 letting go in the middle ("Cancel"), or with nothing highlighted, switches nothing. The weapon in
 hand has a bar under it, and weapons without enough ammo are shown crossed out on red (they can
 still be picked, as with a number key). While the wheel is open the triggers don't fire (one still
@@ -138,9 +142,12 @@ so a guest joining while the wheel is open brings time back to normal at once. H
 the usual `weapon <n>` command.
 
 **In menus and the console:** point the weapon hand at the menu: the menu cursor follows where the
-ray meets the menu panel, and the weapon hand's trigger clicks (mouse button 1). The right
+ray meets the menu panel, and the weapon hand's trigger clicks (mouse button 1). A **red laser**
+(`vr_menuLaser`, on by default) is drawn from the hand to the cursor: one thin quad layer in the
+menu's frame, turned about its line to face the head, placed where the ray meets the panel's plane
+(it keeps going past the panel's edge, so you can find the panel again). The right
 thumbstick still moves the cursor (the ray takes the cursor back as soon as the hand moves), the
-left thumbstick sends arrow keys, A is Enter, and B, Y and the menu button are Escape. A button held
+left thumbstick sends arrow keys, A and X are Enter, and B, Y and the menu button are Escape. A button held
 while a menu opens or closes does nothing in the new mode until it is released. The ray works while
 the menu is held in the room (`vr_menuHeadLocked 0`, the default); with it locked to the head the stick
 is the only pointer.
@@ -161,6 +168,10 @@ wheel and the menu pointer).
 | `vr_snapTurnAngle` | 45 | degrees per snap (eased over 0.1 s) |
 | `vr_turnSpeed` | 150 | smooth turn, degrees per second at full deflection |
 | `vr_stickDeadzone` | 0.25 | thumbstick dead zone (0..0.9) |
+| `vr_menuLaser` | 1 | 0 = no laser from the hand to the menu cursor |
+| `vr_hudDistance`, `vr_hudWidth` | 1.2, 1.2 | the HUD's distance and width in metres (were 1.8 and 1.5; a config saved by an older build is reset to these once, through `vr_layoutVersion`) |
+| `vr_menuDistance`, `vr_menuWidth` | 1.0, 1.3 | the menu's distance and width in metres (were 2.0 and 2.0; the same one-time reset) |
+| `vr_debugFrames` | 0 | debugging: log what each frame submits; `vr_screenshot <n>` then writes n frames in a row, numbered by the same frame |
 | `vr_menuCursorSpeed` | 500 | menu cursor speed from the right thumbstick, pixels per second |
 | `vr_leftHanded` | 0 | 1 = the weapon in the left hand (its trigger fires and its grip is alternate fire; the other hand's trigger jumps and its grip crouches) |
 | `vr_debugInput` | empty | debugging: pretend controller state, `"buttons trigL trigR gripL gripR stickX stickY"` (the buttons are the `VR_BUTTON_` bits in `vr_input.h`), added to the real controllers |
@@ -178,7 +189,7 @@ head. Details in [MOVEMENT.md](MOVEMENT.md).
 | Piece | Path |
 |---|---|
 | Actions, bindings, sync, poses (OpenXR only) | `EFAndroid-SP/app/jni/efcode/vr/vr_input.c`, `vr_input.h`, `vr_local.h` |
-| Controller map onto the engine (compiled into the engine target), the eased snap turn, the menu pointer | `efcode/vr/vr_input_engine.c` (the ray onto the 2D layer: `VR_Pointer_OnCanvas` in `vr_wheel.c`) |
+| Controller map onto the engine (compiled into the engine target), the eased snap turn, the menu pointer and its laser | `efcode/vr/vr_input_engine.c` (the ray onto the 2D layer: `VR_Pointer_OnCanvas` and `VR_Pointer_Laser` in `vr_wheel.c`; the laser layer: `VR_SetMenuLaser` and `VR_EndFrame` in `vr_openxr.c`) |
 | Weapon wheel: pointing, drawing, slow motion (engine target) | `efcode/vr/vr_wheel.c`, `vr_wheel.h`; the single-player weapon list comes from the cgame (`CG_VR_SETWEAPONS`, `cg_vr.cpp`) through `sp/sp_bridge.cpp`, which also slows its clock |
 | Session wiring | `efcode/vr/vr_openxr.c`: `VR_Input_*` calls in `VR_Init`, `VR_Shutdown`, `VR_CreateSession`, `VR_DestroySession`, `VR_PollEvents` and `VR_BeginFrame` |
 | Android shell | `android/AndroidManifest-quest.xml`, `android/java-quest/` (`StartActivity`, `QuestActivity`), `android/jni/quest_jni.c`, `android/CMakeLists.txt` (`EF_VR`, and `EF_COOP` with it), `android/make-apk.sh` (`VR=1`) |
@@ -186,11 +197,15 @@ head. Details in [MOVEMENT.md](MOVEMENT.md).
 
 ## Known issues
 
-From the first session on a headset (2026-11-27). None is fixed yet; the numbers are the owner's.
+From the first session on a headset (2026-11-27); the numbers are the owner's.
 
-- **4. The pause menu flickers once when it opens.** Probably one frame between the frozen world
-  and the menu layer (the 2D quad switches from the HUD to the menu placement a frame before the
-  frozen world is submitted).
+- **4. The pause menu flickers once when it opens.** *Fixed (vr-r3-controls), untested on a headset.* Cause,
+  from a frame-by-frame capture in the simulator: the single-player menu's first two frames aren't a clean
+  picture. The first is the menu on an opaque black background, and the second has nothing drawn at all (the
+  bridge hides the menu for one frame to capture the save-game thumbnail). Shown as they came, the 2D layer
+  flashed black and then blanked. Now, for three frames after a game frame, the world stays frozen and the 2D
+  layer keeps showing the last HUD image (no new image, no dimming, no laser), and the menu then comes in whole
+  (`R_VR_BeginFrame` in `renderervk/tr_vr.c`, `VR_SetHoldCanvas`). The menu is about 40 ms later (3 frames at 72 Hz).
 - **7. Walking into a ladder doesn't climb it; forward plus jump does.** Fixed (round 3): the
   game's climb follows the command's pitch, which in VR is the body's (single player) or the gun's
   (Holomatch), not the head's. Moving into a ladder now climbs it, and down while looking down;
@@ -202,9 +217,13 @@ From the first session on a headset (2026-11-27). None is fixed yet; the numbers
   mipmap/MSAA cure for sub-pixel highlights), and the flare visibility test, which reads its
   result one frame late while the previous frame may still be drawing. Headset checks:
   `r_flares 0`; and `vr_msaa 0` (then `vid_restart`) against the default 4.
-- **10. The HUD and the menu layer may float too far away.** The defaults are `vr_hudDistance`
-  and `vr_menuDistance` (see [RENDERING.md](RENDERING.md)); a closer default is worth trying on
-  the headset.
+- **10. The HUD and the menu layer may float too far away.** *Changed (vr-r3-controls), to judge on a headset.*
+  The HUD is now 1.2 m away and 1.2 m wide (was 1.8 and 1.5), the menu 1.0 m and 1.3 m (was 2.0 and 2.0), and
+  the weapon wheel, which was already 1.0 m, is unchanged. The cvars are archived and a saved config holds the
+  old numbers, so a new default alone would never have reached the headset: a one-time reset (`vr_layoutVersion`)
+  puts the four cvars on the new values. The pointer needs nothing more, because it intersects the quad as it was
+  submitted. If it is still wrong, set `vr_menuDistance`, `vr_menuWidth`, `vr_hudDistance` and `vr_hudWidth`
+  (keep the width about 1.2 to 1.3 times the distance for the same angular size).
 - **Start screen address entry and the network search are untested on the headset.** The address is
   typed on an on-screen number pad (the system keyboard hung the app when the old text field was
   tapped; the cause could not be confirmed without a headset), and the search is only verified against

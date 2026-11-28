@@ -106,6 +106,8 @@ typedef struct {
 	vrQuadPlacement_t placement;	// for quadMode
 	int				dim;			// draw the dimmer between the world and the quad
 	int				vignette;		// draw the movement vignette (VR_SetComfort) over the world
+	int				laser;			// draw the menu laser (VR_SetMenuLaser) over the 2D quad
+	int				debug;			// log what this frame submits (vr_debugFrames)
 } vrFrameLayers_t;
 
 // printing: the renderer passes a function that takes one finished line
@@ -162,6 +164,10 @@ int			VR_GetDimmerSwapchain( vrSwapchainInfo_t *info );
 // re-show the last ones); dimAlpha is the dimmer's wanted opacity. VR_EndFrame must follow every
 // VR_BeginFrame (whatever it returned) once the frame's command buffer has been submitted.
 int			VR_BeginFrame( int wantEyes, float dimAlpha );
+// before VR_BeginFrame: 1 = this frame doesn't take a new 2D layer image, so the layer re-shows the
+// last one that was released (a menu is opening and its first frames aren't settled yet)
+void		VR_SetHoldCanvas( int hold );
+int			VR_HaveCanvas( void );		// a 2D layer image has been released at least once
 int			VR_FrameActive( void );		// between a VR_BeginFrame that returned 1 and VR_EndFrame
 int			VR_GetEyeView( int eye, vrEyeView_t *view );
 int			VR_GetEyeImageIndex( int eye );		// -1 when no eye image is acquired this frame
@@ -173,6 +179,15 @@ void		VR_EndFrame( const vrFrameLayers_t *layers );
 // (OpenXR axes, metres), yaw about +Y (radians, 0 = facing +Z, toward a head looking down -Z)
 // and size in metres. Returns 0 when no quad went out last frame or it was head-locked.
 int			VR_GetLastQuad( vrQuadMode_t *mode, float centre[3], float *yaw, float size[2] );
+// the red menu laser, from the weapon hand to the menu cursor: both ends in the reference space
+// (OpenXR axes, metres), set by the engine's input every frame while a menu has the keys; NULL
+// ends it. It goes out as one thin quad layer after the 2D quad (VR_EndFrame, layers.laser).
+void		VR_SetMenuLaser( const float from[3], const float to[3] );
+// the laser's swapchain (a tiny image filled once with red) and the image to fill this frame
+int			VR_GetLaserSwapchain( vrSwapchainInfo_t *info );
+int			VR_GetLaserImageIndex( void );
+// the frame counter (every VR_BeginFrame), for matching debug captures to vr_debugFrames lines
+unsigned	VR_GetFrameNumber( void );
 
 // head-origin reset: the current head position becomes the origin of the eye offsets that
 // VR_GetEyeOffset returns (done once automatically, on the first tracked frame)

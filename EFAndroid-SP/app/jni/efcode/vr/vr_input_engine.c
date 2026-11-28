@@ -24,24 +24,27 @@ modules need no change:
     weapon hand grip     +altattack
     off-hand trigger     +moveup (jump)
     off-hand grip        crouch (vr_move.c)
-    X                    +use
-    A                    +button2 and Enter: skips a cutscene (the game's use-item key and the
-                         key that skips a movie)
-    B, Y                 +info: the mission objectives, while held
+    A                    +use (the game's Use)
+    X                    +button2: skips a cutscene (the game's use-item key) and sends the Enter key,
+                         which skips a movie
+    B                    the weapon wheel while held (vr_wheel.c): it opens at once and letting go
+                         picks, the same as the right stick click held VR_WHEEL_HOLD ms
+    Y                    +info: the mission objectives, while held
     left stick click     held VR_RECENTER_HOLD ms: recentre the head
     left menu button     Escape (the in-game menu)
   in play in Holomatch (VR_HM_Active; docs/vr/HOLOMATCH-H1.md §6.1), different from the above:
-    A                    +button2 (use the holdable item), not Enter
-    B, held              +info (the scoreboard)
-    Y                    +analysis (the objectives)
+    A                    +use (doors, buttons), as in single player
+    X                    +button2 (use the holdable item); no Enter key
+    Y, held              +info and +analysis: the scoreboard and the objectives
     right stick click    tapped: the last weapon (weapon <n>); held: the weapon wheel
     left stick click     tapped: walk/run toggle (+speed); held: recentre
   in menus and the console (any key catcher)
-    weapon hand's ray    the menu cursor, where it meets the menu (vr_wheel.c: VR_Pointer_OnCanvas)
+    weapon hand's ray    the menu cursor, where it meets the menu (vr_wheel.c: VR_Pointer_OnCanvas),
+                         with a red laser drawn from the hand to it (VR_SetMenuLaser)
     right stick          the mouse cursor too (the fallback; the ray takes over when the hand moves)
     weapon hand trigger  mouse button 1
     left stick           arrow keys (with key repeat)
-    A                    Enter
+    A, X                 Enter
     B, Y, menu button    Escape
 
 A button held while play and menus swap is let go of in the mode it was pressed in, and it
@@ -65,6 +68,7 @@ does nothing in the new mode until it is released.
 #define VR_ARROW_DELAY		400		// ms before an arrow key repeats
 #define VR_ARROW_REPEAT		120
 #define VR_RECENTER_HOLD	700		// ms the left stick is held in for a recentre
+#define VR_MENU_RESEND		1500	// ms after a menu opens that the cursor is re-sent every frame
 #define VR_WHEEL_HOLD		250		// ms the right stick is held in for the weapon wheel
 
 // logical digital inputs
@@ -73,10 +77,11 @@ enum {
 	IN_ALTATTACK,
 	IN_JUMP,
 	IN_CROUCH,
-	IN_USE,
-	IN_ENTER,		// A: +button2 (use the item / skip a cutscene), and Enter outside Holomatch
-	IN_INFO,		// B, and Y outside Holomatch: +info (the objectives; Holomatch: the scores)
-	IN_ANALYSIS,	// Holomatch Y: the objectives
+	IN_USE,			// A: +use
+	IN_ITEM,		// X: +button2 (single player: skips a cutscene, with Enter; Holomatch: the holdable item)
+	IN_INFO,		// Y: +info (the objectives; Holomatch: the scores)
+	IN_ANALYSIS,	// Holomatch Y: the objectives (with the scores)
+	IN_WHEEL,		// B: the weapon wheel
 	IN_WEAPNEXT,	// right stick click
 	IN_WEAPPREV,	// left stick click
 	NUM_INPUTS
@@ -90,10 +95,11 @@ static const struct {
 	{ "+altattack",	0 },
 	{ "+moveup",	0 },
 	{ "+movedown",	0 },
-	{ "+use",		0 },
+	{ "+use",		K_ENTER },
 	{ "+button2",	K_ENTER },
 	{ "+info",		K_ESCAPE },
-	{ "+analysis",	K_ESCAPE },
+	{ "+analysis",	0 },
+	{ "wheel",		K_ESCAPE },
 	{ "weapnext",	0 },
 	{ "weapprev",	0 },
 };
@@ -127,9 +133,12 @@ static struct {
 	int			prevHeldSince;			// when the left stick click went down (in play), 0 = up
 	qboolean	prevRecentered;			// that hold already recentred
 	int			nextHeldSince;			// when the right stick click went down (in play), 0 = up
+	qboolean	wheelTry;				// B went down: open the wheel at the next frame in play
+	int			wheelBy;				// what opened the wheel: 0 nothing, 1 the stick click, 2 B
 	qboolean	fireBlocked[NUM_INPUTS];	// a trigger held across the wheel: dead until let go
 	float		cursorFrac[2];
 	qboolean	pointerSeen;			// the hand's ray was on the menu last frame
+	int			menuSince;				// when the menu got the keys, 0 = none
 	float		pointerLast[2];			// where it was, in menu units, when the cursor last followed it
 
 	int			arrowKey;				// held arrow key, 0 = none
@@ -229,8 +238,10 @@ static void VR_GameCmd( int input, qboolean down, int time ) {
 		if ( down ) {
 			vrc.nextHeldSince = time ? time : 1;
 		} else {
-			if ( VR_Wheel_IsOpen() ) {
+			if ( VR_Wheel_IsOpen() && vrc.wheelBy != 2 ) {
 				VR_Wheel_Close( qtrue, "released" );
+			} else if ( VR_Wheel_IsOpen() ) {
+				// B's wheel: its own release picks
 			} else if ( vrc.nextHeldSince ) {
 				if ( !vrc.hm ) {
 					Cbuf_AddText( "weapnext\n" );
@@ -242,13 +253,25 @@ static void VR_GameCmd( int input, qboolean down, int time ) {
 		}
 		return;
 	}
+	if ( input == IN_WHEEL ) {
+		// B: the wheel opens at once (in the frame, VR_EngineInput) and letting go picks
+		if ( down ) {
+			vrc.wheelTry = qtrue;
+		} else {
+			vrc.wheelTry = qfalse;
+			if ( VR_Wheel_IsOpen() && vrc.wheelBy == 2 ) {
+				VR_Wheel_Close( qtrue, "released" );
+			}
+		}
+		return;
+	}
 	if ( cmd[0] == '+' ) {
 		Cbuf_AddText( va( "%c%s %d %d\n", down ? '+' : '-', cmd + 1, VR_KEYNUM_BASE + input, time ) );
 	} else if ( down ) {
 		Cbuf_AddText( va( "%s\n", cmd ) );
 	}
-	if ( input == IN_ENTER && !vrc.hm ) {
-		// single player: +button2 skips a camera scene, and the Enter key skips a movie
+	if ( input == IN_ITEM && !vrc.hm ) {
+		// single player: +button2 skips a camera scene and the Enter key skips a movie
 		VR_Key( K_ENTER, down, time );
 	}
 }
@@ -324,12 +347,32 @@ static void VR_SnapFlush( void ) {
 	VR_SnapStep( Sys_Milliseconds(), qtrue );
 }
 
+// opens the weapon wheel; the triggers are let go of (no shot from a trigger held as it opens) and
+// stay dead until the wheel has shut and they've been released
+static qboolean VR_OpenWheel( int time ) {
+	int i;
+
+	if ( !VR_Wheel_Open() ) {
+		return qfalse;
+	}
+	for ( i = IN_ATTACK; i <= IN_ALTATTACK; i++ ) {
+		if ( vrc.down[i] ) {
+			VR_Release( i, time );	// stop firing
+			vrc.down[i] = qfalse;
+		}
+		vrc.fireBlocked[i] = qtrue;
+	}
+	return qtrue;
+}
+
 // let go of everything held in the old mode; buttons still down stay dead until released
 static void VR_LeaveMode( int time ) {
 	int i;
 
 	vrc.prevHeldSince = 0;	// a held left stick click let go by a mode change: neither a tap nor a hold
 	vrc.nextHeldSince = 0;	// the same for the right one; an open wheel shuts without a pick
+	vrc.wheelTry = qfalse;
+	vrc.wheelBy = 0;
 	VR_Wheel_Reset( "left play" );
 
 	for ( i = 0; i < NUM_INPUTS; i++ ) {
@@ -373,9 +416,17 @@ static void VR_ApplyDebugInput( vrInputState_t *st ) {
 static void VR_MenuPointer( int time ) {
 	float x, y;
 
+	float from[3], to[3];
+
 	if ( !( Key_GetCatcher() & KEYCATCH_UI ) || ( Key_GetCatcher() & KEYCATCH_CONSOLE ) ||
-		!VR_Pointer_OnCanvas( VR_QUAD_MENU, &x, &y ) ||
-		x < 0.0f || y < 0.0f || x >= cls.glconfig.vidWidth || y >= cls.glconfig.vidHeight ) {
+		!VR_Pointer_Laser( VR_QUAD_MENU, &x, &y, from, to ) ) {
+		vrc.pointerSeen = qfalse;
+		VR_SetMenuLaser( NULL, NULL );
+		return;
+	}
+	// the laser goes to where the ray meets the menu's plane, off the panel too, so it can be found
+	VR_SetMenuLaser( from, to );
+	if ( x < 0.0f || y < 0.0f || x >= cls.glconfig.vidWidth || y >= cls.glconfig.vidHeight ) {
 		vrc.pointerSeen = qfalse;
 		return;
 	}
@@ -390,10 +441,14 @@ static void VR_MenuPointer( int time ) {
 	if ( x > 639.0f ) x = 639.0f;
 	if ( y > 479.0f ) y = 479.0f;
 
-	if ( !vrc.pointerSeen || fabsf( x - vrc.pointerLast[0] ) >= 1.0f || fabsf( y - vrc.pointerLast[1] ) >= 1.0f ) {
+	// a menu that has only just opened may not take the first mouse events (the single-player menu
+	// drops them in its first frames and keeps its cursor in the corner), so for the first
+	// VR_MENU_RESEND ms the cursor is put on the ray every frame, moved or not
+	if ( !vrc.pointerSeen || time - vrc.menuSince < VR_MENU_RESEND ||
+		fabsf( x - vrc.pointerLast[0] ) >= 1.0f || fabsf( y - vrc.pointerLast[1] ) >= 1.0f ) {
 		CL_MouseEvent( -10000, -10000, time );
 		CL_MouseEvent( (int)x, (int)y, time );
-		if ( vrc.debugInput->string[0] ) {
+		if ( vrc.debugInput->string[0] && ( !vrc.pointerSeen || (int)x != (int)vrc.pointerLast[0] || (int)y != (int)vrc.pointerLast[1] ) ) {
 			Com_Printf( "VR pointer: menu cursor to %d %d\n", (int)x, (int)y );
 		}
 		vrc.pointerLast[0] = x;
@@ -436,12 +491,14 @@ void VR_EngineInput( const vrInputState_t *real ) {
 	now[IN_JUMP] = VR_ANALOG( in->trigger[offHand], IN_JUMP );
 	now[IN_CROUCH] = VR_ANALOG( in->squeeze[offHand], IN_CROUCH );
 #undef VR_ANALOG
-	now[IN_USE] = ( in->buttons & VR_BUTTON_X ) != 0;
-	now[IN_ENTER] = ( in->buttons & VR_BUTTON_A ) != 0;
-	// B shows the objectives (Holomatch: the scores). Y does too, except in Holomatch, where it
-	// is that game's objectives
-	now[IN_INFO] = ( in->buttons & VR_BUTTON_B ) != 0 || ( !vrc.hm && ( in->buttons & VR_BUTTON_Y ) != 0 );
+	// A is Use. X is the game's use-item key: it skips a cutscene in single player (with Enter, for
+	// movies) and uses the holdable item in Holomatch.
+	now[IN_USE] = ( in->buttons & VR_BUTTON_A ) != 0;
+	now[IN_ITEM] = ( in->buttons & VR_BUTTON_X ) != 0;
+	// Y shows the objectives; in Holomatch it shows that game's scoreboard and its objectives
+	now[IN_INFO] = ( in->buttons & VR_BUTTON_Y ) != 0;
 	now[IN_ANALYSIS] = vrc.hm && ( in->buttons & VR_BUTTON_Y ) != 0;
+	now[IN_WHEEL] = ( in->buttons & VR_BUTTON_B ) != 0;
 	now[IN_WEAPNEXT] = ( in->buttons & VR_BUTTON_RSTICK ) != 0 || vrc.debugWheel->integer;
 	now[IN_WEAPPREV] = ( in->buttons & VR_BUTTON_LSTICK ) != 0;
 
@@ -475,11 +532,14 @@ void VR_EngineInput( const vrInputState_t *real ) {
 	if ( mode != vrc.mode ) {
 		VR_LeaveMode( time );
 		vrc.mode = mode;
+		vrc.menuSince = time ? time : 1;
 	}
 
 	// in menus the cursor follows the weapon hand's ray, before a click goes to it
 	if ( mode == MODE_UI ) {
 		VR_MenuPointer( time );
+	} else {
+		VR_SetMenuLaser( NULL, NULL );
 	}
 
 	// the weapon wheel: the pointer and the reasons to shut it, before a release picks below.
@@ -488,6 +548,9 @@ void VR_EngineInput( const vrInputState_t *real ) {
 	{
 		const float stick[2] = { in->turn[0], in->turn[1] };
 		VR_Wheel_Update( stick, mode == MODE_GAME );
+	}
+	if ( !VR_Wheel_IsOpen() ) {
+		vrc.wheelBy = 0;
 	}
 	for ( i = IN_ATTACK; i <= IN_ALTATTACK; i++ ) {
 		if ( VR_Wheel_IsOpen() ) {
@@ -507,7 +570,7 @@ void VR_EngineInput( const vrInputState_t *real ) {
 			// a fresh press goes to the current mode
 			if ( mode == MODE_GAME ) {
 				VR_GameCmd( i, qtrue, time );
-				vrc.heldIn[i] = ( vr_map[i].gameCmd[0] == '+' || i == IN_WEAPPREV || i == IN_WEAPNEXT ) ? MODE_GAME : MODE_NONE;
+				vrc.heldIn[i] = ( vr_map[i].gameCmd[0] == '+' || i == IN_WEAPPREV || i == IN_WEAPNEXT || i == IN_WHEEL ) ? MODE_GAME : MODE_NONE;
 			} else if ( mode == MODE_UI && vr_map[i].uiKey ) {
 				VR_Key( vr_map[i].uiKey, qtrue, time );
 				vrc.heldIn[i] = MODE_UI;
@@ -535,16 +598,18 @@ void VR_EngineInput( const vrInputState_t *real ) {
 			Com_Printf( "VR: recentred\n" );
 		}
 
+		if ( vrc.wheelTry && !VR_Wheel_IsOpen() ) {
+			// B: opens at once, no wait for a tap that doesn't exist. If it can't open now (dead,
+			// a cutscene...) the release does nothing
+			if ( VR_OpenWheel( time ) ) {
+				vrc.wheelBy = 2;
+			}
+			vrc.wheelTry = qfalse;
+		}
 		if ( vrc.nextHeldSince && !VR_Wheel_IsOpen() && time - vrc.nextHeldSince >= VR_WHEEL_HOLD ) {
 			// a hold, never also a tap: if the wheel can't open now the release does nothing
-			if ( VR_Wheel_Open() ) {
-				for ( i = IN_ATTACK; i <= IN_ALTATTACK; i++ ) {
-					if ( vrc.down[i] ) {
-						VR_Release( i, time );	// stop firing
-						vrc.down[i] = qfalse;
-					}
-					vrc.fireBlocked[i] = qtrue;
-				}
+			if ( VR_OpenWheel( time ) ) {
+				vrc.wheelBy = 1;
 			}
 			vrc.nextHeldSince = 0;
 		}
