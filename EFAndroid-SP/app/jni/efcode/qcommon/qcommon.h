@@ -460,6 +460,8 @@ void Cbuf_ExecuteText( int exec_when, const char *text );
 // this can be used in place of either Cbuf_AddText or Cbuf_InsertText
 
 void Cbuf_Execute (void);
+void Cbuf_ExecuteFront( const char *text );
+// Runs text now, before anything already in the buffer, whatever waits are pending
 // Pulls off \n terminated lines of text from the command buffer and sends
 // them through Cmd_ExecuteString.  Stops when the buffer is empty.
 // Normally called once per frame, but may be explicitly invoked.
@@ -585,6 +587,13 @@ void	Cvar_VariableStringBuffer( const char *var_name, char *buffer, int bufsize 
 // returns an empty string if not defined
 
 int	Cvar_Flags(const char *var_name);
+
+// the main Holomatch config over a mod folder's (cfg_overlay.h): values for cvars not registered yet
+void	Cvar_SetPending( const char *name, const char *value );
+qboolean	Com_HmQueueOverlay( const char *filename );	// common.c
+void	Cvar_DropPending( const char *name );
+void	Cvar_ClearPending( void );
+void	Cvar_ForEachEngineArchived( void ( *fn )( const char *name, const char *value, void *ctx ), void *ctx );
 // returns CVAR_NONEXISTENT if cvar doesn't exist or the flags of that particular CVAR.
 
 void	Cvar_CommandCompletion( void(*callback)(const char *s) );
@@ -1128,6 +1137,9 @@ void Key_KeynameCompletion( void(*callback)(const char *s) );
 // for keyname autocompletion
 
 void Key_WriteBindings( fileHandle_t f );
+// which keys changed since the snapshot (cfg_overlay.h)
+void Key_SnapshotBindings( void );
+void Key_ForEachChangedBinding( void ( *fn )( const char *key, const char *binding, void *ctx ), void *ctx );
 // for writing the config files
 
 void S_ClearSoundBuffer( void );

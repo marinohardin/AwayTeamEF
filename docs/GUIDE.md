@@ -398,6 +398,9 @@ The `ReadMe.txt` that comes with each download ([Windows](windows/ReadMe.txt),
   prediction on servers that offer it (see [cMod's game modules](#cmods-game-modules)).
   Single player and Holomatch keep separate settings (`efspconfig.cfg` / `hmconfig.cfg`);
   single player never opens a network connection, except when you use co-op.
+  On a server that runs a mod, your keys and your graphics, sound, mouse and name settings
+  are the same as everywhere else, and changes you make there stay changed. A key you only
+  bound in that mod keeps its binding there, and so do the mod's own settings.
 - **Co-op.** Play the single-player campaign with a friend: the
   launcher's **Co-op…** button hosts a game or joins one, on your network or over the
   internet, with revives instead of instant death. See

@@ -47,6 +47,24 @@ jobs:
       - name: Co-op compatibility version
         run: tools/check-coop-compat.sh
 
+  # Unit tests that need no game data: engine pieces that build alone (tests/engine)
+  # and the launcher core (tests/launcher).
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Engine
+        run: |
+          cmake -S tests/engine -B build/engine-tests
+          cmake --build build/engine-tests
+          ctest --test-dir build/engine-tests --output-on-failure
+      - name: Launcher core
+        run: |
+          cmake -S tests/launcher -B build/launcher-tests
+          cmake --build build/launcher-tests
+          ctest --test-dir build/launcher-tests --output-on-failure
+
   # ------------------------------------------------------------------ Linux
   linux:
     if: github.ref_type != 'tag' || startsWith(github.ref_name, 'macos-v')

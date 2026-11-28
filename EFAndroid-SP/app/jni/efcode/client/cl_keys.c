@@ -1071,6 +1071,42 @@ void Key_WriteBindings( fileHandle_t f ) {
 
 /*
 ============
+Key_SnapshotBindings / Key_ForEachChangedBinding
+
+The bindings as they were after the configs ran, to tell which keys the player
+changed in a mod folder (cfg_overlay.h): those go into the main config too.
+============
+*/
+static char *keys_snapshot[MAX_KEYS];
+
+void Key_SnapshotBindings( void ) {
+	int i;
+
+	for ( i = 0; i < MAX_KEYS; i++ ) {
+		if ( keys_snapshot[i] ) {
+			Z_Free( keys_snapshot[i] );
+			keys_snapshot[i] = NULL;
+		}
+		if ( keys[i].binding && keys[i].binding[0] )
+			keys_snapshot[i] = CopyString( keys[i].binding );
+	}
+}
+
+void Key_ForEachChangedBinding( void ( *fn )( const char *key, const char *binding, void *ctx ), void *ctx ) {
+	int i;
+
+	for ( i = 0; i < MAX_KEYS; i++ ) {
+		const char *now = ( keys[i].binding && keys[i].binding[0] ) ? keys[i].binding : "";
+		const char *then = keys_snapshot[i] ? keys_snapshot[i] : "";
+
+		if ( strcmp( now, then ) )
+			fn( Key_KeynumToString( i ), now, ctx );
+	}
+}
+
+
+/*
+============
 Key_Bindlist_f
 
 ============
