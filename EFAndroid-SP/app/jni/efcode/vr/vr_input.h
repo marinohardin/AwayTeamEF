@@ -39,23 +39,23 @@ typedef struct {
 	int		valid;				// position and orientation both tracked this frame
 } vrPose_t;
 
-// digital actions (vrInputState_t.buttons); the default bindings are in vr_input.c
-#define VR_BUTTON_JUMP		0x0001	// A
-#define VR_BUTTON_CROUCH	0x0002	// B
-#define VR_BUTTON_USE		0x0004	// X
+// digital actions (vrInputState_t.buttons), named for the physical button; the controller map
+// onto the game is in vr_input_engine.c, the default bindings in vr_input.c
+#define VR_BUTTON_A			0x0001	// A: Enter, skip a cutscene
+#define VR_BUTTON_B			0x0002	// B: the mission objectives (Holomatch: the scores)
+#define VR_BUTTON_X			0x0004	// X: use
 #define VR_BUTTON_MENU		0x0008	// the left menu button
-#define VR_BUTTON_Y			0x0040	// Y: the menu in single player, the objectives in Holomatch
-#define VR_BUTTON_WEAPNEXT	0x0010	// right thumbstick click
-#define VR_BUTTON_WEAPPREV	0x0020	// left thumbstick click
+#define VR_BUTTON_Y			0x0040	// Y: the mission objectives (Holomatch: its objectives)
+#define VR_BUTTON_RSTICK	0x0010	// right thumbstick click: the weapon wheel
+#define VR_BUTTON_LSTICK	0x0020	// left thumbstick click: recentre (held)
 
 typedef struct {
 	int			active;			// synced this frame with the session focused; else all zero
 	unsigned	frame;			// counts syncs
 	float		move[2];		// left thumbstick: x right, y forward (-1..1)
 	float		turn[2];		// right thumbstick: x right, y up (-1..1)
-	float		attack;			// right trigger (0..1)
-	float		altAttack;		// left trigger (0..1)
-	float		squeeze[VR_HANDS];	// grips (0..1); Holomatch maps them
+	float		trigger[VR_HANDS];	// triggers (0..1): the weapon hand's fires, the other one jumps
+	float		squeeze[VR_HANDS];	// grips (0..1): the weapon hand's is alternate fire, the other one crouches
 	unsigned	buttons;		// VR_BUTTON_*
 	vrPose_t	head;			// the VIEW space: between the eyes
 	vrPose_t	aim[VR_HANDS];	// pointing ray: origin and -Z along the controller

@@ -7,7 +7,7 @@
 #   VR=1 android/make-apk.sh       -> android/build/AwayTeamEF-Quest-<version>-arm64.apk   (Meta Quest)
 #
 # The Quest variant (docs/vr/QUEST.md): package org.awayteamef.quest, AndroidManifest-quest.xml,
-# QuestActivity (android/java-quest), the engine with EF_VR=ON (efcode/vr: OpenXR rendering and
+# StartActivity and QuestActivity (android/java-quest), the engine with EF_VR=ON (efcode/vr: OpenXR rendering and
 # controllers), and libopenxr_loader.so built here with the NDK from the Khronos
 # OpenXR-SDK-Source release that matches deps/openxr/include (downloaded once, about 5 MB,
 # checksum-checked). Data folder: /sdcard/Android/obb/org.awayteamef.quest/baseEF/.
@@ -20,8 +20,9 @@
 #   adb logcat -s VoyagerSP EFSP SDL AwayTeamEF
 # Uninstalling the app deletes that folder (data, configs and saves) too.
 #
-# Not in this build yet: Bink cinematics (no Android FFmpeg; movies are skipped),
-# co-op (EF_COOP) and touch controls art.
+# Not in this build yet: Bink cinematics (no Android FFmpeg; movies are skipped) and co-op in the
+# flat APK. The Quest variant has co-op (EF_COOP, switched on with VR=1) and a start screen
+# (StartActivity: Single player, Co-op host, Co-op join, Holomatch).
 #
 # Environment (all optional):
 #   ANDROID_HOME        SDK (default ~/Library/Android/sdk)

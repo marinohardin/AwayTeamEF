@@ -1677,6 +1677,7 @@ static qboolean IN_TouchControlsActive( void )
 	// Gate must stay IDENTICAL to the draw gate in SCR_DrawScreenField so the
 	// overlay can never be active-but-invisible (or drawn-but-dead): only the
 	// console and full menus suppress it; transient cgame catcher bits do not.
+	if ( TC_HiddenByVR( ) ) return qfalse;  // the Quest build: no touch overlay (touch_controls.h)
 	if ( Key_GetCatcher( ) & ( KEYCATCH_CONSOLE | KEYCATCH_UI ) ) return qfalse;
 	if ( clc.state != CA_ACTIVE ) return qfalse;  // not in a live game
 	// EF1 SP: an in-game cinematic overlay stays CA_ACTIVE but covers the HUD — suppress the

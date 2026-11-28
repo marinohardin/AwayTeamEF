@@ -71,7 +71,10 @@ add_subdirectory(${EF_SDL2COMPAT_SOURCE} sdl2compat EXCLUDE_FROM_ALL)
 # sdl2-compat finds SDL 3 with dlopen("libSDL3.so") at run time; the APK carries both
 
 # ---- the game modules (efgame/: libefgame.so, libefui.so) ----
-set(EF_COOP OFF CACHE BOOL "" FORCE)	# co-op on Android comes later
+# Co-op (host and join) in the Quest build, where the start screen has buttons for it
+# (android/java-quest StartActivity); the flat phone build has no co-op yet. The game's co-op
+# code is the same as on Linux (efgame/src/coop); the engine's side is sys_coop_host.c, below.
+set(EF_COOP ${EF_VR} CACHE BOOL "" FORCE)
 add_subdirectory(${EF_ROOT}/efgame efgame)
 
 # ---- the engine: libmain.so ----
@@ -137,8 +140,21 @@ target_include_directories(sp_game_bridge PRIVATE
   ${EFG}/src/client ${EFG}/src/renderer ${EFG}/src/qcommon ${SP})
 target_compile_options(sp_game_bridge PRIVATE
   -include ${EFG}/android/ef_android_compat.h -fno-threadsafe-statics -fcommon -w)
-target_compile_definitions(sp_game_bridge PRIVATE NDEBUG EF_DYLIB_MODULES)
+target_compile_definitions(sp_game_bridge PRIVATE NDEBUG EF_DYLIB_MODULES
+  $<$<BOOL:${EF_COOP}>:EF_COOP>)
 set_property(TARGET sp_game_bridge PROPERTY CXX_STANDARD 17)
+
+if(EF_COOP)
+  # engine side of co-op, as on Linux (engine/CMakeLists.txt): sys_coop_net.c compiles unchanged
+  # with sys_coop_compat.h forced in (raw deflate through zlib, arc4random), and zlib's deflate
+  list(APPEND SYS_SRC ${EF}/sys/sys_coop_host.c ${EF}/sys/sys_coop_net.c
+    ${EF}/zlib-deflate/deflate.c ${EF}/zlib-deflate/trees.c ${EF}/zlib-deflate/compress.c)
+  set_source_files_properties(${EF}/sys/sys_coop_net.c PROPERTIES
+    COMPILE_OPTIONS "-include;${EF}/sys/sys_coop_compat.h"
+    INCLUDE_DIRECTORIES "${EF}/sys/coop_compat")
+  set_source_files_properties(${EF}/sys/sys_coop_host.c PROPERTIES
+    INCLUDE_DIRECTORIES "${EF}/sys/coop_compat")
+endif()
 
 add_library(main SHARED
   ${CLIENT_SRC} ${QCOMMON_SRC} ${SERVER_SRC} ${BOTLIB_SRC}
@@ -163,6 +179,7 @@ target_compile_definitions(main PRIVATE
   USE_OPENAL USE_OPENAL_DLOPEN
   PRODUCT_VERSION="1.40"
   EF_APP_VERSION="${EF_APP_VERSION}"
+  $<$<BOOL:${EF_COOP}>:EF_COOP>
   ARCH_STRING="arm64"
   USE_LOCAL_HEADERS=1
   EF_HOMEPATH_NAME="AwayTeamEF"

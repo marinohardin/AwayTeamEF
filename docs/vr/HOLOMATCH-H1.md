@@ -408,20 +408,24 @@ The single-player "Use + strafe" trick in `VR_Move_Cmd` (`vr/vr_move.c:398-403`)
 
 | Control | In play |
 |---|---|
-| Right trigger | `+attack` (fire) |
-| Left trigger | `+altattack` (alt fire, bit 32) |
-| Right grip | `+button2` (use holdable item: transporter, medkit, detpack, forcefield, shield) |
-| Left grip (hold) | `+info` (scoreboard) |
-| A | `+moveup` (jump) |
-| B | crouch (`VR_Move_CrouchButton`) |
+| Weapon hand trigger | `+attack` (fire) |
+| Weapon hand grip | `+altattack` (alt fire, bit 32) |
+| Other hand trigger | `+moveup` (jump) |
+| Other hand grip | crouch (`VR_Move_CrouchButton`) |
+| A | `+button2` (use holdable item: transporter, medkit, detpack, forcefield, shield) |
+| B (held) | `+info` (scoreboard) |
 | X | `+use` (bit 64: doors, buttons) |
-| Y | `+analysis` (objectives), or the in-game menu |
-| Right stick left/right | snap or smooth turn (body yaw) |
+| Y | `+analysis` (objectives) |
+| Right stick left/right | snap (eased over 0.1 s) or smooth turn (body yaw) |
 | Right stick up/down | `weapnext` / `weapprev` |
-| Right stick click | the last weapon (`weapon <n>` of the previous one) |
+| Right stick click | tapped: the last weapon (`weapon <n>` of the previous one); held: the weapon wheel |
 | Left stick | move (in proportion to the deflection) |
-| Left stick click | sprint toggle; held, recentre |
-| Menu button | Escape |
+| Left stick click | tapped: walk/run toggle; held: recentre |
+| Left menu button | Escape |
+
+(Updated 2026-11-27 with the owner's controller design: fire on the weapon hand's trigger and grip,
+jump and crouch on the other hand's, the face buttons for use, the item, the scores and the
+objectives. The first design had the grips on the item and the scoreboard.)
 
 - Gesture (`+button3`) and zoom aren't mapped.
 - Chat binds are optional (§4.5).
@@ -705,10 +709,10 @@ aren't dropped), scripted `vr_debugHand`/`vr_debugHead`/`vr_debugTurn` input, an
   real height, never above the game's eye (`min(0, h + duck)`), and the duck follows the server's
   view height. `vr_hmRoomScale 0` turns walking off (clamp and fade only).
 - **Controls (step 7, `vr/vr_input_engine.c`).** In play in Holomatch, changed from single
-  player's map: right grip uses the holdable item (`+button2`), the left grip held shows the
-  scores (`+info`), Y shows the objectives (`+analysis`; the left menu button is still Escape),
-  right stick up/down next/previous weapon, right stick click the last weapon, left stick click
-  tapped toggles walk and run (held still recentres). The triggers fire and alt-fire as before.
+  player's map (the table in §6.1 is current; single player now shares the stick weapon cycling):
+  A uses the holdable item (`+button2`), B held shows the scores (`+info`), Y shows the objectives
+  (`+analysis`; the left menu button is Escape), right stick click is the last weapon, left stick
+  click tapped toggles walk and run (held still recentres).
   Snap turns are spread at 15° per command (a change above 5° per command counts as a snap).
 - **UI (step 8).** A menu over a live match keeps the world drawn behind it (`vr_menuLiveWorld`,
   `vr_uiState` 3). Following another player, and the intermission, show the cgame's flat view on
