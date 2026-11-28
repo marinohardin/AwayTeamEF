@@ -60,7 +60,8 @@ typedef struct {
 	int brightness;				/* preset index, or LC_BRIGHTNESS_CUSTOM */
 } lc_gfx;
 
-/* load the mode's values (fallback to the other mode's file, then defaults) as §2.5;
+/* load the values from the newer of the two mode configs (a tie: this mode's; an empty
+   one: the other's; neither: defaults) as §2.5;
    *fromConfig = 1 when a config file supplied them. screenW/H = the usable screen size
    (logical pixels, 0 = unknown): when the config gives no custom size, the 1920x1080
    default becomes the biggest listed size that fits (a small laptop screen), else 1024x768.

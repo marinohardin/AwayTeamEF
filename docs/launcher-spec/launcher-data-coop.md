@@ -299,13 +299,17 @@ token; missing → `""`. Later lines win. `CfgInt(name, def)` = integer value
 (leading-number parse) when the key exists, else def; `CfgFloat(name, def)` =
 float when the value is non-empty, else def.
 
-**LoadGraphics(holomatch)** (`L:333-369`), done **once at launcher start** with
-the mode remembered at that time (HM and Host read `hmconfig.cfg`; SP reads
-`efspconfig.cfg`). Switching mode in the window does **not** reload graphics
-from the other file (a simplification; parity means keeping it).
+**LoadGraphics(holomatch)** (`L:333-369`), done **once at launcher start**.
+HM and Host's config is `hmconfig.cfg`, SP's is `efspconfig.cfg`; the launcher
+shows one set of graphics for all modes, from whichever of the two was written
+last (1.5.1: before, it read the remembered mode's file, so a stale one could
+show settings the player had since changed, such as Retina unchecked). Play
+passes the settings on with `+set`, so the other file catches up the next time
+that mode runs. Switching mode in the window does not reload graphics.
 
-1. `cfg = ReadConfig(modeConfig)`; if it has no entries, `cfg =
-   ReadConfig(otherModeConfig)`. `fromConfig = cfg non-empty`.
+1. `cfg = ReadConfig(newer of the two configs)` (a tie, or a missing other
+   file: the remembered mode's); if it has no entries, `cfg =
+   ReadConfig(the other one)`. `fromConfig = cfg non-empty`.
 2. `brightness = MatchBrightness(cfg)` (§2.6). First run → Standard.
 3. `fullscreen = r_fullscreen != 0` (default 0).
 4. Size: default 1920×1080. If `r_mode == -1` (absent counts as −1) and
