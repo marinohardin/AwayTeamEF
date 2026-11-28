@@ -269,3 +269,11 @@ From the first session on a headset (2026-11-27); the numbers are the owner's.
   the flat panel to VR when `QuestActivity` starts, because it carries the VR category. If it opens
   flat instead, start the game directly with
   `adb shell am start -n org.awayteamef.quest/org.awayteamef.app.QuestActivity`.
+- **Holomatch: "ERROR: Bad reward_t" left the game.** Three times on a modded CTF server with
+  bots, with the stock cgame, after an I-MOD hit. The stock cgame leaves when the server raises
+  the reward count with a reward value it has no sound for (only 1 to 5 exist). The stock and
+  cMod game code never send such a value, and local tests (flat, VR in the Meta XR Simulator, the
+  arm64 JIT, packet loss) always got valid ones, so the value most likely comes from that server's
+  game code. Mitigated, still to check on a headset: in Holomatch the engine now holds the count
+  the cgame sees while the value is unknown, so the reward sound is skipped and the game goes on.
+  The console then prints `Server sent unknown reward ...` once; please send that line.
