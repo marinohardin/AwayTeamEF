@@ -24,8 +24,12 @@ Windows and Linux builds. New here? Start with the README's [Get started](../REA
   works without a PC: choose the `.exe` itself with **Choose…** or **Add Game Files…** and the
   app unpacks its `.pk3` files (pak0–pak3 and playermaps, so the Expansion Pack too), checking
   each against the installer's own checksums. If an installer can't be read, the app says so
-  and asks for a `BaseEF` folder from a PC install instead. A full install from the original
-  CD works too. A
+  and asks for a `BaseEF` folder from a PC install instead. **An image of the CD** works the
+  same way: choose the `.iso` (or a raw `.bin`, or its `.cue`) and the app copies the `.pk3`
+  files straight out of it, with nothing to install, mount or run. The game's CD gives
+  `pak0.pk3`. The Expansion Pack's CD gives `pak1.pk3`–`pak3.pk3`, which include patch 1.2,
+  so after the game's CD image, add the Expansion Pack's image with **Add Game Files…**. A
+  full install from the original CD works too. A
   **minimum install from the CD does not copy `pak0.pk3` to disk**: it stays on the CD, at
   `BaseEF/pak0.pk3`. Copy it from the CD yourself.
 
@@ -47,7 +51,8 @@ For Windows and Linux, see
    signed and notarized by Apple, so macOS opens them without warnings.
 3. Open the app. The launcher opens. It looks for your game data, and if it can't find it,
    click **Choose…** under **Game Files** and pick **the folder where Elite Force is
-   installed** (the folder that contains `BaseEF`), or GOG's setup `.exe`:
+   installed** (the folder that contains `BaseEF`), GOG's setup `.exe`, or an image of the
+  game's CD (`.iso`, `.bin`/`.cue`):
    - By default the app **copies** the game files (`*.pk3`) and any saves from that
      `BaseEF` into its own data folder, so you can delete or move the original afterwards.
    - Tick **"Use BaseEF files in place rather than copy"** to read them from where they
@@ -345,7 +350,7 @@ Download them from the [Releases page](https://github.com/marinohardin/AwayTeamE
 Both need a GPU and driver with Vulkan 1.1, and your own copy of the game, as on the Mac.
 
 **Launchers.** Windows has a native launcher, Linux a Qt one. Like the Mac launcher, they set up
-the game files (a game folder, GOG's setup `.exe` or the CD), and have the graphics presets,
+the game files (a game folder, GOG's setup `.exe`, the CD or an image of it), and have the graphics presets,
 Brightness, the Holomatch server browser, **Host a Server** with router port opening, and update
 checks.
 

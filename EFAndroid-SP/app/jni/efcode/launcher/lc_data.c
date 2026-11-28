@@ -40,6 +40,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 #ifndef LC_HAVE_GOG
 #	define LC_HAVE_GOG 0
 #endif
+#include "../sys/sys_iso.h"
 #if LC_HAVE_GOG
 #	include "../sys/sys_osx_gog.h"
 #endif
@@ -752,6 +753,7 @@ void lc_data_status_text( const lc_data *d, char *line, size_t lineSize, char *d
 		if ( detail )
 			lc_snprintf( detail, detailSize, "These game files are from the original CD (version 1.0). The game also needs %s "
 				"from the 1.1 and 1.2 patches: copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) "
+				"or the Expansion Pack's CD or its image "
 				"with Add Game Files\xe2\x80\xa6.", joined );
 		return;
 	}
@@ -762,10 +764,17 @@ void lc_data_status_text( const lc_data *d, char *line, size_t lineSize, char *d
 /* ===================================================================== */
 /* the chooser (§4.2)                                                    */
 
+int lc_is_disc_image( const char *path )
+{
+	return path && ISO_IsImageName( path ) && !lc_is_dir( path );
+}
+
 int lc_is_installer( const char *path )
 {
 	size_t n = path ? strlen( path ) : 0;
 
+	if ( lc_is_disc_image( path ) )
+		return 1;
 	return n > 4 && !lc_is_dir( path ) && !lc_stricmp( path + n - 4, ".exe" );
 }
 
@@ -828,6 +837,8 @@ void lc_choice_alert( const char *chosen, const char *problem, char *title, size
 typedef struct {
 	char from[LC_MAX_PATH], to[LC_MAX_PATH];
 	unsigned long long size;
+	int isIso;
+	isoFile_t iso;
 #if LC_HAVE_GOG
 	int isGog;
 	gogFile_t gog;
@@ -837,6 +848,7 @@ typedef struct {
 #define KIND_COPY	0
 #define KIND_ADD	1
 #define KIND_UNPACK	2
+#define KIND_DISC	3		/* out of a CD image (sys_iso.c) */
 
 struct lc_copyjob_s {
 	item_t *items;
@@ -845,6 +857,7 @@ struct lc_copyjob_s {
 	int kind;
 	char installer[LC_MAX_PATH];
 	char homeBase[LC_MAX_PATH];
+	isoImage_t disc;		/* KIND_DISC: the image's layout (no file list) */
 };
 
 static lc_copyjob *JobNew( int kind, const char *homeBase )
@@ -902,7 +915,7 @@ int lc_copyjob_count( const lc_copyjob *j )
 
 int lc_copyjob_is_unpack( const lc_copyjob *j )
 {
-	return j && j->kind == KIND_UNPACK;
+	return j && ( j->kind == KIND_UNPACK || j->kind == KIND_DISC );
 }
 
 static int HasPk3Ext( const char *name )
@@ -1146,9 +1159,77 @@ lc_copyjob *lc_plan_add_files( const char *const *picked, int n, const char *hom
 	return j;
 }
 
+/* the BaseEF .pk3 files of a CD image (the game's CD or the Expansion Pack's) */
+static lc_copyjob *PlanDisc( const char *image, int onlyNew, const char *homeBase,
+	const char *externalBase, int *present, char *err, size_t errSize )
+{
+	isoImage_t img;
+	lc_copyjob *j;
+	char total[64];
+	int i, pr = 0;
+
+	lc_log( "Disc image: reading \"%s\"", image );
+	if ( !ISO_ReadImage( image, &img, err, errSize ) ) {
+		lc_log( "Disc image: can't be used: %s", err );
+		return NULL;
+	}
+	lc_log( "Disc image: \"%s\" (%u-byte sectors), %d .pk3 files in BaseEF", img.label, (unsigned)img.sectorSize, img.numFiles );
+	if ( !onlyNew && !img.hasPak0 ) {
+		lc_strlcpy( err, "it has no pak0.pk3 (it looks like the Expansion Pack's CD). Choose the game's own CD first, "
+			"then add this one with Add Game Files\xe2\x80\xa6", errSize );
+		lc_log( "Disc image: can't be used: %s", err );
+		ISO_Free( &img );
+		return NULL;
+	}
+	if ( !( j = JobNew( KIND_DISC, homeBase ) ) ) {
+		ISO_Free( &img );
+		return NULL;
+	}
+	lc_strlcpy( j->installer, image, sizeof( j->installer ) );
+	j->disc = img;
+	j->disc.files = NULL;
+	j->disc.numFiles = 0;
+	for ( i = 0; i < img.numFiles; i++ ) {
+		int64_t haveSize;
+		item_t *it;
+
+		if ( onlyNew && Have( homeBase, externalBase, img.files[i].name, &haveSize ) &&
+			(unsigned long long)haveSize == img.files[i].size ) {
+			pr++;
+			continue;
+		}
+		if ( !( it = JobAdd( j ) ) )
+			break;
+		it->isIso = 1;
+		it->iso = img.files[i];
+		lc_strlcpy( it->from, img.image, sizeof( it->from ) );
+		DestFor( homeBase, img.files[i].name, it->to, sizeof( it->to ) );
+		it->size = img.files[i].size;
+		j->total += it->size;
+	}
+	lc_format_bytes( j->total, total, sizeof( total ) );
+	lc_log( "Disc image: %d .pk3 files (%s to copy), %d already present", img.numFiles, total, pr );
+	ISO_Free( &img );
+	if ( present )
+		*present = pr;
+	if ( !j->n ) {
+		lc_copyjob_free( j );
+		return NULL;			/* nothing to add: err is empty */
+	}
+	return j;
+}
+
 lc_copyjob *lc_plan_unpack_installer( const char *exe, int onlyNew, const char *homeBase,
 	const char *externalBase, int *present, char *err, size_t errSize )
 {
+	if ( lc_is_disc_image( exe ) ) {
+		if ( present )
+			*present = 0;
+		if ( err && errSize )
+			err[0] = 0;
+		return PlanDisc( exe, onlyNew, homeBase, externalBase, present, err, errSize );
+	}
+	{
 #if LC_HAVE_GOG
 	gogInstaller_t inst;
 	lc_copyjob *j;
@@ -1208,6 +1289,7 @@ lc_copyjob *lc_plan_unpack_installer( const char *exe, int onlyNew, const char *
 	lc_strlcpy( err, "this version was built without GOG installer support", errSize );
 	return NULL;
 #endif
+	}
 }
 
 int lc_have_gog( void )
@@ -1347,6 +1429,9 @@ int lc_copyjob_run( lc_copyjob *j, volatile unsigned long long *progress,
 		}
 		lc_path_dirname( dir, sizeof( dir ), it->to );
 		lc_mkdir_p( dir );
+		if ( it->isIso )
+			ok = ISO_ExtractFile( &j->disc, &it->iso, it->to, rc.progress, rc.cancel, localErr, sizeof( localErr ) );
+		else
 #if LC_HAVE_GOG
 		if ( it->isGog )
 			ok = GOG_ExtractFile( it->from, &it->gog, it->to, rc.progress, rc.cancel, localErr, sizeof( localErr ) );
@@ -1385,6 +1470,8 @@ int lc_copyjob_run( lc_copyjob *j, volatile unsigned long long *progress,
 			lc_log( "Copied %s of game files to \"%s\"", size, j->homeBase );
 		} else if ( j->kind == KIND_ADD )
 			lc_log( "Added %s (%s) to \"%s\"", names, size, j->homeBase );
+		else if ( j->kind == KIND_DISC )
+			lc_log( "Disc image: copied %s (%s) to \"%s\"", names, size, j->homeBase );
 		else
 			lc_log( "GOG installer: unpacked %s (%s) to \"%s\"", names, size, j->homeBase );
 	}
@@ -1410,6 +1497,8 @@ int lc_copyjob_check_space( const lc_copyjob *j, char *title, size_t titleSize, 
 			needS, freeS, j->homeBase );
 	else if ( j->kind == KIND_UNPACK )
 		lc_snprintf( text, textSize, "Unpacking the game files needs %s, but only %s is free.", needS, freeS );
+	else if ( j->kind == KIND_DISC )
+		lc_snprintf( text, textSize, "Copying the game files needs %s, but only %s is free.", needS, freeS );
 	else
 		lc_snprintf( text, textSize, "Adding the files needs %s, but only %s is free.", totalS, freeS );
 	return 0;
@@ -1421,6 +1510,10 @@ void lc_copyjob_failure_texts( const lc_copyjob *j, const char *err, char *title
 	if ( !strcmp( err, LC_MSG_PAK0_NOT_COPIED ) ) {
 		lc_strlcpy( title, "Copying the game files failed", titleSize );
 		lc_strlcpy( text, err, textSize );
+	} else if ( j->kind == KIND_DISC ) {
+		lc_strlcpy( title, "Copying from the disc image failed", titleSize );
+		lc_snprintf( text, textSize, "%s.\n\nThe partly copied files were removed. If the image is damaged, "
+			"make it again from the CD, or choose the folder of the CD or of an installation instead.", err );
 	} else if ( j->kind == KIND_UNPACK ) {
 		lc_strlcpy( title, "Unpacking the GOG installer failed", titleSize );
 		lc_snprintf( text, textSize, "%s.\n\nThe partly unpacked files were removed. If the download is damaged, "
@@ -1434,6 +1527,11 @@ void lc_copyjob_failure_texts( const lc_copyjob *j, const char *err, char *title
 void lc_installer_error_alert( const char *exe, const char *phrase, char *title, size_t titleSize,
 	char *text, size_t textSize )
 {
+	if ( lc_is_disc_image( exe ) ) {
+		lc_strlcpy( title, "This disc image can't be used", titleSize );
+		lc_snprintf( text, textSize, "%s\n\nThis app can't use it: %s.\n\n" LC_MSG_USE_DISC, lc_path_basename( exe ), phrase );
+		return;
+	}
 	lc_strlcpy( title, "This installer can't be used", titleSize );
 	lc_snprintf( text, textSize, "%s\n\nThis app can't unpack it: %s.\n\n" LC_MSG_USE_BASEEF, lc_path_basename( exe ), phrase );
 }
@@ -1441,7 +1539,9 @@ void lc_installer_error_alert( const char *exe, const char *phrase, char *title,
 void lc_nothing_to_add_alert( int unpackInstaller, int present, char *title, size_t titleSize, char *text, size_t textSize )
 {
 	lc_strlcpy( title, "Nothing to add", titleSize );
-	if ( unpackInstaller )
+	if ( unpackInstaller == 2 )
+		lc_strlcpy( text, "The game already has all of this disc's .pk3 files.", textSize );
+	else if ( unpackInstaller )
 		lc_strlcpy( text, "The game already has all of this installer's .pk3 files.", textSize );
 	else if ( present == 1 )
 		lc_strlcpy( text, "The game already has that .pk3 file.", textSize );
@@ -1453,7 +1553,8 @@ void lc_nothing_to_add_alert( int unpackInstaller, int present, char *title, siz
 
 void lc_copyjob_title( const lc_copyjob *j, char *out, size_t size )
 {
-	lc_strlcpy( out, j->kind == KIND_UNPACK ? "Unpacking the GOG installer" : "Copying game files", size );
+	lc_strlcpy( out, j->kind == KIND_UNPACK ? "Unpacking the GOG installer" :
+		j->kind == KIND_DISC ? "Copying from the disc image" : "Copying game files", size );
 }
 
 void lc_copyjob_progress_text( const lc_copyjob *j, unsigned long long done, char *out, size_t size )

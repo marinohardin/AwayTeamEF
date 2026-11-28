@@ -1045,7 +1045,7 @@ void LauncherWindow::refreshData()
 				const QString joined = l.join( " and " );
 				status = QString::fromUtf8( "Patch 1.2 missing \xc2\xb7 add %1 with Add Game Files\xe2\x80\xa6" ).arg( joined );
 				tip = QString( "These game files are from the original CD (version 1.0). The game also needs %1 from the 1.1 and 1.2 patches: "
-					"copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) with Add Game Files\xe2\x80\xa6." )
+					"copy them from a patched installation (GOG, Steam, or a PC with patch 1.2) or the Expansion Pack's CD or its image with Add Game Files\xe2\x80\xa6." )
 					.arg( joined );
 				icon = "exclamationmark.triangle.fill";
 				sc = orange();
@@ -1059,7 +1059,7 @@ void LauncherWindow::refreshData()
 		} else {
 			m_dataFolder.clear();
 			path = "No game files yet";
-			status = "Choose the Elite Force folder (the one with BaseEF), or the GOG setup .exe.";
+			status = "Choose a game folder (with BaseEF), GOG's setup .exe, or the CD's .iso.";
 			icon = "exclamationmark.triangle.fill";
 			sc = orange();
 		}

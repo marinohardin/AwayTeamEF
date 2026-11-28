@@ -26,7 +26,7 @@ Verified = rendered offscreen (Qt 6.4 dev container) and/or run; "untested" = co
 |---|---|
 | Play: `lc_launch_build_argv` + `lc_exec` sibling `efsp`, `EF_FROM_LAUNCHER=1`, co-op password in `EF_COOP_PASSWORD` | done (verified with a stand-in efsp). `EF_LAUNCHER_DRYRUN=1` prints argv and exits (local test aid) |
 | Start Server: running-servers alert (Show / Start Another / Cancel), spawn `--host-server` without `VOYAGERSP_TEST_*`, error alert | done; "Show Running Server" raises the window through a local socket |
-| Chooser: folder or GOG installer, in-place checkbox + live status line, validation alerts, copy / unpack with progress + Cancel | dev: a small panel with "Choose Folder…" / "Choose GOG Installer…" (the spec allows two buttons) |
+| Chooser: folder or GOG installer, in-place checkbox + live status line, validation alerts, copy / unpack with progress + Cancel | dev: a small panel with "Choose Folder…" / "Choose Installer or ISO…" (GOG setup or CD image) (the spec allows two buttons) |
 | Add Game Files… (files / folder / installer), nothing-to-add, disk space, progress | dev: same two-button pre-panel; texts come from the core |
 | Check for Updates…, automatic check, throttling (core), badge | done (verified alert) |
 | `stvef://` links: registration (`lc_link_register`, when `$APPIMAGE` and no handler), single-instance forwarding (QLocalServer), alerts | done; link row in the browser |
