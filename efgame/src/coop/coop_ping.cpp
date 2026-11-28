@@ -9,6 +9,7 @@
 #include "../cgame/cg_local.h"
 #include "../cgame/FX_Public.h"
 #include "../game/coop_public.h"
+#include "../game/vr_shared.h"
 
 #define COOP_PING_TIME	4000	// ms a ping shows
 #define COOP_PING_FADE	1000	// ms of fading out at the end
@@ -46,6 +47,15 @@ void COOP_PingCommand( void )
 		cgs.media.yellowParticleShader );
 	FX_AddSprite( p->origin, NULL, NULL, 4.0f, 60.0f, 1.0f, 0.0f, rgb, rgb, 0.0f, 0.0f, 600,
 		cgs.media.whiteRingShader );
+	if ( cg_vrPose.active )
+	{
+		// VR: the 2D marker can't be placed over the spot (the HUD layer isn't the eyes' view), so a
+		// pillar of light marks it in the world instead
+		vec3_t top;
+		VectorCopy( p->origin, top );
+		top[2] += 96.0f;
+		FX_AddLine( p->origin, top, 1.0f, 3.0f, 0.0f, 1.0f, 0.2f, rgb, rgb, COOP_PING_TIME, cgs.media.whiteLaserShader );
+	}
 	cgi_S_StartLocalSound( cgs.media.talkSound, CHAN_LOCAL_SOUND );
 }
 
@@ -63,6 +73,10 @@ static void COOP_DrawPing( const coopPing_t *p, int who )
 	int		age = cg.time - p->time;
 	qboolean onScreen;
 
+	if ( cg_vrPose.active )
+	{
+		return;	// VR: the flare and the pillar in the world show it (COOP_PingCommand)
+	}
 	Vector4Copy( COOP_PingColor( who ), color );
 	if ( age > COOP_PING_TIME - COOP_PING_FADE )
 	{

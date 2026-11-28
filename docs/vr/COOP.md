@@ -39,6 +39,15 @@ before unless the partner is in VR.
 - The guest's own predicted shot uses the same hand ray (`coop_predict.cpp`).
 - A VR host's own hand fire needs nothing new: its game reads its own headset's pose.
 
+## The ping
+
+The look-here ping (double-tap Use) follows a VR player's aim, the same aim Use has: player 1
+uses the weapon hand's ray (the head's gaze without a tracked hand), and a VR guest uses the hand ray
+its commands carry. A flat player pings along its view as before (`coop/coop_use.cpp`, `G_VRPointRay`).
+In VR a ping shows as its flare and a pillar of light at the spot (`coop/coop_ping.cpp`); the flat
+on-screen marker and edge arrow are left out there, since the HUD layer isn't the eyes' view.
+A flat player sees pings as before.
+
 ## What flat partners see
 
 - The lean stance (above).

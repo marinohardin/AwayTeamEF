@@ -8,6 +8,7 @@
 #include "cg_local.h"
 #include "FX_Public.h"
 #include "vr_shared.h"
+#include "../game/coop_public.h"
 
 extern int (*syscall)( int arg, ... );
 qboolean CG_WeaponSelectable( int i );	// cg_weapons.cpp
@@ -460,14 +461,53 @@ static int		cg_vrBoxEnt = -1;
 static int		cg_vrBoxTime;
 static vec4_t	cg_vrBoxColor;
 
+static int		cg_vrUsePickTime = -1;	// cg.time of the frame whose box is Use's own target
+static vrUsePick_t	cg_vrUsePick;
+
 void CG_VR_NoteUseBox( const gentity_t *ent, const vec4_t color ) {
+	if ( cg_vrUsePickTime == cg.time && cg_vrUsePick.kind != VR_USE_NONE ) {
+		return;	// Use's own target is boxed this frame (CG_VR_UsePick)
+	}
 	cg_vrBoxEnt = ent->s.number;
 	cg_vrBoxTime = cg.time;
 	Vector4Copy( color, cg_vrBoxColor );
 }
 
+/*
+What Use would act on now (G_VRUsePick, the same call the game's Use makes), boxed in its own
+colour; the eye, yaw and pose of this frame are handed to the game's Use (vr_useView), so the
+press uses what is boxed. Player 1 only (host or single player): a guest's Use is the host's.
+*/
+extern bool in_camera;
+
+static void CG_VR_UsePick( void ) {
+	static const vec4_t useColor = { 0.3f, 0.9f, 1.0f, 1.0f };
+	gentity_t *player = &g_entities[0];
+
+	cg_vrUsePickTime = -1;
+	if ( !cg_vrPose.active || !cg.snap || cg.snap->ps.clientNum != 0 || COOP_IsReplica() || cg.renderingThirdPerson || in_camera
+		|| !player->inuse || !player->client || cg.snap->ps.stats[STAT_HEALTH] <= 0 ) {
+		return;
+	}
+	vr_useView.time = cg.time ? cg.time : 1;
+	VectorCopy( cg.refdef.vieworg, vr_useView.eye );
+	vr_useView.yaw = cg.refdefViewAngles[YAW];
+	vr_useView.pose = cg_vrPose;
+	if ( !G_VRUsePick( player, &cg_vrPose, vr_useView.eye, vr_useView.yaw, &cg_vrUsePick ) ) {
+		return;
+	}
+	cg_vrUsePickTime = cg.time;
+	if ( cg_vrUsePick.kind != VR_USE_NONE && cg_vrUsePick.entityNum < ENTITYNUM_WORLD ) {
+		cg_vrBoxEnt = cg_vrUsePick.entityNum;
+		cg_vrBoxTime = cg.time;
+		Vector4Copy( useColor, cg_vrBoxColor );
+	}
+}
+
 // corner brackets round the thing's box, in the world, turned to the head
 void CG_VR_AddUseBox( void ) {
+	CG_VR_UsePick();
+
 	const gentity_t *ent;
 	const float *color = cg_vrBoxColor;
 	vec3_t mn, mx, size, head, rgb, a, b;

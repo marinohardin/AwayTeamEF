@@ -1,6 +1,7 @@
 #include "g_local.h"
 #include "coop_public.h"
 #include "g_functions.h"
+#include "vr_shared.h"
 
 #define ENTDIST_PLAYER	1
 #define ENTDIST_NPC		2
@@ -179,7 +180,14 @@ void Touch_Multi( gentity_t *self, gentity_t *other, trace_t *trace )
 	if ( self->spawnflags & 2 )
 	{//FACING
 		vec3_t	forward;
+		const int vrFacing = G_VRFacing( other, self->movedir );	// VR: the head or the hand may face it too
 
+		if ( vrFacing == 0 )
+		{
+			return;
+		}
+		if ( vrFacing < 0 )
+		{
 		if ( other->client )
 		{
 			AngleVectors( other->client->ps.viewangles, forward, NULL, NULL );
@@ -192,6 +200,7 @@ void Touch_Multi( gentity_t *self, gentity_t *other, trace_t *trace )
 		if ( DotProduct( self->movedir, forward ) < 0.5 )
 		{//Not Within 45 degrees
 			return;
+		}
 		}
 	}
 
