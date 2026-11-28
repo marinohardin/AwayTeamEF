@@ -64,8 +64,12 @@
         <meta-data android:name="com.oculus.supportedDevices"
             android:value="quest2|questpro|quest3|quest3s" />
 
+        <!-- the game runs in a process of its own: the engine runs once per process and ends it
+             at quit; the start screen stays in the main one, so a Quit from the game's menus
+             comes back to it (QuestActivity.quitToLauncher, android/jni/quest_jni.c) -->
         <activity android:name="org.awayteamef.app.QuestActivity"
             android:label="AwayTeamEF VR"
+            android:process=":game"
             android:launchMode="singleTask"
             android:screenOrientation="landscape"
             android:resizeableActivity="false"

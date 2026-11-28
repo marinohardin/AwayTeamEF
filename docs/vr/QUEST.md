@@ -21,7 +21,7 @@ What `VR=1` changes, compared with the flat APK:
 |---|---|---|
 | Package | `org.awayteamef.app` | `org.awayteamef.quest` (both can be installed) |
 | Manifest | `android/AndroidManifest.xml` | `android/AndroidManifest-quest.xml` |
-| Activity | `EFActivity` | `StartActivity` (the one launcher entry: a flat panel with four buttons, see [the start screen](#the-start-screen)) and `QuestActivity` (`android/java-quest`): passes the JavaVM and activity to the vr module, keeps the screen on, hides the system bars |
+| Activity | `EFActivity` | `StartActivity` (the one launcher entry: a flat panel with four buttons, see [the start screen](#the-start-screen)) and `QuestActivity` (`android/java-quest`, in its own `:game` process): passes the JavaVM and activity to the vr module, copies cMod's paks for the engine, goes back to the start screen at Quit, keeps the screen on, hides the system bars |
 | Engine | `EF_VR=OFF`, no co-op | `EF_VR=ON`: `efcode/vr` (OpenXR session, controllers) and the renderer's VR hooks, plus `android/jni/quest_jni.c`; and co-op (`EF_COOP`: `sys_coop_host.c`, `sys_coop_net.c`, the game's `coop/`), which the start screen's Co-op buttons need |
 | OpenXR loader | none | `libopenxr_loader.so`, built by the script with the NDK from the Khronos **OpenXR-SDK-Source release-1.1.65** source tarball (about 5 MB, Apache-2.0, checksum-pinned in `make-apk.sh`, downloaded once into `android/build/src/`). It matches the headers in `deps/openxr/include` |
 
@@ -44,7 +44,7 @@ Size (1.5.0): flat 3.1 MB; Quest 3.2 MB (the loader adds about 0.4 MB stripped).
    OBB folder needs no storage permission):
 
    ```sh
-   adb install -r android/build/AwayTeamEF-Quest-1.5.0-arm64.apk
+   adb install -r android/build/AwayTeamEF-Quest-<version>-arm64.apk
    adb shell mkdir -p /sdcard/Android/obb/org.awayteamef.quest/baseEF
    adb push pak0.pk3 pak1.pk3 pak2.pk3 pak3.pk3 /sdcard/Android/obb/org.awayteamef.quest/baseEF/
    ```
@@ -85,6 +85,35 @@ game on my network" is off (`coop_lanVisible 0`) does not answer it; type its ad
 A line under the title says whether the paks are in the data folder. Co-op in the Quest build uses
 the same code as on Linux, so the guest's and host's apps must be on the same co-op compatibility
 version (the 1.5.x line); a phone, Mac, Windows or Linux partner works.
+
+### Like the desktop builds
+
+The engine's desktop-only parts that have a Quest counterpart (`EF_QUEST`, defined for the Quest
+engine by `android/CMakeLists.txt`; `EF_DESKTOP` itself stays off on Android):
+
+- **Quit goes back to the start screen.** Quit in the single-player or Holomatch menus (a bare
+  `quit`) ends the game and shows the start screen again, as the desktop builds go back to their
+  launcher. The game runs in its own process (`android:process=":game"` on `QuestActivity`): after
+  the engine's shutdown, `QuestActivity.quitToLauncher()` starts `StartActivity` (with the extra
+  `org.awayteamef.quest.FROM_GAME` = true) and finishes, then the game process exits. Quitting from
+  the headset's system menu, or the system closing the app, still ends the app.
+- **Version.** The console, the `version` cvar and the server status answers say
+  `AwayTeamEF for Meta Quest <version>`, like the desktop's `AwayTeamEF for Mac <version>`.
+  `make-apk.sh` takes the version from `EFAndroid-SP/app/jni/engine/CMakeLists.txt`, as the desktop
+  builds do, and also sets the APK's versionName from it. The `awayteamef` userinfo key stays
+  desktop-only (Holomatch H1: a Quest player's userinfo stays as it is).
+- **Loopback Host Fix.** A Holomatch server on the same network that a master server lists under the
+  network's public address is listed as 127.0.0.1, as in the desktop launchers. With no launcher in
+  the game's process, the game asks the router for the public address when it starts (the
+  launchers' NAT-PMP/UPnP lookup, `efcode/launcher/lc_nat.c`); `+set cl_loopbackHostIP <ip>` overrides it.
+- **cMod's game modules** by Noah Metzger (Chomenor), bundled with his permission
+  ([macos/cmod/README.txt](../../macos/cmod/README.txt)): `make-apk.sh` puts the newest
+  `macos/cmod/pakcmod-release-*.pk3` (or `CMOD_PAK=<file>`) into the APK's `assets/cmod/`, with the
+  README and the game source license. `QuestActivity` copies the pk3 to the app's `files/cmod/` when
+  the installed APK changes, and the engine loads it from there with the same checksum check against
+  cMod's release list as on the desktop, so Holomatch uses cMod's cgame, ui and qagame by default
+  (`+set cl_cmodModules 0` / `+set sv_cmodGame 0` turn them off).
+- Still desktop-only: the `r_inGameVideo`, `m_filter` and `r_fbo` defaults and `Sys_PlatformPreInit`.
 
 ## Controller map
 
