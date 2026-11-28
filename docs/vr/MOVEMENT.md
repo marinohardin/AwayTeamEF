@@ -54,6 +54,35 @@ Eyes, hands and movement all place a tracked pose in the world the same way:
 - Measured in single player (Meta XR Simulator): about 80, 150 and 225 units/s at 0.33, 0.67 and
   full effective deflection running, and about 115 units/s at full deflection walking.
 
+## Ladders
+
+Both games move a player on a ladder like a swimmer: the wish is the command's forward move along
+the view's forward, pitch included, plus the up move. A flat player walks into a ladder looking up
+(or down) and climbs. In VR the command's pitch is not where the player looks: single player sends
+the body's level pitch, Holomatch the gun hand's aim. So pushing the stick into a ladder only
+pressed against it, and climbing needed jump.
+
+`VR_Move_LadderCmd` (`vr_move.c`, called from `CL_CreateCmd` after `VR_HM_Cmd`, so the angles are
+final) fixes that in the command, in every mode:
+
+- **On a ladder?** The games' own test, on the engine's copy of the map: ladder contents at the
+  feet and ladder or water at the waist (`waterlevel` 2), at the newest snapshot's origin (single
+  player and co-op: the SP bridge's snapshot, `SP_VR_PlayerState`; Holomatch: `cl.snap`).
+- **Into it?** The move (as walking would make it, pitch left out) must run the box into a wall
+  within 24 units, heading into it within 60 degrees. Moving along the wall or away from it is
+  left to the game, so stepping off sideways or walking away at the foot works as before.
+- **Up or down.** Up, unless the head (the off-hand with `vr_moveDirection 1`) looks more than
+  `vr_ladderDownPitch` (25) degrees below level; a 15-degree ramp in between, so it never flips
+  at one angle. At the foot, looking down doesn't push down.
+- **The command.** The wish is mostly the climb plus a quarter of the move into the ladder (that
+  steps off at the top), at the stick's speed. It is written back as forward, right and up moves
+  that the game's own sum turns into that wish for the command's pitch. The up move never goes
+  negative (that would crouch): climbing down in single player sends a pitch for that command
+  instead (the eyes take only the yaw from the game). In Holomatch the angles stay the gun's aim
+  (H1), so there climbing down needs the gun pointed down too, or the crouch button.
+- A held crouch or jump is left alone (crouch climbs down by itself). `vr_ladderClimb 0` turns
+  it all off. The usercmd layout, the protocol and the games are unchanged.
+
 ## Turning
 
 Snap turn is the default (`vr_snapTurnAngle`, 45), smooth turn the option (`vr_turnMode 1`,
@@ -77,6 +106,8 @@ mask, drawn by the runtime, so it costs nothing in the eye render.
 | `vr_moveDirection` | 0 | 0: move where the head looks; 1: where the off-hand points |
 | `vr_comfortVignette` | 0 | edge darkening while moving or smooth turning, 0..1 |
 | `vr_leanScale` | 1 | how much of the head's sideways offset becomes the game's lean (0: none) |
+| `vr_ladderClimb` | 1 | moving into a ladder climbs it (0: the game's own ladder move only) |
+| `vr_ladderDownPitch` | 25 | degrees below level the head (or off-hand) looks to climb down instead of up |
 
 Debugging (not archived): `vr_debugHead "side fwd up"` (metres) adds a pretend head offset,
 `vr_debugStick "x y"` a pretend move stick, `vr_debugMove 1` (2 Hz) or `2` (10 Hz) prints the head,
