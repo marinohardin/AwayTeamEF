@@ -628,6 +628,8 @@ usercmd_t CL_CreateCmd( void ) {
 #ifdef EF_VR
 	// VR in Holomatch: the angles aim where the hand points, the movement turned to match
 	VR_HM_Cmd( &cmd );
+	// VR on a ladder: moving into it climbs, as the flat view's pitch makes it do
+	VR_Move_LadderCmd( &cmd );
 #endif
 
 	// regression harness (qcommon/regress.c): scripted input in place of the keyboard and mouse
