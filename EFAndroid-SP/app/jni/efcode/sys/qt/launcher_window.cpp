@@ -220,6 +220,7 @@ void LauncherWindow::build()
 	m_midStack->addWidget( buildGraphics() );
 	m_midStack->addWidget( buildServerGroup() );
 	root->addWidget( m_midStack );
+	root->addWidget( buildControls() );
 	root->addWidget( buildHolomatch() );
 	root->addWidget( buildGameFiles() );
 	root->addSpacing( px( 4 ) );
@@ -485,6 +486,64 @@ QWidget *LauncherWindow::buildServerGroup()
 	g->content()->addLayout( gl );
 	g->content()->addStretch( 1 );
 	return g;
+}
+
+/* key bindings for both modes: the recommended set, or the game's original (default.cfg) ones */
+QWidget *LauncherWindow::buildControls()
+{
+	Group *g = new Group( "Controls" );
+	QGridLayout *gl = new QGridLayout;
+	gl->setHorizontalSpacing( px( 10 ) );
+	gl->setVerticalSpacing( px( 4 ) );
+	gl->setColumnStretch( 1, 1 );
+
+	gl->addWidget( gridLabelCell( "Key bindings:" ), 0, 0 );
+	QHBoxLayout *bh = new QHBoxLayout;
+	bh->setSpacing( px( 8 ) );
+	QPushButton *recommended = button( "Use Recommended", "WASD to move, the mouse to aim and fire, E to use, "
+		"Space/X to jump, F5 quicksave, etc., in single player and Holomatch" );
+	QPushButton *original = button( "Restore Original", "The key bindings the game came with, in single player and Holomatch" );
+	connect( recommended, &QPushButton::clicked, this, [this]() { applyControls( LC_CONTROLS_RECOMMENDED, true ); } );
+	connect( original, &QPushButton::clicked, this, [this]() { applyControls( LC_CONTROLS_ORIGINAL, true ); } );
+	bh->addWidget( recommended );
+	bh->addWidget( original );
+	bh->addStretch( 1 );
+	gl->addLayout( bh, 0, 1 );
+	gl->setRowMinimumHeight( 0, px( 30 ) );
+	m_controlsHint = label( QString(), 11, QFont::Normal, secondary(), 400 );
+	gl->addWidget( m_controlsHint, 1, 1 );
+	g->content()->addLayout( gl );
+	showControls();
+	return g;
+}
+
+void LauncherWindow::showControls()
+{
+	m_controlsHint->setText( lc_controls_recommended_in_use( B( m_homeBase ).constData() ) ?
+		"The recommended key bindings are in use, in single player and Holomatch. Change them in the game's Controls menu." :
+		"Sets the keys of single player and Holomatch alike. Your other settings stay as they are." );
+}
+
+void LauncherWindow::applyControls( lc_controls_set set, bool ask )
+{
+	const bool rec = set == LC_CONTROLS_RECOMMENDED;
+	char err[512];
+
+	if ( ask && alert( this, Info,
+			rec ? "Use the recommended key bindings?" : "Restore the game's original key bindings?",
+			rec ? "WASD to move, the mouse to aim and fire, E to use, Space/X to jump, F5 quicksave, etc. "
+				"They replace your key bindings in single player and Holomatch; your other settings stay as they are."
+				: "The keys the game came with replace your key bindings in single player and Holomatch; "
+				"your other settings stay as they are.",
+			QStringList() << ( rec ? "Use Recommended" : "Restore Original" ) << "Cancel" ) != 0 )
+		return;
+	if ( lc_controls_apply( B( m_homeBase ).constData(), set, err, sizeof err ) )
+		log( QString( "Launcher: %1 key bindings in both configs" ).arg( rec ? "recommended" : "original" ) );
+	else if ( ask )
+		alert( this, Warning, "The key bindings couldn't be changed.", U( err ), QStringList() << "OK" );
+	else
+		log( "Launcher: " + U( err ) );
+	showControls();
 }
 
 QWidget *LauncherWindow::buildHolomatch()
@@ -1567,6 +1626,9 @@ void LauncherWindow::runTestHooks()
 				quitSoon();
 		} );
 	}
+	const QString controls = testEnv( "VOYAGERSP_TEST_LAUNCHER_CONTROLS" ).toLower();
+	if ( !controls.isEmpty() )
+		applyControls( controls == "original" ? LC_CONTROLS_ORIGINAL : LC_CONTROLS_RECOMMENDED, false );
 	const QString hud = testEnv( "VOYAGERSP_TEST_LAUNCHER_HUD" );
 	if ( !hud.isEmpty() ) {
 		selectMode( 1 );

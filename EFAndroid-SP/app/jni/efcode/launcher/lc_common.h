@@ -101,6 +101,7 @@ int lc_is_file( const char *path );
 int lc_is_symlink( const char *path );				/* Windows: reparse point */
 int64_t lc_file_size( const char *path );			/* -1 if missing */
 int64_t lc_file_mtime( const char *path );			/* unix seconds, -1 if missing */
+int lc_file_set_mtime( const char *path, int64_t t );	/* unix seconds; 1 ok */
 FILE *lc_fopen( const char *path, const char *mode );
 int lc_mkdir( const char *path );					/* 1 ok or exists */
 int lc_mkdir_p( const char *path );

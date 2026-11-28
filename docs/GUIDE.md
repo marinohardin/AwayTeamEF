@@ -371,7 +371,10 @@ The `ReadMe.txt` that comes with each download ([Windows](windows/ReadMe.txt),
 
 - **Launcher.** Choose Single Player or Holomatch; a graphics **Quality** preset
   (Performance, Balanced, Best) or the individual settings: window or full screen, window
-  size, full Retina resolution, anti-aliasing, texture detail, V-Sync and **Brightness**; your Holomatch
+  size, full Retina resolution, anti-aliasing, texture detail, V-Sync and **Brightness**; key bindings for
+  single player and Holomatch at once (**Use Recommended**: WASD to move, the mouse to aim and fire, E to
+  use, Space/X to jump, F5 quicksave; or **Restore Original**, the keys the game came with);
+  your Holomatch
   player name, internet master servers (**Servers…**) and a server browser (**Browse…**);
   **Host a Server** with its **Config…**; and where the game files are, whether the Expansion Pack was found, and
   **Add Game Files…** to copy in more `.pk3` files. The launcher shows what the game last

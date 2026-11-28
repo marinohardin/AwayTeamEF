@@ -12,6 +12,7 @@ This file is part of VoyagerSP (GPLv2 or later, like the rest of the engine).
 
 #include <ctype.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -745,4 +746,73 @@ void lc_player_name_from_config( const lc_cfg *hm, const char *fullUserName, cha
 		lc_strlcpy( out, n, size );
 	else
 		lc_first_name( fullUserName, out, size );
+}
+
+/* ===================================================================== */
+/* key bindings: the Controls buttons                                    */
+
+/* one config file: 1 written (or nothing to do), else 0 with why in err */
+static int ControlsApplyFile( const char *path, int holomatch, lc_controls_set set, char *err, size_t errSize )
+{
+	size_t len;
+	char *text = lc_read_file( path, &len ), *out;
+	int64_t mtime = text ? lc_file_mtime( path ) : -1;
+
+	if ( !text && set == LC_CONTROLS_ORIGINAL )
+		return 1;		/* no config: default.cfg's bindings already */
+	out = lc_controls_rewrite( text, holomatch, set );
+	free( text );
+	if ( !out ) {
+		if ( err )
+			lc_strlcpy( err, "Out of memory.", errSize );
+		return 0;
+	}
+	if ( !lc_write_file_atomic( path, out, strlen( out ) ) ) {
+		if ( err ) {
+			char why[256];
+			lc_file_error( why, sizeof( why ), NULL );
+			snprintf( err, errSize, "Couldn't write %s: %s", lc_path_basename( path ), why );
+		}
+		free( out );
+		return 0;
+	}
+	free( out );
+	/* bindings aren't graphics: keep the file's time, which lc_gfx_load uses to pick the
+	   newer of the two configs (the mode that ran last) */
+	if ( mtime >= 0 )
+		lc_file_set_mtime( path, mtime );
+	return 1;
+}
+
+int lc_controls_apply( const char *homeBase, lc_controls_set set, char *err, size_t errSize )
+{
+	char path[LC_MAX_PATH];
+	int holomatch;
+
+	if ( err && errSize )
+		err[0] = 0;
+	lc_mkdir_p( homeBase );
+	for ( holomatch = 0; holomatch <= 1; holomatch++ ) {
+		lc_config_path( homeBase, holomatch, path, sizeof( path ) );
+		if ( !ControlsApplyFile( path, holomatch, set, err, errSize ) )
+			return 0;
+	}
+	return 1;
+}
+
+int lc_controls_recommended_in_use( const char *homeBase )
+{
+	int holomatch, ok = 1;
+
+	for ( holomatch = 0; holomatch <= 1 && ok; holomatch++ ) {
+		char path[LC_MAX_PATH];
+		char *text;
+		size_t len;
+
+		lc_config_path( homeBase, holomatch, path, sizeof( path ) );
+		text = lc_read_file( path, &len );
+		ok = text && lc_controls_is_recommended( text, holomatch );
+		free( text );
+	}
+	return ok;
 }
