@@ -4595,6 +4595,13 @@ void CL_Init( void ) {
 	Cvar_Get ("teamtask", "0", CVAR_USERINFO );
 	Cvar_Get ("sex", "male", CVAR_USERINFO | CVAR_ARCHIVE );
 	Cvar_Get ("cl_anonymous", "0", CVAR_USERINFO | CVAR_ARCHIVE );
+	#if defined( ELITEFORCE ) && defined( EF_DESKTOP ) && defined( EF_APP_VERSION )
+	// Tells a server's admin this player runs AwayTeamEF (rcon "dumpuser <name>").
+	// Stock servers and game modules ignore keys they do not know, and userinfo
+	// never reaches other clients, so vanilla players and servers see no change.
+	// Read only: not archived, and a config or +set cannot change it.
+	Cvar_Get ("awayteamef", Q3_VERSION, CVAR_USERINFO | CVAR_ROM );
+	#endif
 
 	Cvar_Get ("password", "", CVAR_USERINFO);
 	Cvar_Get ("cg_predictItems", "1", CVAR_USERINFO | CVAR_ARCHIVE );
