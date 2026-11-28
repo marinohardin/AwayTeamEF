@@ -211,5 +211,17 @@ target_compile_options(efui PRIVATE ${EF_COPTS})
 # _USRDLL must be target-wide (not per-file) so the globbed gameinfo.cpp also takes the UI branch.
 # Do NOT add _USRDLL to the efgame target (the game build keeps g_weaponLoad's cgame funcs[] table).
 target_compile_definitions(efui PRIVATE NDEBUG _USRDLL UI_EXPORTS)
+# desktop: the menus' corner text is the app's version ("AwayTeamEF for Mac 1.5.1",
+# qcommon/stv_version.h), the one the engine shows. EF_APP_VERSION comes from the build
+# (make-app.sh, the presets); a build without it takes the engine's default.
+if(NOT ANDROID)
+  if(NOT DEFINED EF_APP_VERSION)
+    file(STRINGS ${CMAKE_CURRENT_SOURCE_DIR}/../EFAndroid-SP/app/jni/engine/CMakeLists.txt _ef_ver
+      REGEX "^set\\(EF_APP_VERSION \"[^\"]*\"")
+    string(REGEX REPLACE "^set\\(EF_APP_VERSION \"([^\"]*)\".*" "\\1" _ef_ver "${_ef_ver}")
+    set(EF_APP_VERSION "${_ef_ver}")
+  endif()
+  target_compile_definitions(efui PRIVATE EF_APP_VERSION="${EF_APP_VERSION}")
+endif()
 ef_module_link(efui efui.exp efui.ver)
 target_link_libraries(efui m)
