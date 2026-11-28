@@ -66,16 +66,15 @@ XRI_FUNCS
 typedef enum {
 	ACT_MOVE,			// vector2: left stick
 	ACT_TURN,			// vector2: right stick
-	ACT_ATTACK,			// float: right trigger
-	ACT_ALTATTACK,		// float: left trigger
+	ACT_TRIGGER,		// float, per hand: triggers
 	ACT_SQUEEZE,		// float, per hand: grips
-	ACT_JUMP,			// boolean ...
-	ACT_CROUCH,
-	ACT_USE,
+	ACT_BUTTON_A,		// boolean ...
+	ACT_BUTTON_B,
+	ACT_BUTTON_X,
+	ACT_BUTTON_Y,
 	ACT_MENU,
-	ACT_WEAPNEXT,
-	ACT_WEAPPREV,
-	ACT_YBUTTON,
+	ACT_RSTICK,
+	ACT_LSTICK,
 	ACT_AIM,			// pose, per hand
 	ACT_GRIP,			// pose, per hand
 	ACT_HAPTIC,			// vibration output, per hand (the weapon wheel's tick)
@@ -91,16 +90,15 @@ static const struct {
 } vr_actionDefs[NUM_ACTIONS] = {
 	{ "move",		"Move",					XR_ACTION_TYPE_VECTOR2F_INPUT,	0, 0 },
 	{ "turn",		"Turn",					XR_ACTION_TYPE_VECTOR2F_INPUT,	0, 0 },
-	{ "attack",		"Fire",					XR_ACTION_TYPE_FLOAT_INPUT,		0, 0 },
-	{ "altattack",	"Alternate fire",		XR_ACTION_TYPE_FLOAT_INPUT,		0, 0 },
-	{ "squeeze",	"Grip",					XR_ACTION_TYPE_FLOAT_INPUT,		1, 0 },
-	{ "jump",		"Jump",					XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_JUMP },
-	{ "crouch",		"Crouch",				XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_CROUCH },
-	{ "use",		"Use",					XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_USE },
+	{ "trigger",	"Fire or jump",			XR_ACTION_TYPE_FLOAT_INPUT,		1, 0 },
+	{ "squeeze",	"Alternate fire or crouch",	XR_ACTION_TYPE_FLOAT_INPUT,	1, 0 },
+	{ "button_a",	"Enter, skip cutscene",	XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_A },
+	{ "button_b",	"Objectives or scores",	XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_B },
+	{ "button_x",	"Use",					XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_X },
+	{ "button_y",	"Objectives",			XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_Y },
 	{ "menu",		"Menu",					XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_MENU },
-	{ "weapnext",	"Next weapon",			XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_WEAPNEXT },
-	{ "weapprev",	"Previous weapon",		XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_WEAPPREV },
-	{ "ybutton",	"Menu or objectives",	XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_Y },
+	{ "rstick",		"Weapon wheel",			XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_RSTICK },
+	{ "lstick",		"Recentre",				XR_ACTION_TYPE_BOOLEAN_INPUT,	0, VR_BUTTON_LSTICK },
 	{ "aim",		"Aim pose",				XR_ACTION_TYPE_POSE_INPUT,		1, 0 },
 	{ "grip",		"Grip pose",			XR_ACTION_TYPE_POSE_INPUT,		1, 0 },
 	{ "haptic",		"Vibration",			XR_ACTION_TYPE_VIBRATION_OUTPUT,	1, 0 },
@@ -119,17 +117,17 @@ typedef struct {
 static const vrBinding_t vr_touchBindings[] = {
 	{ ACT_MOVE,			L "thumbstick" },
 	{ ACT_TURN,			R "thumbstick" },
-	{ ACT_ATTACK,		R "trigger/value" },
-	{ ACT_ALTATTACK,	L "trigger/value" },
+	{ ACT_TRIGGER,		L "trigger/value" },
+	{ ACT_TRIGGER,		R "trigger/value" },
 	{ ACT_SQUEEZE,		L "squeeze/value" },
 	{ ACT_SQUEEZE,		R "squeeze/value" },
-	{ ACT_JUMP,			R "a/click" },
-	{ ACT_CROUCH,		R "b/click" },
-	{ ACT_USE,			L "x/click" },
-	{ ACT_YBUTTON,		L "y/click" },
+	{ ACT_BUTTON_A,		R "a/click" },
+	{ ACT_BUTTON_B,		R "b/click" },
+	{ ACT_BUTTON_X,		L "x/click" },
+	{ ACT_BUTTON_Y,		L "y/click" },
 	{ ACT_MENU,			L "menu/click" },
-	{ ACT_WEAPNEXT,		R "thumbstick/click" },
-	{ ACT_WEAPPREV,		L "thumbstick/click" },
+	{ ACT_RSTICK,		R "thumbstick/click" },
+	{ ACT_LSTICK,		L "thumbstick/click" },
 	{ ACT_AIM,			L "aim/pose" },
 	{ ACT_AIM,			R "aim/pose" },
 	{ ACT_GRIP,			L "grip/pose" },
@@ -140,8 +138,8 @@ static const vrBinding_t vr_touchBindings[] = {
 
 // no sticks: fire, use and the menu, so menus and doors still work
 static const vrBinding_t vr_simpleBindings[] = {
-	{ ACT_ATTACK,		R "select/click" },
-	{ ACT_USE,			L "select/click" },
+	{ ACT_TRIGGER,		R "select/click" },
+	{ ACT_BUTTON_X,		L "select/click" },
 	{ ACT_MENU,			L "menu/click" },
 	{ ACT_MENU,			R "menu/click" },
 	{ ACT_AIM,			L "aim/pose" },
@@ -571,9 +569,8 @@ void VR_Input_Sync( XrSpace space, XrTime displayTime, int focused ) {
 
 		VR_Input_Vector2( ACT_MOVE, s->move );
 		VR_Input_Vector2( ACT_TURN, s->turn );
-		s->attack = VR_Input_Float( ACT_ATTACK, XR_NULL_PATH );
-		s->altAttack = VR_Input_Float( ACT_ALTATTACK, XR_NULL_PATH );
 		for ( hand = 0; hand < VR_HANDS; hand++ ) {
+			s->trigger[hand] = VR_Input_Float( ACT_TRIGGER, vri.handPaths[hand] );
 			s->squeeze[hand] = VR_Input_Float( ACT_SQUEEZE, vri.handPaths[hand] );
 		}
 		for ( i = 0; i < NUM_ACTIONS; i++ ) {

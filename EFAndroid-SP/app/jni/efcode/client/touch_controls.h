@@ -123,5 +123,17 @@ static const tcNavButton_t tcNavButtons[] = {
 
 extern touchControlState_t touchControl;
 
+// The Quest build (EF_VR) has no touch screen, so no overlay: it used to show for its first few
+// seconds in a level, in the headset's HUD. vr_enable (default 1 on the Quest) rather than
+// vr_active, which only turns on once the session runs, a moment after the first frames. With
+// "vr_enable 0" (the flat fallback, e.g. an emulator) the touch controls come back.
+static inline qboolean TC_HiddenByVR( void ) {
+#ifdef EF_VR
+	return Cvar_VariableIntegerValue( "vr_enable" ) ? qtrue : qfalse;
+#else
+	return qfalse;
+#endif
+}
+
 #endif // __ANDROID__
 #endif // TOUCH_CONTROLS_H

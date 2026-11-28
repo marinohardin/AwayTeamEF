@@ -21,8 +21,8 @@ What `VR=1` changes, compared with the flat APK:
 |---|---|---|
 | Package | `org.awayteamef.app` | `org.awayteamef.quest` (both can be installed) |
 | Manifest | `android/AndroidManifest.xml` | `android/AndroidManifest-quest.xml` |
-| Activity | `EFActivity` | `QuestActivity` (`android/java-quest`): passes the JavaVM and activity to the vr module, keeps the screen on, hides the system bars |
-| Engine | `EF_VR=OFF` | `EF_VR=ON`: `efcode/vr` (OpenXR session, controllers) and the renderer's VR hooks, plus `android/jni/quest_jni.c` |
+| Activity | `EFActivity` | `StartActivity` (the one launcher entry: a flat panel with four buttons, see [the start screen](#the-start-screen)) and `QuestActivity` (`android/java-quest`): passes the JavaVM and activity to the vr module, keeps the screen on, hides the system bars |
+| Engine | `EF_VR=OFF`, no co-op | `EF_VR=ON`: `efcode/vr` (OpenXR session, controllers) and the renderer's VR hooks, plus `android/jni/quest_jni.c`; and co-op (`EF_COOP`: `sys_coop_host.c`, `sys_coop_net.c`, the game's `coop/`), which the start screen's Co-op buttons need |
 | OpenXR loader | none | `libopenxr_loader.so`, built by the script with the NDK from the Khronos **OpenXR-SDK-Source release-1.1.65** source tarball (about 5 MB, Apache-2.0, checksum-pinned in `make-apk.sh`, downloaded once into `android/build/src/`). It matches the headers in `deps/openxr/include` |
 
 The Quest manifest adds: the launcher category `com.oculus.intent.category.VR`, the OpenXR
@@ -50,16 +50,37 @@ Size (1.5.0): flat 3.1 MB; Quest 3.2 MB (the loader adds about 0.4 MB stripped).
    ```
 
    Configs and saves go into the same folder. **Uninstalling the app deletes it**, saves included.
-4. Start it from the headset's library (Unknown Sources), or:
+4. Start it from the headset's library (Unknown Sources). The app has one entry, which opens the
+   start screen; or from the computer:
 
    ```sh
-   adb shell am start -n org.awayteamef.quest/org.awayteamef.app.QuestActivity
+   adb shell am start -n org.awayteamef.quest/org.awayteamef.app.StartActivity
+   adb shell am start -n org.awayteamef.quest/org.awayteamef.app.QuestActivity                 # straight into the game
    adb shell am start -n org.awayteamef.quest/org.awayteamef.app.QuestActivity -e args "'+map borg1'"
    adb logcat -s VoyagerSP AwayTeamEF OpenXR-Loader
    ```
 
    Look for `VR: OpenXR runtime ...`, `VR: session running` and
    `VR input: right hand uses /interaction_profiles/oculus/touch_controller` in the log.
+   Starting QuestActivity directly skips the start screen and the engine's mode arguments (it
+   starts single player, as before).
+
+### The start screen
+
+Before the game, a flat panel (a plain Android activity, `StartActivity`) with four buttons, for
+the Quest's controller pointer, and a text field:
+
+| Button | Starts the game with | Then |
+|---|---|---|
+| Single player | `+set com_holomatch 0` | the game's main menu |
+| Co-op host | `+set com_holomatch 0 +set sp_coop 1` | start or load a mission; the guest needs your headset's IP address (the Wi-Fi settings show it) |
+| Co-op join | `+set com_holomatch 0 +set coop_connect <address>` | joins that host. The address is the field above the buttons (digits and dots, `ip` or `ip:port`; the last one is kept) |
+| Holomatch | `+set com_holomatch 1` | the Holomatch server browser |
+
+These are the arguments the desktop launchers put on the command line (`efcode/launcher/lc_launch.c`).
+A line under the title says whether the paks are in the data folder. Co-op in the Quest build uses
+the same code as on Linux, so the guest's and host's apps must be on the same co-op compatibility
+version (the 1.5.x line); a phone, Mac, Windows or Linux partner works.
 
 ## Controller map
 
@@ -67,21 +88,28 @@ OpenXR action set `gameplay`, with suggested bindings for `/interaction_profiles
 and the fallback `/interaction_profiles/khr/simple_controller`. The engine turns the actions into
 the commands, key events and joystick axes it already has, so the game modules see ordinary input.
 
-**In play:**
+**In play** (the weapon hand is the right one, or the left with `vr_leftHanded`, which swaps the
+triggers and grips with the hands and nothing else):
 
 | Control | Action | Engine input |
 |---|---|---|
 | Left thumbstick | Move and strafe, speed in proportion to deflection ([MOVEMENT.md](MOVEMENT.md)) | usercmd forward / right |
-| Right thumbstick, left/right | Turn: snap by default, smooth as an option | view yaw |
-| Right trigger | Fire | `+attack` |
-| Left trigger | Alternate fire | `+altattack` |
-| A | Jump | `+moveup` |
-| B | Crouch (standing players can also really crouch) | `+movedown` |
+| Right thumbstick, left/right | Turn: snap (a short eased turn, 0.1 s) by default, smooth as an option | view yaw |
+| Right thumbstick, up/down | Next / previous weapon, once per push | `weapnext` / `weapprev` |
+| Right thumbstick click | Hold (0.25 s): the weapon wheel, see below. A tap does nothing (Holomatch: the last weapon) | `weapon <n>` |
+| Weapon hand trigger | Fire | `+attack` |
+| Weapon hand grip | Alternate fire | `+altattack` |
+| Other hand trigger | Jump | `+moveup` |
+| Other hand grip | Crouch (standing players can also really crouch) | `+movedown` |
 | X | Use (in VR the head is the lean; Use + strafe no longer leans) | `+use` |
-| Y, or the left menu button | Menu | Escape |
-| Right thumbstick click | Tap: next weapon. Hold (0.25 s): the weapon wheel, see below | `weapnext` / `weapon <n>` |
-| Left thumbstick click | Previous weapon; hold 0.7 s to recentre | `weapprev` / recentre |
-| Grips | Not mapped yet (kept free for grabbing and two-handed weapons) | |
+| A | Enter, and **skip a cutscene** (the game's use-item key skips a camera scene; Enter skips a movie) | `+button2`, and the Enter key |
+| B or Y | The mission objectives, shown while held | `+info` |
+| Left thumbstick click | Hold 0.7 s to recentre. A tap does nothing | recentre |
+| Left menu button | Menu | Escape |
+
+In Holomatch (docs: [HOLOMATCH-H1.md](HOLOMATCH-H1.md) §6.1) the same shape holds, with A the holdable
+item (`+button2`, no Enter), **B held the scores** (`+info`), Y the objectives (`+analysis`), and a tap
+of the left thumbstick click the walk/run toggle.
 
 **Weapon wheel** (every mode: single player, co-op and Holomatch). Holding the right thumbstick
 click for a quarter of a second opens a ring of the weapons the player has, with the game's own
@@ -105,30 +133,33 @@ and in Holomatch, the wheel works the same but time is never touched; this is ch
 so a guest joining while the wheel is open brings time back to normal at once. Holomatch sees only
 the usual `weapon <n>` command.
 
-Alternate fire is on the **left trigger**, not the right grip, so that each trigger is one fire
-mode and the grips stay free for hand interactions later.
+**In menus and the console:** point the weapon hand at the menu: the menu cursor follows where the
+ray meets the menu panel, and the weapon hand's trigger clicks (mouse button 1). The right
+thumbstick still moves the cursor (the ray takes the cursor back as soon as the hand moves), the
+left thumbstick sends arrow keys, A is Enter, and B, Y and the menu button are Escape. A button held
+while a menu opens or closes does nothing in the new mode until it is released. The ray works while
+the menu is held in the room (`vr_menuHeadLocked 0`, the default); with it locked to the head the stick
+is the only pointer.
 
-**In menus and the console:** the right thumbstick moves the mouse cursor, the right trigger
-clicks, the left thumbstick sends arrow keys, A is Enter, and B, Y and the menu button are Escape.
-A button held while a menu opens or closes does nothing in the new mode until it is released.
-
-**Simple controller (fallback):** right select = fire, left select = use, either menu button = menu.
+**Simple controller (fallback):** right select = fire, left select = use (X), either menu button = menu.
 There is no movement on that profile.
 
 **Poses:** the head (OpenXR VIEW space), and per hand the aim pose (the pointing ray) and the grip
 pose, are located every frame in the same space as the eye views. `VR_GetInputState()` and
-`VR_GetHandPose()` (`efcode/vr/vr_input.h`) expose them for hand aiming; nothing uses them yet.
+`VR_GetHandPose()` (`efcode/vr/vr_input.h`) expose them (the weapon hand's aim drives the shots, the
+wheel and the menu pointer).
 
 **cvars (archived):**
 
 | cvar | Default | Meaning |
 |---|---|---|
 | `vr_turnMode` | 0 | 0 = snap turn, 1 = smooth turn |
-| `vr_snapTurnAngle` | 45 | degrees per snap |
+| `vr_snapTurnAngle` | 45 | degrees per snap (eased over 0.1 s) |
 | `vr_turnSpeed` | 150 | smooth turn, degrees per second at full deflection |
 | `vr_stickDeadzone` | 0.25 | thumbstick dead zone (0..0.9) |
-| `vr_menuCursorSpeed` | 500 | menu cursor speed, pixels per second |
-| `vr_leftHanded` | 0 | 1 = the weapon in the left hand (the triggers swap with it) |
+| `vr_menuCursorSpeed` | 500 | menu cursor speed from the right thumbstick, pixels per second |
+| `vr_leftHanded` | 0 | 1 = the weapon in the left hand (its trigger fires and its grip is alternate fire; the other hand's trigger jumps and its grip crouches) |
+| `vr_debugInput` | empty | debugging: pretend controller state, `"buttons trigL trigR gripL gripR stickX stickY"` (the buttons are the `VR_BUTTON_` bits in `vr_input.h`), added to the real controllers |
 | `cg_vrLaser` | 1 | 0 = off, 1 = laser and dot at the hit point, 2 = dot only |
 | `cg_vrOffHand` | 1 | draw a marker at the off hand |
 | `vr_wheelSlowMotion` | 0.2 | single player: how fast time runs while the weapon wheel is open (1 = no slow motion) |
@@ -143,7 +174,28 @@ head. Details in [MOVEMENT.md](MOVEMENT.md).
 | Piece | Path |
 |---|---|
 | Actions, bindings, sync, poses (OpenXR only) | `EFAndroid-SP/app/jni/efcode/vr/vr_input.c`, `vr_input.h`, `vr_local.h` |
-| Controller map onto the engine (compiled into the engine target) | `efcode/vr/vr_input_engine.c` |
+| Controller map onto the engine (compiled into the engine target), the eased snap turn, the menu pointer | `efcode/vr/vr_input_engine.c` (the ray onto the 2D layer: `VR_Pointer_OnCanvas` in `vr_wheel.c`) |
 | Weapon wheel: pointing, drawing, slow motion (engine target) | `efcode/vr/vr_wheel.c`, `vr_wheel.h`; the single-player weapon list comes from the cgame (`CG_VR_SETWEAPONS`, `cg_vr.cpp`) through `sp/sp_bridge.cpp`, which also slows its clock |
 | Session wiring | `efcode/vr/vr_openxr.c`: `VR_Input_*` calls in `VR_Init`, `VR_Shutdown`, `VR_CreateSession`, `VR_DestroySession`, `VR_PollEvents` and `VR_BeginFrame` |
-| Android shell | `android/AndroidManifest-quest.xml`, `android/java-quest/`, `android/jni/quest_jni.c`, `android/CMakeLists.txt` (`EF_VR`), `android/make-apk.sh` (`VR=1`) |
+| Android shell | `android/AndroidManifest-quest.xml`, `android/java-quest/` (`StartActivity`, `QuestActivity`), `android/jni/quest_jni.c`, `android/CMakeLists.txt` (`EF_VR`, and `EF_COOP` with it), `android/make-apk.sh` (`VR=1`) |
+| Touch controls (flat APK only: none in the Quest build) | `efcode/client/touch_controls.h` (`TC_HiddenByVR`), `cl_scrn.c`, `sdl/sdl_input.c` |
+
+## Known issues
+
+From the first session on a headset (2026-11-27). None is fixed yet; the numbers are the owner's.
+
+- **4. The pause menu flickers once when it opens.** Probably one frame between the frozen world
+  and the menu layer (the 2D quad switches from the HUD to the menu placement a frame before the
+  frozen world is submitted).
+- **7. Walking into a ladder doesn't climb it; forward plus jump does.** The game's climb follows
+  the view pitch, and the pitch sent with movement isn't the head's. Until then, hold forward and
+  press jump (the off-hand trigger) at the ladder.
+- **8. Brief white dots in the distance, for a frame or two.** Cause unknown: cracks between
+  surfaces, flares, or something per eye.
+- **10. The HUD and the menu layer may float too far away.** The defaults are `vr_hudDistance`
+  and `vr_menuDistance` (see [RENDERING.md](RENDERING.md)); a closer default is worth trying on
+  the headset.
+- **The start screen's step into the game is untested on a headset.** The Quest should switch from
+  the flat panel to VR when `QuestActivity` starts, because it carries the VR category. If it opens
+  flat instead, start the game directly with
+  `adb shell am start -n org.awayteamef.quest/org.awayteamef.app.QuestActivity`.

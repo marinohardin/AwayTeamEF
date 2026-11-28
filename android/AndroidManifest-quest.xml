@@ -45,6 +45,21 @@
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
 
+        <!-- the start screen: a plain Android activity, a flat panel in the headset, with four buttons
+             that launch QuestActivity (below) with the arguments for that mode. It is the app's
+             one launcher entry. -->
+        <activity android:name="org.awayteamef.app.StartActivity"
+            android:label="AwayTeamEF VR"
+            android:launchMode="singleTask"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+            android:windowSoftInputMode="adjustResize"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <!-- Quest 2 and later -->
         <meta-data android:name="com.oculus.supportedDevices"
             android:value="quest2|questpro|quest3|quest3s" />
@@ -59,9 +74,11 @@
             android:exported="true">
             <!-- the system menu can show over the app while it keeps running -->
             <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
+            <!-- the game itself, started by StartActivity (or "adb shell am start -n
+                 org.awayteamef.quest/org.awayteamef.app.QuestActivity -e args ..."): the VR category
+                 and no launcher entry of its own -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="com.oculus.intent.category.VR" />
             </intent-filter>
         </activity>

@@ -326,16 +326,21 @@ static void VR_Wheel_FromXr( const float *xr, float *out ) {
 	out[2] = xr[1];
 }
 
-// where the weapon hand's ray meets the wheel's quad, in virtual canvas units
-static qboolean VR_Wheel_PointerOnCanvas( float *vx, float *vy ) {
+/*
+Where the weapon hand's ray meets the 2D layer's quad, if the quad last drawn was of this mode and
+is held in the room (not head-locked): canvas pixels (0,0 at the top left, the render size; may be
+off the canvas). Used
+for the wheel here and for the menu cursor (vr_input_engine.c).
+*/
+int VR_Pointer_OnCanvas( int wantMode, float *px, float *py ) {
 	vrQuadMode_t mode;
 	vrBodyHand_t hand;
 	float centre[3], yaw, size[2], head[3], rel[3], xr[3];
 	vec3_t q, right, up, normal, d;
-	float scale, denom, t, lx, ly, px, py;
-	int i, placement;
+	float scale, denom, t, lx, ly;
+	int i;
 
-	if ( !VR_GetLastQuad( &mode, centre, &yaw, size ) || mode != VR_QUAD_WHEEL ) {
+	if ( !VR_GetLastQuad( &mode, centre, &yaw, size ) || mode != wantMode ) {
 		return qfalse;
 	}
 	if ( !VR_EngineBodyHand( VR_BODY_WEAPON, &hand ) ) {
@@ -374,9 +379,19 @@ static qboolean VR_Wheel_PointerOnCanvas( float *vx, float *vy ) {
 	lx = DotProduct( d, right ) / scale;	// metres on the quad
 	ly = DotProduct( d, up ) / scale;
 
-	// canvas pixels, then the virtual frame the wheel is drawn in
-	px = ( lx / size[0] + 0.5f ) * cls.glconfig.vidWidth;
-	py = ( 0.5f - ly / size[1] ) * cls.glconfig.vidHeight;
+	*px = ( lx / size[0] + 0.5f ) * cls.glconfig.vidWidth;
+	*py = ( 0.5f - ly / size[1] ) * cls.glconfig.vidHeight;
+	return qtrue;	// it may be beyond the quad's edges: the caller decides
+}
+
+// where the hand's ray meets the wheel's quad, in the virtual frame the wheel is drawn in
+static qboolean VR_Wheel_PointerOnCanvas( float *vx, float *vy ) {
+	float px, py;
+	int placement;
+
+	if ( !VR_Pointer_OnCanvas( VR_QUAD_WHEEL, &px, &py ) ) {
+		return qfalse;
+	}
 	placement = scr_placement;
 	SCR_SetScreenPlacement( SCR_HOR_CENTER | SCR_VERT_CENTER );
 	SCR_AdjustTo640( &px, &py, NULL, NULL );

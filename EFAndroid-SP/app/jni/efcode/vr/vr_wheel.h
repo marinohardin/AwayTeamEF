@@ -41,6 +41,10 @@ typedef struct {
 	char	name[VR_WHEEL_MAX][32];
 } vrWheelList_t;
 
+// where the weapon hand's ray meets the 2D layer's quad when that was last drawn in this mode
+// (VR_QUAD_*, vr.h) and is held in the room: canvas pixels. For the wheel and the menu cursor.
+int			VR_Pointer_OnCanvas( int quadMode, float *px, float *py );
+
 int			VR_Wheel_Open( void );						// 1 = it opened (there is something to pick)
 void		VR_Wheel_Close( int pick, const char *why );	// pick = switch to the highlighted weapon
 int			VR_Wheel_IsOpen( void );

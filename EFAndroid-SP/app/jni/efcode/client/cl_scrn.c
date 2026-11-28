@@ -800,7 +800,7 @@ void CL_DrawTouchControls( void ) {
 
 	// touch controls stay available even with a gamepad connected — the two
 	// input methods coexist (user request; gamepad no longer hides touch UI)
-	if ( !tc_pillShader )
+	if ( !tc_pillShader || TC_HiddenByVR() )
 		return;
 
 	// Start the idle timer the first time the overlay is actually drawn in active gameplay (this call
