@@ -8500,7 +8500,14 @@ void vk_begin_frame( void )
 		VK_CHECK( qvkResetFences( vk.device, 1, &vk.cmd->rendering_finished_fence ) );
 	}
 
+#if defined( EF_VR ) && defined( __ANDROID__ )
+	// On the Quest the headset shows only the OpenXR layers; the app's own window is never
+	// seen, and Android destroys its surface whenever the headset sleeps. Don't acquire or
+	// present it while VR runs (as when minimized), so a lost surface can't stop the game.
+	if ( !ri.CL_IsMinimized() && !vk_vr && !vk.cmd->swapchain_image_acquired ) {
+#else
 	if ( !ri.CL_IsMinimized() && !vk.cmd->swapchain_image_acquired ) {
+#endif
 		qboolean retry = qfalse;
 _retry:
 		// Block indefinitely. Android drivers (Adreno) reject finite timeouts here
@@ -9470,6 +9477,18 @@ void vk_end_frame( void )
 		submit_info.pWaitDstStageMask = NULL;
 		submit_info.signalSemaphoreCount = 0;
 		submit_info.pSignalSemaphores = NULL;
+#if defined( USE_UPLOAD_QUEUE ) && defined( EF_VR ) && defined( __ANDROID__ )
+		// no window image this frame (the Quest draws only into the OpenXR images): still wait
+		// for a texture upload made since the last frame, so its semaphore is consumed and the
+		// next upload finds the state it expects
+		if ( vk.image_uploaded != VK_NULL_HANDLE ) {
+			waits[0] = vk.image_uploaded;
+			submit_info.waitSemaphoreCount = 1;
+			submit_info.pWaitSemaphores = &waits[0];
+			submit_info.pWaitDstStageMask = &wait_dst_stage_mask[0];
+			vk.image_uploaded = VK_NULL_HANDLE;
+		}
+#endif
 	}
 
 	VK_CHECK( qvkQueueSubmit( vk.queue, 1, &submit_info, vk.cmd->rendering_finished_fence ) );

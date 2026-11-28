@@ -680,21 +680,46 @@ static VkFormat VR_SrgbTwin( VkFormat format ) {
 
 // the first of prefs the runtime offers, or VK_FORMAT_UNDEFINED
 static int64_t VR_PickFormat( const int64_t *prefs, int count ) {
-	int64_t formats[64];
+	int64_t *formats;
+	int64_t picked = VK_FORMAT_UNDEFINED;
 	uint32_t n = 0, j;
+	XrResult res;
 	int i;
 
-	if ( XR_FAILED( qxrEnumerateSwapchainFormats( vr.session, 64, &n, formats ) ) ) {
+	// ask for the count first: a runtime may offer many formats (a fixed-size buffer fails
+	// with XR_ERROR_SIZE_INSUFFICIENT when it offers more than the buffer holds)
+	res = qxrEnumerateSwapchainFormats( vr.session, 0, &n, NULL );
+	if ( XR_FAILED( res ) || n == 0 ) {
+		VR_Log( 1, "VR: xrEnumerateSwapchainFormats failed (%d, %u formats)\n", (int)res, n );
 		return VK_FORMAT_UNDEFINED;
 	}
-	for ( i = 0; i < count; i++ ) {
+	formats = (int64_t *)calloc( n, sizeof( *formats ) );
+	if ( !formats ) {
+		return VK_FORMAT_UNDEFINED;
+	}
+	res = qxrEnumerateSwapchainFormats( vr.session, n, &n, formats );
+	if ( XR_FAILED( res ) ) {
+		VR_Log( 1, "VR: xrEnumerateSwapchainFormats failed (%d)\n", (int)res );
+		free( formats );
+		return VK_FORMAT_UNDEFINED;
+	}
+	for ( i = 0; i < count && picked == VK_FORMAT_UNDEFINED; i++ ) {
 		for ( j = 0; j < n; j++ ) {
 			if ( formats[j] == prefs[i] ) {
-				return formats[j];
+				picked = formats[j];
+				break;
 			}
 		}
 	}
-	return VK_FORMAT_UNDEFINED;
+	if ( picked == VK_FORMAT_UNDEFINED ) {
+		VR_Log( 1, "VR: none of our formats among the runtime's %u:", n );
+		for ( j = 0; j < n; j++ ) {
+			VR_Log( 1, " %lld", (long long)formats[j] );
+		}
+		VR_Log( 1, "\n" );
+	}
+	free( formats );
+	return picked;
 }
 
 static void VR_DestroySwapchain( vrSwapchain_t *sc ) {

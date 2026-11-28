@@ -433,21 +433,27 @@ static void VR_Input_UpdateProfiles( void ) {
 	vri.profileDirty = 0;
 	for ( hand = 0; hand < VR_HANDS; hand++ ) {
 		XrInteractionProfileState ips;
+		char before[XR_MAX_PATH_LENGTH];
 		uint32_t len = 0;
+		XrResult res;
 
 		memset( &ips, 0, sizeof( ips ) );
 		ips.type = XR_TYPE_INTERACTION_PROFILE_STATE;
+		snprintf( before, sizeof( before ), "%s", vri.profiles[hand] );
 		vri.profiles[hand][0] = '\0';
-		if ( XR_FAILED( ixrGetCurrentInteractionProfile( vri.session, vri.handPaths[hand], &ips ) ) ||
-			ips.interactionProfile == XR_NULL_PATH ) {
-			continue;
-		}
-		if ( XR_FAILED( ixrPathToString( vri.instance, ips.interactionProfile, XR_MAX_PATH_LENGTH, &len,
+		res = ixrGetCurrentInteractionProfile( vri.session, vri.handPaths[hand], &ips );
+		if ( XR_SUCCEEDED( res ) && ips.interactionProfile != XR_NULL_PATH &&
+			XR_FAILED( ixrPathToString( vri.instance, ips.interactionProfile, XR_MAX_PATH_LENGTH, &len,
 				vri.profiles[hand] ) ) ) {
 			vri.profiles[hand][0] = '\0';
-			continue;
 		}
-		VR_Log( 0, "VR input: %s hand uses %s\n", hand == VR_HAND_LEFT ? "left" : "right", vri.profiles[hand] );
+		if ( strcmp( before, vri.profiles[hand] ) ) {
+			VR_Log( 0, "VR input: %s hand uses %s\n", hand == VR_HAND_LEFT ? "left" : "right",
+				vri.profiles[hand][0] ? vri.profiles[hand] : "no controller" );
+		} else if ( !vri.profiles[hand][0] && XR_FAILED( res ) ) {
+			VR_Log( 1, "VR input: %s hand: xrGetCurrentInteractionProfile failed (%d)\n",
+				hand == VR_HAND_LEFT ? "left" : "right", (int)res );
+		}
 	}
 }
 
@@ -554,6 +560,11 @@ void VR_Input_Sync( XrSpace space, XrTime displayTime, int focused ) {
 	}
 
 	if ( s->active ) {
+		// a controller may wake after the profile event (or the runtime may not send one for it):
+		// while a hand has no profile, ask again about once a second
+		if ( ( !vri.profiles[VR_HAND_LEFT][0] || !vri.profiles[VR_HAND_RIGHT][0] ) && ( frame % 72 ) == 0 ) {
+			vri.profileDirty = 1;
+		}
 		if ( vri.profileDirty ) {
 			VR_Input_UpdateProfiles();
 		}
@@ -568,6 +579,28 @@ void VR_Input_Sync( XrSpace space, XrTime displayTime, int focused ) {
 		for ( i = 0; i < NUM_ACTIONS; i++ ) {
 			if ( vr_actionDefs[i].button && VR_Input_Bool( (vrAction_t)i ) ) {
 				s->buttons |= vr_actionDefs[i].button;
+			}
+		}
+		// log each control once, the first time it's used: shows from a headset log which
+		// controls reach the game
+		{
+			static unsigned seenButtons;
+			static int seenMove, seenTurn;
+
+			if ( !seenMove && ( s->move[0] * s->move[0] + s->move[1] * s->move[1] ) > 0.09f ) {
+				seenMove = 1;
+				VR_Log( 0, "VR input: first use of move\n" );
+			}
+			if ( !seenTurn && ( s->turn[0] * s->turn[0] + s->turn[1] * s->turn[1] ) > 0.09f ) {
+				seenTurn = 1;
+				VR_Log( 0, "VR input: first use of turn\n" );
+			}
+			for ( i = 0; i < NUM_ACTIONS; i++ ) {
+				const unsigned b = vr_actionDefs[i].button;
+				if ( b && ( s->buttons & b ) && !( seenButtons & b ) ) {
+					seenButtons |= b;
+					VR_Log( 0, "VR input: first use of %s\n", vr_actionDefs[i].name );
+				}
 			}
 		}
 	}
