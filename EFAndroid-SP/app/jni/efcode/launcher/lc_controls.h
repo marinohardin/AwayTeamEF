@@ -31,14 +31,17 @@ hmconfig.cfg), which it writes as "unbindall" and every binding. So:
     recommended set;
   - original: the config's bind lines are removed, so default.cfg's apply
     (and the game writes them back to the config when it quits).
-Every other line is kept as it is.
+Every other line is kept as it is, and so are the controller's bindings
+(PAD0_*, JOY*, AUX*: the Steam Deck layout, or the player's own): both sets
+are about the keyboard and mouse.
 
 text = the config's contents (NULL or "" for a missing file). Returns the new
 contents (malloc'd, free() it; NULL only when out of memory).
 */
 char *lc_controls_rewrite( const char *text, int holomatch, lc_controls_set set );
 
-/* 1 when text binds exactly the recommended keys (in any order, key names in any case) */
+/* 1 when text binds exactly the recommended keys (in any order, key names in any case);
+   controller bindings don't count */
 int lc_controls_is_recommended( const char *text, int holomatch );
 
 /* the config file names, relative to the home folder (baseEF) */

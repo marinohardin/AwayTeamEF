@@ -488,7 +488,12 @@ QWidget *LauncherWindow::buildServerGroup()
 	return g;
 }
 
-/* key bindings for both modes: the recommended set, or the game's original (default.cfg) ones */
+static bool deckCfgBundled( char *cfg, size_t size );
+static const char *const kDeckMissing =
+	"The file with the Deck's controller layout (deck.cfg) is missing from this copy of the game, or couldn't be copied.";
+
+/* key bindings for both modes: the recommended set, or the game's original (default.cfg) ones;
+   and (when bundled) Set Steam Deck Controls, the controller's layout, which the other two keep */
 QWidget *LauncherWindow::buildControls()
 {
 	Group *g = new Group( "Controls" );
@@ -507,6 +512,13 @@ QWidget *LauncherWindow::buildControls()
 	connect( original, &QPushButton::clicked, this, [this]() { applyControls( LC_CONTROLS_ORIGINAL, true ); } );
 	bh->addWidget( recommended );
 	bh->addWidget( original );
+	char deckCfg[LC_MAX_PATH];
+	if ( deckCfgBundled( deckCfg, sizeof deckCfg ) ) {
+		m_deckButton = button( "Set Steam Deck Controls",
+			"Set the controller's buttons to the Steam Deck layout, in single player and Holomatch" );
+		connect( m_deckButton, &QPushButton::clicked, this, [this]() { askDeckControls(); } );
+		bh->addWidget( m_deckButton );
+	}
 	bh->addStretch( 1 );
 	gl->addLayout( bh, 0, 1 );
 	gl->setRowMinimumHeight( 0, px( 30 ) );
@@ -527,19 +539,31 @@ void LauncherWindow::showControls()
 void LauncherWindow::applyControls( lc_controls_set set, bool ask )
 {
 	const bool rec = set == LC_CONTROLS_RECOMMENDED;
-	char err[512];
+	char err[512], deckCfg[LC_MAX_PATH];
+	/* the recommended set includes the Steam Deck controller layout (where it's bundled):
+	   the same as Use Recommended and then Set Steam Deck Controls */
+	const bool withDeck = rec && deckCfgBundled( deckCfg, sizeof deckCfg );
 
 	if ( ask && alert( this, Info,
 			rec ? "Use the recommended key bindings?" : "Restore the game's original key bindings?",
-			rec ? "WASD to move, the mouse to aim and fire, E to use, Space/X to jump, F5 quicksave, etc. "
+			rec ? QString( withDeck ?
+				"WASD to move, the mouse to aim and fire, E to use, Space/X to jump, F5 quicksave, etc., "
+				"and the Steam Deck controller layout. " :
+				"WASD to move, the mouse to aim and fire, E to use, Space/X to jump, F5 quicksave, etc. " ) +
 				"They replace your key bindings in single player and Holomatch; your other settings stay as they are."
 				: "The keys the game came with replace your key bindings in single player and Holomatch; "
 				"your other settings stay as they are.",
 			QStringList() << ( rec ? "Use Recommended" : "Restore Original" ) << "Cancel" ) != 0 )
 		return;
-	if ( lc_controls_apply( B( m_homeBase ).constData(), set, err, sizeof err ) )
+	if ( lc_controls_apply( B( m_homeBase ).constData(), set, err, sizeof err ) ) {
 		log( QString( "Launcher: %1 key bindings in both configs" ).arg( rec ? "recommended" : "original" ) );
-	else if ( ask )
+		if ( withDeck && !requestDeckControls() ) {
+			if ( ask )
+				alert( this, Warning, "The Steam Deck controls couldn't be set up.", kDeckMissing, QStringList() << "OK" );
+			else
+				log( "Launcher: the Steam Deck controls couldn't be set up" );
+		}
+	} else if ( ask )
 		alert( this, Warning, "The key bindings couldn't be changed.", U( err ), QStringList() << "OK" );
 	else
 		log( "Launcher: " + U( err ) );
@@ -667,7 +691,7 @@ QWidget *LauncherWindow::buildGameFiles()
 
 /* ---- Steam Deck controls (Linux addition) -------------------------------------------------------------
    The bundled deck.cfg binds the controller (PAD0_*) to the Deck layout. It is applied once on a Deck's
-   first run of each mode; the "Steam Deck Controls…" button asks for it again: the next Play of each mode
+   first run of each mode; Set Steam Deck Controls (and Use Recommended) ask for it again: the next Play of each mode
    execs a fresh copy, and the game then keeps the bindings in its own config. */
 static const char *const kDeckPendingSp = "deckcontrols.sp";
 static const char *const kDeckPendingHm = "deckcontrols.hm";
@@ -697,21 +721,11 @@ static bool installDeckCfg( bool replace )
 	return ok;
 }
 
-void LauncherWindow::askDeckControls()
+/* deck.cfg into baseEF, applied on the next Play of each mode; false if it's missing */
+bool LauncherWindow::requestDeckControls()
 {
-	const int a = alert( this, Info, "Use the Steam Deck controls?",
-		"The next time you play Single Player and Holomatch, the controller is set up like this: the left stick moves, "
-		"the right stick looks, the right trigger fires and the left trigger alt-fires; A jumps, B crouches, X uses, "
-		"the bumpers change weapons and Start opens the menu.\n\n"
-		"Your keyboard and mouse keys stay as they are, and changes you make later in the game's Controls menu are kept.",
-		QStringList{ "Use Deck Controls", "Cancel" }, 0, 1 );
-	if ( a != 0 )
-		return;
-	if ( !installDeckCfg( true ) ) {
-		alert( this, Warning, "The Steam Deck controls couldn't be set up.",
-			"The file with the Deck's controller layout (deck.cfg) is missing from this copy of the game, or couldn't be copied." );
-		return;
-	}
+	if ( !installDeckCfg( true ) )
+		return false;
 	lc_store *st = lc_store_shared();
 	lc_store_set( st, kDeckPendingSp, "1" );
 	lc_store_set( st, kDeckPendingHm, "1" );
@@ -719,6 +733,21 @@ void LauncherWindow::askDeckControls()
 	log( "Launcher: Steam Deck controls requested for the next game" );
 	if ( m_deckButton )
 		m_deckButton->setToolTip( "The Deck's controller layout is applied the next time you play each mode." );
+	return true;
+}
+
+void LauncherWindow::askDeckControls()
+{
+	const int a = alert( this, Info, "Set the Steam Deck controls?",
+		"The next time you play Single Player and Holomatch, the controller is set up like this: the left stick moves, "
+		"the right stick looks, the right trigger fires and the left trigger alt-fires; A jumps, B crouches, X uses, "
+		"the bumpers change weapons and Start opens the menu.\n\n"
+		"Your keyboard and mouse keys stay as they are, and changes you make later in the game's Controls menu are kept.",
+		QStringList{ "Set Deck Controls", "Cancel" }, 0, 1 );
+	if ( a != 0 )
+		return;
+	if ( !requestDeckControls() )
+		alert( this, Warning, "The Steam Deck controls couldn't be set up.", kDeckMissing );
 }
 
 QWidget *LauncherWindow::buildFooter()
@@ -730,7 +759,7 @@ QWidget *LauncherWindow::buildFooter()
 	const QString ver = U( EF_APP_VERSION );
 	QLabel *v = label( ( ver.isEmpty() ? QString() : "Version " + ver + QString::fromUtf8( " \xc2\xb7 " ) ) + kMadeBy, 11,
 		QFont::Normal, tertiary() );
-	/* left column: the version, then (Deck) the auto-start box and (when bundled) Deck Controls… */
+	/* left column: the version, then (Deck) the auto-start box */
 	QVBoxLayout *left = new QVBoxLayout;
 	left->setSpacing( px( 4 ) );
 	left->addWidget( v );
@@ -744,13 +773,6 @@ QWidget *LauncherWindow::buildFooter()
 			lc_store_save( st );
 		} );
 		left->addWidget( m_autoBox );
-	}
-	char deckCfg[LC_MAX_PATH];
-	if ( deckCfgBundled( deckCfg, sizeof deckCfg ) ) {
-		m_deckButton = button( QString::fromUtf8( "Steam Deck Controls\xe2\x80\xa6" ),
-			"Set the controller's buttons to the Steam Deck layout" );
-		connect( m_deckButton, &QPushButton::clicked, this, [this]() { askDeckControls(); } );
-		left->addWidget( m_deckButton, 0, Qt::AlignLeft );
 	}
 	if ( left->count() > 1 )
 		h->addLayout( left );
@@ -1287,7 +1309,7 @@ void LauncherWindow::doPlay()
 	/* Steam Deck / EF_JOYSTICK (what AppRun does for the game): enable the pad, and on the first run
 	   of each mode apply deck.cfg's controller bindings once */
 	QList<QByteArray> extra;
-	/* ... and when "Steam Deck Controls…" asked for it, apply it on the next run of each mode */
+	/* ... and when Set Steam Deck Controls (or Use Recommended) asked for it, apply it on the next run of each mode */
 	const char *pendingKey = m_mode == 0 ? kDeckPendingSp : kDeckPendingHm;
 	const bool deckPending = lc_store_get_bool( lc_store_shared(), pendingKey, 0 ) != 0;
 	if ( deck() || lc_env( "EF_JOYSTICK" ) || deckPending ) {

@@ -362,7 +362,8 @@ Windows may say "Windows protected your PC". Click **More info**, then **Run any
 **Steam Deck.** Add the AppImage to Steam as a non-Steam game (in Desktop Mode), copy your game
 files into the folder above, and play from Gaming Mode. On the first run the game goes fullscreen
 and sets up the controller (left stick moves, right stick looks, triggers fire). You can change
-the bindings under Controls; the Linux launcher's **Steam Deck Controls…** button puts them back.
+the bindings under Controls; the Linux launcher's **Set Steam Deck Controls** button (next to **Use
+Recommended**, which sets them too) puts them back. Either key binding button keeps the controller's.
 
 The `ReadMe.txt` that comes with each download ([Windows](windows/ReadMe.txt),
 [Linux](linux/ReadMe.txt)) has the details, including command-line options.
@@ -373,7 +374,8 @@ The `ReadMe.txt` that comes with each download ([Windows](windows/ReadMe.txt),
   (Performance, Balanced, Best) or the individual settings: window or full screen, window
   size, full Retina resolution, anti-aliasing, texture detail, V-Sync and **Brightness**; key bindings for
   single player and Holomatch at once (**Use Recommended**: WASD to move, the mouse to aim and fire, E to
-  use, Space/X to jump, F5 quicksave; or **Restore Original**, the keys the game came with);
+  use, Space/X to jump, F5 quicksave, and on Linux the Steam Deck controller layout; or **Restore Original**,
+  the keys the game came with; neither touches the controller's buttons);
   your Holomatch
   player name, internet master servers (**Servers…**) and a server browser (**Browse…**);
   **Host a Server** with its **Config…**; and where the game files are, whether the Expansion Pack was found, and

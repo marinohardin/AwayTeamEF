@@ -83,6 +83,41 @@ static void TestRewrite( void )
 	free( fresh );
 }
 
+/* controller bindings (the Steam Deck layout, the player's own) survive both sets */
+static void TestControllerKept( void )
+{
+	const char *cfg =
+		"unbindall\n"
+		"bind TAB \"+info\"\n"
+		"bind PAD0_A \"+moveup\"\n"
+		"bind SPACE \"+use\"\n"
+		"bind pad0_righttrigger \"+attack\"\n"
+		"bind JOY4 \"weapnext\"\n"
+		"bind AUX2 \"+zoom\"\n"
+		"seta in_joystick \"1\"\n"
+		"bind PAD0_PADDLE4 \"+use\"";		/* last line, no newline */
+	char *rec = lc_controls_rewrite( cfg, 1, LC_CONTROLS_RECOMMENDED );
+	char *orig = lc_controls_rewrite( cfg, 1, LC_CONTROLS_ORIGINAL );
+	char *again = lc_controls_rewrite( rec, 1, LC_CONTROLS_RECOMMENDED );
+
+	/* recommended: other lines, unbindall, the controller's, then the set */
+	CHECK( strstr( rec, "seta in_joystick \"1\"\nunbindall\nbind PAD0_A \"+moveup\"\n"
+		"bind pad0_righttrigger \"+attack\"\nbind JOY4 \"weapnext\"\nbind AUX2 \"+zoom\"\n"
+		"bind PAD0_PADDLE4 \"+use\"\nbind TAB" ) == rec );
+	CHECK( strstr( rec, "bind SPACE \"+moveup\"\n" ) != NULL );
+	CHECK( !strstr( rec, "bind SPACE \"+use\"" ) );
+	CHECK( lc_controls_is_recommended( rec, 1 ) );	/* the controller's don't count */
+	CHECK_STR( again, rec );						/* pressing it twice changes nothing */
+
+	/* original: the controller's stay, the keyboard's and mouse's go */
+	CHECK_STR( orig, "seta in_joystick \"1\"\nbind PAD0_A \"+moveup\"\nbind pad0_righttrigger \"+attack\"\n"
+		"bind JOY4 \"weapnext\"\nbind AUX2 \"+zoom\"\nbind PAD0_PADDLE4 \"+use\"\n" );
+	CHECK( !lc_controls_is_recommended( orig, 1 ) );
+	free( rec );
+	free( orig );
+	free( again );
+}
+
 static void TestApply( void )
 {
 	const char *dir = tu_dir( "controls" );
@@ -153,6 +188,7 @@ static void TestModFoldersUntouched( void )
 int main( void )
 {
 	TestRewrite( );
+	TestControllerKept( );
 	TestApply( );
 	TestModFoldersUntouched( );
 	return TEST_DONE( );
