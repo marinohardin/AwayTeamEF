@@ -204,13 +204,26 @@ if(EF_VR)
   # <version>", the menus' Quit back to the start screen, the Loopback Host Fix, cMod's paks
   target_compile_definitions(main PRIVATE EF_QUEST)
   # the launchers' core for the Loopback Host Fix's public address (lc_nat.c: NAT-PMP, UPnP); only
-  # what quest_jni.c uses is linked. No GOG unpacking (no liblzma here).
-  set(LC_GOG OFF CACHE BOOL "" FORCE)
+  # what quest_jni.c uses is linked. GOG unpacking (for the start screen's liblauncher.so below)
+  # when make-apk.sh built a static liblzma (EF_LZMA_PREFIX); libmain never pulls it in.
+  if(EF_LZMA_PREFIX)
+    set(LC_GOG ON CACHE BOOL "" FORCE)
+    set(LC_DEPS_PREFIX "${EF_LZMA_PREFIX}" CACHE PATH "" FORCE)
+  else()
+    set(LC_GOG OFF CACHE BOOL "" FORCE)
+  endif()
   set(LC_BUNDLE_ZLIB OFF CACHE BOOL "" FORCE)
   add_subdirectory(${EF}/launcher eflauncher)
   # -U_FORTIFY_SOURCE: bionic's realpath() check trips on a launcher path buffer quest_jni.c never uses
   target_compile_options(eflauncher PRIVATE -w -U_FORTIFY_SOURCE)
   target_link_libraries(main PRIVATE eflauncher)
+  # the start screen (StartActivity, main process): the same core for the game files' checks, the
+  # CD image / BaseEF folder / GOG installer imports and the server browser (LauncherCore.java).
+  # zlib for sys_osx_gog.c's inflate comes from the system's libz.
+  add_library(launcher SHARED ${CMAKE_CURRENT_SOURCE_DIR}/jni/launcher_jni.c)
+  target_link_libraries(launcher PRIVATE eflauncher z log)
+  # picked files (content:// descriptors) are served to the core's fopen/open/stat: launcher_jni.c
+  target_link_options(launcher PRIVATE -Wl,-z,max-page-size=16384 -Wl,--wrap=fopen -Wl,--wrap=open -Wl,--wrap=stat)
   # the SP bridge's VR hooks: room-scale movement (vr_move.h) and the hand-pose syscall
   # CG_VR_GETPOSE (vr_input.h)
   target_compile_definitions(sp_game_bridge PRIVATE EF_VR)

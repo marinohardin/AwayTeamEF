@@ -56,14 +56,13 @@ final class CoopLan {
 
         boolean full() { return get("guest").equals("1"); }
 
-        /** Why this game can't be joined from here, or "" when it can. */
+        /** Why this game can't be joined from here, or "" when it can (a password is asked for, not a problem). */
         String problem() {
             if (!compatible()) {
                 String v = get("appVersion").isEmpty() ? get("version") : get("appVersion");
                 return "Another version (host runs " + (v.isEmpty() ? "?" : v) + ")";
             }
             if (full()) return "Full: a friend already plays player 2";
-            if (needsPassword()) return "Needs a password (not supported on the Quest yet)";
             return "";
         }
 
