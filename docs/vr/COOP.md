@@ -1,9 +1,22 @@
 # Quest VR: co-op with flat partners
 
-A VR player, as host or guest, plays the campaign with a flat Mac, Windows or Linux player. Co-op
-already refuses a partner on another app version, so both ends always have this code; nothing is
-negotiated and the protocol version is unchanged. A flat player sends and sees exactly what it did
-before unless the partner is in VR.
+A VR player, as host or guest, plays the campaign with a flat Mac, Windows or Linux player. The
+protocol version is unchanged, so a partner on 1.5.0 or 1.5.1 (before any of this) can be on the
+other end too. A flat player sends and sees exactly what it did before unless the partner is in VR.
+
+## A VR guest and an older host
+
+A VR guest's extras (the lean and the hand, below) go in its commands. A host from before them
+reads each command at the old fixed size, so the hand's ten extra bytes shifted every later command
+in the packet: their numbers, angles and buttons were junk. Only the oldest command of each packet
+was read right, and the host had always seen it already; or, with the hand left of the eye, a junk
+command looked like the newest and every real one after it was dropped. Either way player 2 couldn't
+move or fire (the guest could still look around, which is its own headset), and in the second case
+its roll was the hand's yaw: a head upside down, seen by the host. Now a host says in its accept that it reads the extras
+(`vrInput`), and a guest sends them only to such a host (`CoopNet_GuestQueueCmd`,
+`sys_coop_net.c`). To an older host a VR guest sends a flat player's commands: it moves, fires and
+uses normally, but shoots straight ahead of its body (level), its lean isn't seen, and its own
+predicted shot may still be drawn from the hand. The guest's console says so when it joins.
 
 ## The lean
 
