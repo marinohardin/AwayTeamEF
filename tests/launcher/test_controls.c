@@ -107,7 +107,10 @@ static void TestApply( void )
 	CHECK( text && strstr( text, "bind h \"messagemode4\"\n" ) );
 	free( text );
 
+	/* the files keep their times: lc_gfx_load picks the newer config by them */
+	CHECK( lc_file_set_mtime( sp, 1000000000 ) && lc_file_set_mtime( hm, 1500000000 ) );
 	CHECK( lc_controls_apply( dir, LC_CONTROLS_ORIGINAL, err, sizeof( err ) ) );
+	CHECK( lc_file_mtime( sp ) == 1000000000 && lc_file_mtime( hm ) == 1500000000 );
 	CHECK( !lc_controls_recommended_in_use( dir ) );
 	text = lc_read_file( sp, &len );
 	CHECK( text && !strstr( text, "\nbind " ) && !strstr( text, "unbind" ) && strstr( text, "seta name \"Munro\"\n" ) );

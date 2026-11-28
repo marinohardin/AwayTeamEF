@@ -223,6 +223,8 @@ static NSMutableData *ConfigBytes( NSString *path )
 	return d;
 }
 
+static NSDate *ModDate( NSString *path );
+
 // One config with the set's bindings; NO (and why) if it couldn't be written. A missing
 // file is left alone for the original set (default.cfg's bindings already).
 static BOOL ApplyControlsTo( NSString *path, int holomatch, lc_controls_set set, NSString **why )
@@ -236,8 +238,13 @@ static BOOL ApplyControlsTo( NSString *path, int holomatch, lc_controls_set set,
 		return YES;
 	if( !( out = lc_controls_rewrite( text ? [text bytes] : NULL, holomatch, set ) ) )
 		return NO;
+	NSDate *date = text ? ModDate( path ) : nil;
 	ok = [[NSData dataWithBytes: out length: strlen( out )] writeToFile: path options: NSDataWritingAtomic error: &error];
 	free( out );
+	// bindings aren't graphics: keep the file's date, which LoadGraphics uses to pick the
+	// newer of the two configs (the mode that ran last)
+	if( ok && date )
+		[[NSFileManager defaultManager] setAttributes: @{ NSFileModificationDate: date } ofItemAtPath: path error: NULL];
 	if( !ok && why )
 		*why = [NSString stringWithFormat: @"%@ couldn't be saved: %@", [path lastPathComponent], [error localizedDescription]];
 	return ok;

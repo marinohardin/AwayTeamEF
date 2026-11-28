@@ -756,6 +756,7 @@ static int ControlsApplyFile( const char *path, int holomatch, lc_controls_set s
 {
 	size_t len;
 	char *text = lc_read_file( path, &len ), *out;
+	int64_t mtime = text ? lc_file_mtime( path ) : -1;
 
 	if ( !text && set == LC_CONTROLS_ORIGINAL )
 		return 1;		/* no config: default.cfg's bindings already */
@@ -776,6 +777,10 @@ static int ControlsApplyFile( const char *path, int holomatch, lc_controls_set s
 		return 0;
 	}
 	free( out );
+	/* bindings aren't graphics: keep the file's time, which lc_gfx_load uses to pick the
+	   newer of the two configs (the mode that ran last) */
+	if ( mtime >= 0 )
+		lc_file_set_mtime( path, mtime );
 	return 1;
 }
 
