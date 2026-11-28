@@ -66,6 +66,7 @@ static vrFrameKind_t r_vrKind;
 static vrFrameKind_t r_vrPrevKind = VRF_GAME;
 static qboolean r_vrHold;		// this frame is one of those
 static int r_vrMenuSettle;		// frames left of holding the HUD at a menu's opening (see R_VR_BeginFrame)
+static int r_vrThumbWait;		// frames left that the hold waits for the save thumbnail (see R_VR_SceneEyes)
 
 /*
 The in-game menu's first frames aren't a clean picture: the first one is the menu on an opaque black
@@ -76,6 +77,18 @@ VR_MENU_SETTLE frames after a game frame the world stays frozen and the 2D layer
 image it had (the HUD), no dimming and no laser, and then the menu comes in whole.
 */
 #define VR_MENU_SETTLE	3	// vr_menuSettle's default
+
+/*
+The save thumbnail. The single-player bridge asks for it on the frame the game pauses for the menu
+(RE_RequestSaveThumb), hides the menu on that frame and redraws the paused game, and the thumbnail is
+read from the 2D canvas at the end of the frame (RB_CaptureSaveThumb), as on the flat screen. But in VR
+the world goes into the eye images, not the canvas, and under a menu it isn't drawn at all, so the
+canvas held the HUD over transparent black: every thumbnail came out black. So on that one frame the
+world is drawn flat into the canvas, under the HUD, as the flat screen draws it. The headset doesn't see
+it: the frame is one of the held ones (the 2D layer re-shows its last image). The hold lasts at least
+until the capture frame, up to VR_THUMB_WAIT frames after the menu opens, even with vr_menuSettle 0 or 1.
+*/
+#define VR_THUMB_WAIT	4
 
 static void R_VR_Recenter_f( void ) {
 	VR_Recenter();
@@ -310,13 +323,18 @@ void R_VR_BeginFrame( void ) {
 	r_vrKind = R_VR_FrameKind();
 	if ( r_vrKind == VRF_MENU && r_vrPrevKind != VRF_MENU && r_vrPrevKind != VRF_MENU_LIVE && VR_HaveFrozenEyes() ) {
 		r_vrMenuSettle = vr_menuSettle->integer;	// a menu opens over a running game
+		r_vrThumbWait = VR_THUMB_WAIT;
 	} else if ( r_vrKind != VRF_MENU ) {
 		r_vrMenuSettle = 0;
+		r_vrThumbWait = 0;
 	}
 	r_vrPrevKind = r_vrKind;
-	r_vrHold = r_vrMenuSettle > 0 && VR_HaveCanvas();
+	r_vrHold = ( r_vrMenuSettle > 0 || r_vrThumbWait > 0 ) && VR_HaveCanvas();
 	if ( r_vrMenuSettle > 0 ) {
 		r_vrMenuSettle--;
+	}
+	if ( r_vrThumbWait > 0 ) {
+		r_vrThumbWait--;
 	}
 	VR_SetHoldCanvas( r_vrHold );
 	// in play the dimmer is the head-in-a-wall fade (vr_move.c)
@@ -407,6 +425,11 @@ int R_VR_SceneEyes( const refdef_t *fd ) {
 	}
 	switch ( r_vrKind ) {
 	case VRF_MENU:
+		if ( r_vrHold && ( backEnd.screenshotMask & SCREENSHOT_SAVETHUMB ) ) {
+			// the save thumbnail's frame: the world flat into the canvas, unseen (see VR_THUMB_WAIT)
+			r_vrThumbWait = 0;
+			return 0;
+		}
 		return -1;	// the last world frame stays up, frozen and dimmed
 	case VRF_THEATER:
 		return 0;	// the camera's view is the picture on the cutscene screen
