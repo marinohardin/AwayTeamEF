@@ -40,8 +40,11 @@ Size (1.5.0): flat 3.1 MB; Quest 3.2 MB (the loader adds about 0.4 MB stripped).
    Reboot the headset.
 2. Connect it with a USB-C data cable, put it on and accept **Allow USB debugging** (tick
    "Always allow from this computer"). `adb devices` should list it.
-3. Install, and push the game data (the four paks from an installed Elite Force; the app's own
-   OBB folder needs no storage permission):
+3. Install it, then add the game files. Either in the headset: copy a CD image (`.iso`, or `.bin`
+   with its `.cue`), a `BaseEF` folder or GOG's installer into the Quest's Download folder (USB cable,
+   or the Quest's browser for GOG), and use **Choose…** on the start screen
+   ([the start screen](#the-start-screen)); or push the paks from a computer (the app's own OBB
+   folder needs no storage permission):
 
    ```sh
    adb install -r android/build/AwayTeamEF-Quest-<version>-arm64.apk
@@ -49,7 +52,9 @@ Size (1.5.0): flat 3.1 MB; Quest 3.2 MB (the loader adds about 0.4 MB stripped).
    adb push pak0.pk3 pak1.pk3 pak2.pk3 pak3.pk3 /sdcard/Android/obb/org.awayteamef.quest/baseEF/
    ```
 
-   Configs and saves go into the same folder. **Uninstalling the app deletes it**, saves included.
+   Configs and saves go into the same folder. **Uninstalling the app deletes it**: the copied game
+   files go (as they should), and so would the saves, unless the start screen backs them up (its
+   Saves & Settings group, below).
 4. Start it from the headset's library (Unknown Sources). The app has one entry, which opens the
    start screen; or from the computer:
 
@@ -67,24 +72,78 @@ Size (1.5.0): flat 3.1 MB; Quest 3.2 MB (the loader adds about 0.4 MB stripped).
 
 ### The start screen
 
-Before the game, a flat panel (a plain Android activity, `StartActivity`) with buttons for
-the Quest's controller pointer, a number pad and a search for co-op games on the network:
+Before the game, a flat panel (a plain Android activity, `StartActivity`, in the app's main
+process) made for the controller pointer: big buttons, and its own keyboards on the panel (the
+Quest's system keyboard is never opened; it hung the app when an old text field summoned it). Its
+look and wording follow the desktop launchers: the header with the title lettering
+(`tools/launcher-titles/png`, pictures of the lettering; no font file is shipped), the modes on the
+left, Player, Game Files and Saves & Settings on the right, and "AwayTeamEF for Meta Quest
+<version>" at the bottom. The system Back button goes back a page.
 
 | Button | Starts the game with | Then |
 |---|---|---|
-| Single player | `+set com_holomatch 0` | the game's main menu |
-| Co-op host | `+set com_holomatch 0 +set sp_coop 1` | start or load a mission; the guest needs your headset's IP address (the Wi-Fi settings show it) |
-| Co-op join | `+set com_holomatch 0 +set coop_connect <address>` | joins that host. The address is the line above the number pad on the right: tap digits, dot and colon (`ip` or `ip:port`; Back and Clear edit it; the last one is kept). It is not a text field, because the system keyboard hung the app |
-| Search local network | none: nothing starts | asks the network for co-op hosts and lists them (player and computer name, mission or map, difficulty, players, address). Tapping a game that can be joined fills the address and joins it. Games on another version, full, or with a password are greyed with the reason |
-| Holomatch | `+set com_holomatch 1` | the Holomatch server browser |
+| Single Player: Play | `+set com_holomatch 0` | the game's main menu |
+| Co-op: Host | `+set com_holomatch 0 +set sp_coop 1 +set coop_name "<name>"` | start or load a mission; the guest needs your headset's IP address (the Wi-Fi settings show it) |
+| Co-op: Join… | (a page) | see below |
+| Holomatch: Browse Servers | (a page) | see below |
+| Holomatch: Play Holomatch | `+set com_holomatch 1 +set name "<name>"` | the game's own Holomatch menus (bots, its own browser) |
 
-These are the arguments the desktop launchers put on the command line (`efcode/launcher/lc_launch.c`).
-The search is the desktop launchers' query (`getcoopinfo <challenge> lan` as a UDP broadcast to port 29760,
-answered with `coopInfoResponse`; `CoopLan.java`, off the UI thread, about 2.5 s). A host whose "Show this
-game on my network" is off (`coop_lanVisible 0`) does not answer it; type its address instead.
-A line under the title says whether the paks are in the data folder. Co-op in the Quest build uses
-the same code as on Linux, so the guest's and host's apps must be on the same co-op compatibility
-version (the 1.5.x line); a phone, Mac, Windows or Linux partner works.
+All of them need pak0, pak1 and pak2 (patch 1.2); until then they are greyed and the Game Files
+group says what is missing. These are the arguments the desktop launchers put on the command line
+(`efcode/launcher/lc_launch.c`).
+
+- **Player name**: one name for Holomatch (`name`) and co-op (`coop_name`). Tap it for the on-panel
+  keyboard: letters, digits, symbols, and a Colours layer with the game's colour codes `^0`–`^7`
+  (a preview shows the result). Cleaned like the desktop launchers' (ASCII without `" + ; \ %`, at most
+  31 characters). The first time it is `hmconfig.cfg`'s name, else "Crewman" (the desktop default
+  without a user name).
+- **Game Files**: where the files are (`Android/obb/org.awayteamef.quest/baseEF`), Ready / Patch 1.2
+  missing / No game files yet, a chip per pak (pak0–pak3), and whether the **Expansion Pack** is
+  there (Virtual Voyager's first map in a pak, the desktop's test). **Choose…** / **Add Game Files…**
+  opens the Game Files page: **CD image** (`.iso`, or `.bin` and its `.cue` picked together; the
+  game's CD brings pak0, the Expansion Pack's CD brings pak1–pak3), **BaseEF folder** (its `.pk3`
+  files), or **GOG installer** (`setup_….exe`, unpacked, nothing installed). Each opens Android's
+  file picker (so no storage permission). The copy is the desktop launchers' own code
+  (`efcode/launcher` and `sys_iso.c`, `sys_osx_gog.c` in `liblauncher.so`, through
+  `LauncherCore.java` / `android/jni/launcher_jni.c`): the same checks, progress panel with Cancel,
+  rollback on failure, "Nothing to add" and "Not enough disk space" alerts. Picked files reach the C
+  code by name: `GameImport.java` opens each one and registers its descriptor under a path named like
+  the file, and `liblauncher.so` serves the core's `fopen` / `open` / `stat` of that path from the
+  descriptor (linked with `--wrap`; reopening `/proc/self/fd/<n>` of shared storage is refused).
+  Android's folder picker won't hand out Download itself, so a BaseEF folder goes in a folder of its
+  own there (Download/EF/BaseEF, say). make-apk.sh builds liblzma (xz 5.8.4, checksum-checked) for GOG's installer.
+- **Saves & Settings**: uninstalling deletes the OBB folder, saves included. The start screen copies
+  everything in it except `.pk3` files (and logs) into a folder you pick once (Android's folder picker;
+  suggested `Documents/AwayTeamEF`), every time it comes back from the game and with Back Up Now;
+  only changed files are copied, nothing in the backup is deleted, and no backup runs while a
+  restore does (`SaveBackup.java`). **Other Folder…** moves future backups elsewhere. After a reinstall, **Restore…** and pick the same
+  folder: Android lets a new install read the old install's files only through the picker. The panel
+  explains this in a line of its own.
+
+**Co-op: Join…** — left, **Search Local Network** (the desktop launchers' query, `getcoopinfo
+<challenge> lan` as a UDP broadcast to port 29760, answered with `coopInfoResponse`; `CoopLan.java`,
+off the UI thread, about 2.5 s) lists hosts (player and computer, mission or map, difficulty,
+players, address); a tap joins, after asking for the password when the host set one. Hosts on
+another version or full are greyed with the reason. A host whose "Show this game on my network" is
+off (`coop_lanVisible 0`) does not answer; type its address. Under it, **Player 2**: Munro Male /
+Female (`coop_sex`) and the character (`coop_look`, the crew and the Hazard Team from
+`coop_characters.h`), as on the desktop Co-op sheet. Right, the host's address on a number pad
+(digits, dot, colon; the last one is kept), **Password** (on-panel keyboard; passed as
+`coop_password`, a CVAR_TEMP the game never saves, masked in the log), and **Join**:
+`+set com_holomatch 0 +set coop_connect "<address>" +set coop_sex <male|female> [+set coop_look <id>]
++set coop_name "<name>" [+set coop_password "<pw>"]`. Co-op in the Quest build uses the same code
+as on Linux, so both apps must be on the same co-op compatibility version (the 1.5.x line); a phone,
+Mac, Windows or Linux partner works.
+
+**Holomatch: Browse Servers** — the desktop launchers' server browser (servers.md §8, the same core):
+tabs Local, Combined and Internet 1–5 (the default master servers), Refresh, the status line,
+**Only favorites**, **Only servers with people**, and the columns star, Server (colour codes), lock,
+Map (purple: an Expansion Pack map you don't have; amber: a map you don't have, which the server may
+send), Players, Humans, Game, cMod, Ping; tap a header to sort. **Tap a server to join it**:
+`+set com_holomatch 1 +set name "<name>" [+set password "<pw>"] +connect <ip:port>`; an Expansion
+Pack map you don't have warns first, a locked server asks for its password. **Join by Address…**
+takes an address on the number pad. Left out on the panel: the players table, Map Info and the 3D
+preview.
 
 ### Like the desktop builds
 
@@ -253,10 +312,15 @@ From the first session on a headset (2026-11-27); the numbers are the owner's.
   puts the four cvars on the new values. The pointer needs nothing more, because it intersects the quad as it was
   submitted. If it is still wrong, set `vr_menuDistance`, `vr_menuWidth`, `vr_hudDistance` and `vr_hudWidth`
   (keep the width about 1.2 to 1.3 times the distance for the same angular size).
-- **Start screen address entry and the network search are untested on the headset.** The address is
-  typed on an on-screen number pad (the system keyboard hung the app when the old text field was
-  tapped; the cause could not be confirmed without a headset), and the search is only verified against
-  a Mac host from an emulator. Watch `adb logcat -s AwayTeamEF` while using them.
+- **The start screen (launcher) is untested on a headset.** Checked in an Android emulator only, at
+  the Quest panel's size (1280 × 800 dp): the pages' layout (no label cut off), the name and password
+  keyboards, the imports through Android's pickers (a CD image, a .bin with its .cue, a BaseEF folder,
+  each a small test image), the Expansion Pack line, and the backup and restore. Not checked anywhere
+  yet: the server browser (the master servers and joining), the co-op join and LAN search, and GOG's
+  installer. To check on the headset: that the file and folder pickers open, the import of a real CD
+  image or GOG installer, that no label is cut off, the pointer targets' size, Browse Servers (the list
+  fills, a tap joins, a locked server asks for its password), and a co-op join with Munro's look,
+  a character and a password. Watch `adb logcat -s AwayTeamEF`.
 - **R4. Co-op: a flat partner didn't see the VR player's phaser beam where it aimed.** Fixed in
   the Meta XR Simulator, still to check on a headset: partners now draw it toward where the hand
   points (see [COOP.md](COOP.md#what-flat-partners-see)). A partner on an older 1.5.x build sees

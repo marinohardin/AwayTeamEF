@@ -45,9 +45,11 @@
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
 
-        <!-- the start screen: a plain Android activity, a flat panel in the headset, with four buttons
-             that launch QuestActivity (below) with the arguments for that mode. It is the app's
-             one launcher entry. -->
+        <!-- the start screen (the launcher): a plain Android activity, a flat panel in the headset.
+             Single Player, Co-op host/join, Holomatch (server browser), the player name, the game
+             files (import from a CD image, a BaseEF folder or GOG's installer through Android's file
+             picker, so no storage permission) and the saves backup; it launches QuestActivity
+             (below) with the arguments for that mode. It is the app's one launcher entry. -->
         <activity android:name="org.awayteamef.app.StartActivity"
             android:label="AwayTeamEF VR"
             android:launchMode="singleTask"

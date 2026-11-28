@@ -11,6 +11,10 @@
 # controllers), and libopenxr_loader.so built here with the NDK from the Khronos
 # OpenXR-SDK-Source release that matches deps/openxr/include (downloaded once, about 5 MB,
 # checksum-checked). Data folder: /sdcard/Android/obb/org.awayteamef.quest/baseEF/.
+# The start screen's liblauncher.so (android/jni/launcher_jni.c: the desktop launchers' core) is
+# built too, with liblzma from the xz release below (downloaded once, about 1.5 MB, checksum-checked;
+# a static library under $OUT/lzma) for unpacking GOG's installer; its title images and the app icon
+# go in assets/launcher/.
 # It also carries cMod's game modules by Noah Metzger (Chomenor), included with his permission
 # (macos/cmod/README.txt), as the desktop packages do: assets/cmod/ in the APK, which QuestActivity
 # copies to the app's files/cmod/ for the engine (files.c checks them against cMod's release list).
@@ -25,7 +29,8 @@
 #
 # Not in this build yet: Bink cinematics (no Android FFmpeg; movies are skipped) and co-op in the
 # flat APK. The Quest variant has co-op (EF_COOP, switched on with VR=1) and a start screen
-# (StartActivity: Single player, Co-op host, Co-op join, Holomatch).
+# (StartActivity: Single player, Co-op host and join, Holomatch and its server browser, game files,
+# saves backup).
 #
 # Environment (all optional):
 #   ANDROID_HOME        SDK (default ~/Library/Android/sdk)
@@ -74,6 +79,9 @@ fi
 # the Khronos OpenXR loader for the Quest variant: the SDK-Source release of deps/openxr/include
 OPENXR_VERSION=1.1.65
 OPENXR_SHA256=24594e93e43c93f734c55f6f857ed3950583f087636c36e1548ca7759bdbf329
+# xz's liblzma for the Quest start screen's GOG installer unpacking (liblauncher.so; about 1.5 MB, checksum-checked)
+XZ_VERSION=5.8.4
+XZ_SHA256=4ce24038fd4221e0d13bc1a2de7a4db56e90b92b3bf75321f6c14be73f65de4b
 MIN_SDK=29
 TARGET_SDK="${PLATFORM#android-}"
 TARGET_SDK="${TARGET_SDK%%.*}"
@@ -124,6 +132,34 @@ if [ "$VR" = 1 ]; then
 		"https://github.com/KhronosGroup/OpenXR-SDK-Source/releases/download/release-$OPENXR_VERSION/OpenXR-SDK-Source-release-$OPENXR_VERSION.tar.gz"
 fi
 
+# ---- liblzma (Quest): a static library for the start screen's GOG installer unpacking ----
+LZMA_ARGS=()
+if [ "$VR" = 1 ]; then
+	XZ_TAR="xz-$XZ_VERSION.tar.xz"
+	if [ ! -f "$SRC/xz-$XZ_VERSION/CMakeLists.txt" ]; then
+		if ! { [ -f "$SRC/$XZ_TAR" ] && ef_sha256_check "$SRC/$XZ_TAR" "$XZ_SHA256"; }; then
+			echo "== downloading $XZ_TAR"
+			curl -fL --retry 3 -o "$SRC/$XZ_TAR" "https://github.com/tukaani-project/xz/releases/download/v$XZ_VERSION/$XZ_TAR"
+			ef_sha256_check "$SRC/$XZ_TAR" "$XZ_SHA256" || { echo "make-apk: $XZ_TAR checksum mismatch" >&2; exit 1; }
+		fi
+		tar xf "$SRC/$XZ_TAR" -C "$SRC"
+	fi
+	if [ ! -f "$OUT/lzma/install/lib/liblzma.a" ]; then
+		cmake -S "$SRC/xz-$XZ_VERSION" -B "$OUT/lzma/build" -G Ninja \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+			-DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$MIN_SDK \
+			-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=OFF \
+			-DCMAKE_INSTALL_PREFIX="$OUT/lzma/install" \
+			-DXZ_TOOL_XZ=OFF -DXZ_TOOL_XZDEC=OFF -DXZ_TOOL_LZMADEC=OFF -DXZ_TOOL_LZMAINFO=OFF \
+			-DXZ_TOOL_SCRIPTS=OFF -DXZ_TOOL_SYMLINKS=OFF -DXZ_TOOL_SYMLINKS_LZMA=OFF \
+			-DXZ_NLS=OFF -DXZ_DOC=OFF -DBUILD_TESTING=OFF >/dev/null
+		cmake --build "$OUT/lzma/build" -j"$JOBS" --target liblzma
+		cmake --install "$OUT/lzma/build" --component liblzma_Development >/dev/null 2>&1 || cmake --install "$OUT/lzma/build" >/dev/null
+	fi
+	LZMA_ARGS=(-DEF_LZMA_PREFIX="$OUT/lzma/install")
+fi
+
 # ---- native libraries ----
 cmake -S "$ROOT/android" -B "$OUT/native" -G Ninja \
 	-DCMAKE_BUILD_TYPE=Release \
@@ -131,8 +167,10 @@ cmake -S "$ROOT/android" -B "$OUT/native" -G Ninja \
 	-DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-$MIN_SDK -DANDROID_STL=c++_shared \
 	-DEF_ANDROID_PACKAGE=$PACKAGE -DEF_APP_VERSION="$VERSION" -DEF_VR=$EF_VR \
 	-DEF_SDL3_SOURCE="$SRC/SDL3-$SDL3_VERSION" \
-	-DEF_SDL2COMPAT_SOURCE="$SRC/sdl2-compat-$SDL2COMPAT_VERSION" >/dev/null
-cmake --build "$OUT/native" -j"$JOBS" --target main efgame efui SDL2 SDL3-shared
+	-DEF_SDL2COMPAT_SOURCE="$SRC/sdl2-compat-$SDL2COMPAT_VERSION" ${LZMA_ARGS[@]+"${LZMA_ARGS[@]}"} >/dev/null
+TARGETS="main efgame efui SDL2 SDL3-shared"
+[ "$VR" = 1 ] && TARGETS="$TARGETS launcher"
+cmake --build "$OUT/native" -j"$JOBS" --target $TARGETS
 
 # ---- the OpenXR loader (Quest): Khronos source, the loader alone, same NDK/ABI/STL ----
 if [ "$VR" = 1 ]; then
@@ -152,7 +190,7 @@ mkdir -p "$STAGE/lib/arm64-v8a" "$STAGE/classes" "$STAGE/dex"
 STRIP="$ANDROID_NDK/toolchains/llvm/prebuilt/$(ls "$ANDROID_NDK/toolchains/llvm/prebuilt" | head -1)/bin/llvm-strip"
 LIBCXX="$(dirname "$STRIP")/../sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
 SOS="native/libmain.so native/libefgame.so native/libefui.so native/sdl3/libSDL3.so native/sdl2compat/libSDL2.so"
-[ "$VR" = 1 ] && SOS="$SOS openxr-loader/libopenxr_loader.so"
+[ "$VR" = 1 ] && SOS="$SOS openxr-loader/libopenxr_loader.so native/liblauncher.so"
 for so in $SOS; do
 	f="$(find "$OUT/${so%%/*}" -path "*/${so#*/}" -print -quit)"
 	[ -n "$f" ] || { echo "make-apk: $so not built" >&2; exit 1; }
@@ -171,12 +209,18 @@ find "$SDLJAVA" $JAVA_DIRS -name '*.java' > "$OUT/java-sources.txt"
 # ---- cMod's game modules (Quest): assets/cmod/, with its README and the game source license ----
 ASSETS_ARGS=()
 if [ "$VR" = 1 ]; then
+	# the start screen's header: the title lettering (pictures of it; the fonts are never shipped)
+	# and the app icon
+	mkdir -p "$STAGE/assets/launcher"
+	cp "$ROOT"/tools/launcher-titles/png/*.png "$STAGE/assets/launcher/"
+	sips -Z 192 "$ROOT/macos/icon/AppIcon-1024.png" --out "$STAGE/assets/launcher/icon.png" >/dev/null 2>&1 \
+		|| cp "$ROOT/macos/icon/AppIcon-1024.png" "$STAGE/assets/launcher/icon.png"
+	ASSETS_ARGS=(-A "$STAGE/assets")
 	CMOD_PAK="${CMOD_PAK:-$(ls "$ROOT"/macos/cmod/pakcmod-release-*.pk3 2>/dev/null | sort | tail -1)}"
 	if [ -n "$CMOD_PAK" ] && [ -f "$CMOD_PAK" ]; then
 		mkdir -p "$STAGE/assets/cmod"
 		cp "$CMOD_PAK" "$STAGE/assets/cmod/"
 		cp "$ROOT/macos/cmod/README.txt" "$ROOT/efgame/STEF Game Source License.doc" "$STAGE/assets/cmod/"
-		ASSETS_ARGS=(-A "$STAGE/assets")
 		echo "== cMod game modules: $(basename "$CMOD_PAK")"
 	else
 		echo "== note: no cMod pk3 (macos/cmod/pakcmod-release-*.pk3 or CMOD_PAK): building without cMod's game modules"
