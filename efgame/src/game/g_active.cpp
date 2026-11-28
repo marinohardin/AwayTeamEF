@@ -1129,6 +1129,7 @@ extern vmCvar_t cg_thirdPerson;
 		}
 	}
 	PlayerStateToEntityState( &ent->client->ps, &ent->s );
+	COOP_VRAimEntity( ent );	// co-op: a VR player's angles for partners (its hand's aim)
 
 	VectorCopy ( ent->currentOrigin, ent->lastOrigin );
 #if 1

@@ -16,6 +16,8 @@
 #include "coop_local.h"
 #include "vr_shared.h"
 
+extern qboolean W_VRHandAim( gentity_t *ent, vec3_t start, vec3_t forward );	// g_weapon.cpp
+
 typedef struct
 {
 	int		num;		// the player's entity number
@@ -122,6 +124,68 @@ qboolean COOP_VRAimAngles( const gentity_t *ent, vec3_t angles )
 		return qfalse;
 	}
 	return coop_enabled ? CV_HostAim( ent, angles ) : qfalse;
+}
+
+// A VR player's eye for the entity's angles: its origin plus its view height. A partner's cgame
+// knows the same point (COOP_VRBeamEye), so it can trace from there along the angles.
+static void CV_EntityEye( const vec3_t origin, int viewheight, vec3_t eye )
+{
+	VectorCopy( origin, eye );
+	eye[2] += viewheight;
+}
+
+/*
+COOP_VRAimEntity
+
+The host, after each command a player's ClientThink applied: a VR player's view angles are only
+its body's yaw, but a partner draws its beam weapons (the phaser, the Dreadnought's arc) and its
+model from the entity's angles (s.apos). So for a VR player those angles look from its eye at the
+spot its weapon hand points at: the end of the hand's own ray (W_VRHandAim, the same muzzle and
+ray as its shots), at the held weapon's range. Any partner's cgame, from this version or an older
+one, then draws the beam from the model's gun to where the hand really shoots, the way it draws a
+flat player's. The player's own view, its shots and its saved angles (ps.viewangles) don't change.
+*/
+void COOP_VRAimEntity( gentity_t *ent )
+{
+	vec3_t	start, forward, end, eye, dir, angles;
+	trace_t	tr;
+	float	range;
+
+	if ( !coop_enabled || coop_replica || !ent->client || ent->NPC || !COOP_IsPlayer( ent ) ||
+		!W_VRHandAim( ent, start, forward ) )
+	{
+		return;
+	}
+	range = ( ent->s.weapon > WP_NONE && ent->s.weapon < WP_NUM_WEAPONS ) ? weaponData[ent->s.weapon].range : 0;
+	if ( range < 64 )
+	{
+		range = 8192;
+	}
+	VectorMA( start, range, forward, end );
+	gi.trace( &tr, start, NULL, NULL, end, ent->s.number, MASK_SHOT );
+	CV_EntityEye( ent->client->ps.origin, ent->client->ps.viewheight, eye );
+	VectorSubtract( tr.endpos, eye, dir );
+	if ( VectorNormalize( dir ) < 1.0f )
+	{
+		VectorCopy( forward, dir );		// the spot is at the eye: the hand's direction
+	}
+	vectoangles( dir, angles );
+	ent->s.apos.trBase[PITCH] = AngleNormalize180( angles[PITCH] );
+	ent->s.apos.trBase[YAW] = AngleNormalize360( angles[YAW] );
+}
+
+// a partner's cgame: where a VR player's entity angles look from (qfalse: a flat player, whose
+// beam is drawn as always)
+qboolean COOP_VRBeamEye( const gentity_t *ent, const vec3_t origin, vec3_t eye )
+{
+	vec3_t angles;
+
+	if ( !ent || !ent->client || !COOP_VRAimAngles( ent, angles ) )
+	{
+		return qfalse;
+	}
+	CV_EntityEye( origin, ent->client->ps.viewheight, eye );
+	return qtrue;
 }
 
 // host, in the replica's globals: the VR players' aims (no chunk at all with none)

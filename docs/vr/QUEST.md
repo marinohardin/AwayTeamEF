@@ -203,6 +203,10 @@ From the first session on a headset (2026-11-27). None is fixed yet; the numbers
   typed on an on-screen number pad (the system keyboard hung the app when the old text field was
   tapped; the cause could not be confirmed without a headset), and the search is only verified against
   a Mac host from an emulator. Watch `adb logcat -s AwayTeamEF` while using them.
+- **R4. Co-op: a flat partner didn't see the VR player's phaser beam where it aimed.** Fixed in
+  the Meta XR Simulator, still to check on a headset: partners now draw it toward where the hand
+  points (see [COOP.md](COOP.md#what-flat-partners-see)). A partner on an older 1.5.x build sees
+  it end within about 20 units of the real spot, as it does for a flat player.
 - **The start screen's step into the game is untested on a headset.** The Quest should switch from
   the flat panel to VR when `QuestActivity` starts, because it carries the VR category. If it opens
   flat instead, start the game directly with
