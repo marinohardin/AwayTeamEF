@@ -412,10 +412,10 @@ The single-player "Use + strafe" trick in `VR_Move_Cmd` (`vr/vr_move.c:398-403`)
 | Weapon hand grip | `+altattack` (alt fire, bit 32) |
 | Other hand trigger | `+moveup` (jump) |
 | Other hand grip | crouch (`VR_Move_CrouchButton`) |
-| A | `+button2` (use holdable item: transporter, medkit, detpack, forcefield, shield) |
-| B (held) | `+info` (scoreboard) |
-| X | `+use` (bit 64: doors, buttons) |
-| Y | `+analysis` (objectives) |
+| A | `+use` (bit 64: doors, buttons) |
+| B (held) | the weapon wheel (opens at once, letting go picks) |
+| X | `+button2` (use holdable item: transporter, medkit, detpack, forcefield, shield) |
+| Y (held) | `+info` and `+analysis`: the scoreboard and the objectives |
 | Right stick left/right | snap (eased over 0.1 s) or smooth turn (body yaw) |
 | Right stick up/down | `weapnext` / `weapprev` |
 | Right stick click | tapped: the last weapon (`weapon <n>` of the previous one); held: the weapon wheel |
@@ -710,8 +710,8 @@ aren't dropped), scripted `vr_debugHand`/`vr_debugHead`/`vr_debugTurn` input, an
   view height. `vr_hmRoomScale 0` turns walking off (clamp and fade only).
 - **Controls (step 7, `vr/vr_input_engine.c`).** In play in Holomatch, changed from single
   player's map (the table in §6.1 is current; single player now shares the stick weapon cycling):
-  A uses the holdable item (`+button2`), B held shows the scores (`+info`), Y shows the objectives
-  (`+analysis`; the left menu button is Escape), right stick click is the last weapon, left stick
+  A is Use (`+use`), X uses the holdable item (`+button2`), B is the weapon wheel, Y held shows the scores (`+info`) and the objectives
+  (`+analysis`) together (round 3; the left menu button is Escape), right stick click is the last weapon, left stick
   click tapped toggles walk and run (held still recentres).
   Snap turns are spread at 15° per command (a change above 5° per command counts as a snap).
 - **UI (step 8).** A menu over a live match keeps the world drawn behind it (`vr_menuLiveWorld`,

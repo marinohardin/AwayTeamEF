@@ -144,14 +144,24 @@ and an sRGB image means the compositor decodes it. So:
   see-through. Opaque 2D (menu backgrounds) covers the quad. This is an approximation: additive-only
   2D (some glows) can be invisible where nothing else covers it.
 - **Size.** The quad is `width` metres wide; its height follows the 2D image's aspect.
-- **HUD** (`vr_hudDistance` 1.8 m, `vr_hudWidth` 1.5 m, `vr_hudHeight` −0.1 m, `vr_hudFollow` 2,
+- **HUD** (`vr_hudDistance` 1.2 m, `vr_hudWidth` 1.2 m, `vr_hudHeight` −0.1 m, `vr_hudFollow` 2,
   `vr_hudFollowAngle` 30°): 0 = world-locked where it was placed, 1 = head-locked, 2 = lazy follow, the
   default. Lazy follow keeps the HUD level and at the head's position; it turns only once the head
   looks more than `vr_hudFollowAngle` away, then eases back (about 8 % of the gap per frame) until
   within 2°. That keeps it readable without being glued to the eyes.
-- **Menus** (`vr_menuDistance` 2 m, `vr_menuWidth` 2 m, `vr_menuDim` 0.6, `vr_menuHeadLocked` 0): placed
+- **Menus** (`vr_menuDistance` 1 m, `vr_menuWidth` 1.3 m, `vr_menuDim` 0.6, `vr_menuHeadLocked` 0): placed
   in front of the head when the menu opens and then world-locked. The world behind is frozen (the last
   eye images, resubmitted with their own poses, so it stays put when the head turns) and dimmed.
+  The distances were 1.8 m (HUD) and 2 m (menu) at first; they are closer since round 3 (K10). They are
+  archived cvars, so `vr_layoutVersion` resets a saved config to the new numbers once.
+  - **Opening from a running game** holds the first `VR_MENU_SETTLE` (3) frames: the world stays frozen, the
+    2D layer re-shows its last image (a frame that doesn't acquire a new canvas image: the runtime shows the
+    last released one, as it does for the frozen eyes) and nothing is dimmed, so the single-player menu's
+    first two frames (an opaque black one, then an empty one) are never shown.
+  - **The laser:** while a menu is up (`vr_menuLaser`), a thin red quad layer is submitted after the 2D quad,
+    from the weapon hand to where its ray meets the menu's plane. It is a second small swapchain (16x16,
+    filled once with red), a strip 6 mm wide turned about its own line to face the head, placed in the
+    reference space; the engine's input (`VR_MenuPointer`) sets its two ends each frame (`VR_SetMenuLaser`).
 - **Dimmer.** A 16×16 swapchain cleared to black with alpha = the dim value, shown as a head-locked
   8 m × 8 m quad 1 m away between the projection and the 2D quad. It is cleared only when the value changes.
   (`XR_KHR_composition_layer_color_scale_bias` would do this without a layer, but the simulator lacks it.)
@@ -181,8 +191,9 @@ and an sRGB image means the compositor decodes it. So:
 | `vr_resolutionScale` | 1.0 | latched; 0.5 to 1.5 times the recommended eye size, rounded to a multiple of 8 |
 | `vr_msaa` | 4 | latched; eye MSAA samples |
 | `vr_refreshRate` | 72 | latched; Hz, the closest offered rate |
-| `vr_hudDistance`, `vr_hudWidth`, `vr_hudHeight`, `vr_hudFollow`, `vr_hudFollowAngle` | 1.8, 1.5, −0.1, 2, 30 | HUD quad |
-| `vr_menuDistance`, `vr_menuWidth`, `vr_menuHeadLocked`, `vr_menuDim` | 2.0, 2.0, 0, 0.6 | menu quad |
+| `vr_hudDistance`, `vr_hudWidth`, `vr_hudHeight`, `vr_hudFollow`, `vr_hudFollowAngle` | 1.2, 1.2, −0.1, 2, 30 | HUD quad |
+| `vr_menuDistance`, `vr_menuWidth`, `vr_menuHeadLocked`, `vr_menuDim`, `vr_menuLaser` | 1.0, 1.3, 0, 0.6, 1 | menu quad, and its laser |
+| `vr_debugFrames` | 0 | log what every frame submits; `vr_screenshot <n>` writes n frames in a row, numbered by that frame |
 | `vr_cutsceneScreen`, `vr_theaterDistance`, `vr_theaterWidth`, `vr_theaterDim` | 1, 4.0, 4.4, 0.85 | big screen |
 | `vr_uiState` | | read-only, set by the client |
 | `vr_active` | | read-only, set by the renderer: 1 while frames go to the headset |
