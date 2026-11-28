@@ -58,6 +58,7 @@ private:
 	QWidget *buildCards();
 	QWidget *buildGraphics();
 	QWidget *buildServerGroup();
+	QWidget *buildControls();
 	QWidget *buildHolomatch();
 	QWidget *buildGameFiles();
 	QWidget *buildFooter();
@@ -97,6 +98,8 @@ private:
 	void openMasters();
 	void openCoop( const QString &address = QString() );
 	void openHud();
+	void applyControls( lc_controls_set set, bool ask );
+	void showControls();
 	void askDeckControls();
 	template <class D> int runSheet( D *d );
 
@@ -125,6 +128,7 @@ private:
 		*m_brightness = nullptr;
 	QCheckBox *m_highdpi = nullptr, *m_vsync = nullptr, *m_loopback = nullptr, *m_cmodBox = nullptr;
 	QLabel *m_brightHint = nullptr;
+	QLabel *m_controlsHint = nullptr;
 	QLabel *m_srvName = nullptr, *m_srvGame = nullptr, *m_srvMaps = nullptr, *m_srvPlayers = nullptr,
 		*m_srvNetwork = nullptr, *m_srvAddress = nullptr;
 	QLabel *m_nameLabel = nullptr, *m_nameHint = nullptr, *m_cmodLabel = nullptr;
