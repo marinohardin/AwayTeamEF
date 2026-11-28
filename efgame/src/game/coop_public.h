@@ -79,6 +79,8 @@
 #define COOP_VRGuestHand(e,eye,m,f)	qfalse
 #define COOP_VRDebugShots()			qfalse
 #define COOP_VRAimAngles(e,a)		qfalse
+#define COOP_VRAimEntity(e)			((void)0)
+#define COOP_VRBeamEye(e,o,eye)		qfalse
 
 #else // EF_COOP
 
@@ -201,6 +203,11 @@ inline bool COOP_HeldBeam( const entityState_t *es )
 qboolean	COOP_VRGuestHand( gentity_t *ent, const vec3_t eye, vec3_t muzzle, vec3_t forward );
 qboolean	COOP_VRDebugShots( void );
 qboolean	COOP_VRAimAngles( const gentity_t *ent, vec3_t angles );
+// The host sets a VR player's entity angles (s.apos) to look from its eye at where its hand points,
+// so partners, older ones too, draw its beam weapons where it shoots; a partner's cgame traces such
+// a beam from that eye (COOP_VRBeamEye; qfalse for a flat player).
+void		COOP_VRAimEntity( gentity_t *ent );
+qboolean	COOP_VRBeamEye( const gentity_t *ent, const vec3_t origin, vec3_t eye );
 
 // the cgame's co-op status text (coop_hud.cpp): CG_ServerCommand hands it "coopmsg" (qtrue:
 // taken), CG_Draw2D draws it

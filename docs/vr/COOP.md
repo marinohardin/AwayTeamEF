@@ -46,7 +46,20 @@ before unless the partner is in VR.
   (`CG_PlayerAngles`, `COOP_VRAimAngles`). The host knows both players' aims (its own headset, the
   guest's commands) and sends them in the replica's globals as an optional chunk (`RVRA`), which
   exists only while a VR player has a tracked weapon hand. The third-person weapon follows the torso.
-- A flat player's model is drawn as before.
+- **Beam weapons.** A partner's cgame draws another player's phaser (and the Dreadnought's arc)
+  itself every frame, from the model's gun along the entity's angles (`s.apos`), not from the
+  server's hit. A VR player's view angles are only its body's yaw, so the beam went straight ahead
+  of the body. The host now sets a VR player's entity angles, and nothing else, to look from its
+  eye (origin plus view height) at the spot its weapon hand points at: the end of the hand's own
+  ray, from the same muzzle as its shots, at the held weapon's range (`COOP_VRAimEntity`, after each
+  command in `ClientThink`). `ps.viewangles`, the shots and saves are unchanged.
+  - Every partner, an older 1.5.x one without VR code too, draws the beam toward where the hand
+    shoots. It ends within the gun-to-eye distance of the real spot, as a flat player's beam
+    always has.
+  - This build's cgame finds the beam's end from that eye instead of from the gun
+    (`COOP_VRBeamEye`), so it ends where the server's beam does.
+  - An older partner's game also turns the VR player's model toward that spot.
+- A flat player's model and beam are drawn as before.
 
 ## cvars
 
@@ -67,4 +80,5 @@ before unless the partner is in VR.
 | Bits taken out, the lean | `game/g_active.cpp`, `game/bg_pangles.cpp` |
 | Player 2's hand shot | `game/g_weapon.cpp`, `coop/coop_vr.cpp` |
 | Aim for drawing | `coop/coop_vr.cpp`, `coop/coop_replica.cpp`, `cgame/cg_players.cpp` |
+| Entity angles at the hand's spot, partners' beams | `coop/coop_vr.cpp` (`COOP_VRAimEntity`, `COOP_VRBeamEye`), `game/g_active.cpp`, `game/g_weapon.cpp` (`W_VRHandAim`), `cgame/cg_players.cpp` (`CG_LightningBolt`) |
 | The guest's report and predicted shot | `cgame/cg_vr.cpp`, `coop/coop_predict.cpp` |

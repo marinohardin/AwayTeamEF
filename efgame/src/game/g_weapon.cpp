@@ -3017,7 +3017,7 @@ a wall fires from this side of it.
   COOP_VRGuestHand); the same trace from player 2's eye.
 NPCs and flat players: qfalse, and the shot is as always.
 */
-static qboolean W_VRHandShot( gentity_t *ent )
+static qboolean W_VRHandRay( gentity_t *ent, vec3_t muzzle, vec3_t _forward, vec3_t vright, vec3_t up, qboolean print )
 {
 	vrGamePose_t	pose;
 	vec3_t			eye, hand, axis[3], dir, angles;
@@ -3083,7 +3083,7 @@ static qboolean W_VRHandShot( gentity_t *ent )
 		VectorNormalize( dir );
 		VectorMA( tr.endpos, -1, dir, muzzle );
 	}
-	if ( guest ? COOP_VRDebugShots() : VR_DebugShots() )
+	if ( print && ( guest ? COOP_VRDebugShots() : VR_DebugShots() ) )
 	{
 		trace_t	hit;
 		vec3_t	end;
@@ -3095,6 +3095,24 @@ static qboolean W_VRHandShot( gentity_t *ent )
 			_forward[0], _forward[1], _forward[2], hit.endpos[0], hit.endpos[1], hit.endpos[2] );
 	}
 	return qtrue;
+}
+
+static qboolean W_VRHandShot( gentity_t *ent )
+{
+	return W_VRHandRay( ent, muzzle, _forward, vright, up, qtrue );
+}
+
+/*
+W_VRHandAim
+
+Co-op: where a VR player's weapon hand shoots from and along (the same muzzle and ray as its
+shots), without firing; qfalse for a flat player or an NPC. Used for what partners see.
+*/
+qboolean W_VRHandAim( gentity_t *ent, vec3_t start, vec3_t forward )
+{
+	vec3_t right, upv;
+
+	return W_VRHandRay( ent, start, forward, right, upv, qfalse );
 }
 
 //---------------------------------------------------------
