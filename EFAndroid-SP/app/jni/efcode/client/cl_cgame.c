@@ -321,6 +321,50 @@ void	CL_GetCurrentSnapshotNumber( int *snapshotNumber, int *serverTime ) {
 
 /*
 ====================
+CL_GuardSnapshotReward
+
+Holomatch only. The stock cgame drops the client with "Bad reward_t" when the
+reward count in the playerstate rises while the reward value is outside
+1..5 (impressive, excellent, denied, first strike, streak). Some modded
+servers send other values. While the value is one of those, the count the
+cgame sees is held at its last value, so the cgame skips a reward sound it
+has no sound for instead of leaving the game. A valid reward lets the real
+count through again. Valid rewards pass unchanged, so normal play is not
+affected.
+====================
+*/
+#define CL_PERS_REWARD_COUNT	6
+#define CL_PERS_REWARD			7
+
+static void CL_GuardSnapshotReward( int snapshotNumber, playerState_t *ps ) {
+	int count = ps->persistant[CL_PERS_REWARD_COUNT];
+	int reward = ps->persistant[CL_PERS_REWARD];
+
+	if ( reward >= 1 && reward <= 5 ) {
+		cl.rewardCount = count;
+		cl.rewardCountHeld = qtrue;
+		return;
+	}
+
+	// first snapshot, or the count went down (the server reset it)
+	if ( !cl.rewardCountHeld || count < cl.rewardCount ) {
+		cl.rewardCount = count;
+		cl.rewardCountHeld = qtrue;
+		return;
+	}
+
+	if ( count != cl.rewardCount ) {
+		if ( !cl.rewardWarned ) {
+			cl.rewardWarned = qtrue;
+			Com_Printf( "Server sent unknown reward %i (count %i, snapshot %i); reward sound skipped\n",
+				reward, count, snapshotNumber );
+		}
+		ps->persistant[CL_PERS_REWARD_COUNT] = cl.rewardCount;
+	}
+}
+
+/*
+====================
 CL_GetSnapshot
 ====================
 */
@@ -356,6 +400,9 @@ qboolean	CL_GetSnapshot( int snapshotNumber, snapshot_t *snapshot ) {
 	snapshot->serverTime = clSnap->serverTime;
 	Com_Memcpy( snapshot->areamask, clSnap->areamask, sizeof( snapshot->areamask ) );
 	snapshot->ps = clSnap->ps;
+	if ( Com_Holomatch() ) {
+		CL_GuardSnapshotReward( snapshotNumber, &snapshot->ps );
+	}
 	count = clSnap->numEntities;
 	if ( count > MAX_ENTITIES_IN_SNAPSHOT ) {
 		Com_DPrintf( "CL_GetSnapshot: truncated %i entities to %i\n", count, MAX_ENTITIES_IN_SNAPSHOT );

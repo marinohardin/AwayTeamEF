@@ -135,6 +135,13 @@ typedef struct {
 
 	int			serverId;			// included in each client message so the server
 												// can tell if it is for a prior map_restart
+
+	// Holomatch: the reward count handed to the cgame while the server's reward
+	// value is one the stock cgame can't play (CL_GuardSnapshotReward)
+	qboolean	rewardCountHeld;
+	int			rewardCount;
+	qboolean	rewardWarned;
+
 	// big stuff at end of structure so most offsets are 15 bits or less
 	clSnapshot_t	snapshots[PACKET_BACKUP];
 
