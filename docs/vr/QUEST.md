@@ -235,6 +235,11 @@ From the first session on a headset (2026-11-27); the numbers are the owner's.
   flashed black and then blanked. Now, for three frames after a game frame, the world stays frozen and the 2D
   layer keeps showing the last HUD image (no new image, no dimming, no laser), and the menu then comes in whole
   (`R_VR_BeginFrame` in `renderervk/tr_vr.c`, `VR_SetHoldCanvas`). The menu is about 40 ms later (3 frames at 72 Hz).
+- **Save-game thumbnails on the save/load page were always black.** *Fixed (vr-savethumb), untested on a
+  headset.* The thumbnail is read from the 2D image, which in VR holds only the HUD (the world goes to the
+  eye images), and on the capture frame the world wasn't drawn at all. On that one frame the world is now
+  drawn flat into the 2D image under the HUD, as on the flat screen, while the headset keeps showing the
+  held HUD frame. Saves made before the fix keep their black thumbnail.
 - **7. Walking into a ladder doesn't climb it; forward plus jump does.** Fixed (round 3): the
   game's climb follows the command's pitch, which in VR is the body's (single player) or the gun's
   (Holomatch), not the head's. Moving into a ladder now climbs it, and down while looking down;

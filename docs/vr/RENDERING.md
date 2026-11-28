@@ -158,6 +158,13 @@ and an sRGB image means the compositor decodes it. So:
     2D layer re-shows its last image (a frame that doesn't acquire a new canvas image: the runtime shows the
     last released one, as it does for the frozen eyes) and nothing is dimmed, so the single-player menu's
     first two frames (an opaque black one, then an empty one) are never shown.
+  - **The save thumbnail.** The single-player bridge takes it on the frame the game pauses for the menu: it
+    hides the menu for that frame, and the thumbnail is read from the 2D canvas at the end of the frame. In
+    VR the world is in the eye images, not the canvas, and under a menu it isn't drawn at all, so the
+    thumbnail was the HUD on black. On that frame (`RE_RequestSaveThumb` pending, the frame held) the world
+    is now drawn flat into the canvas under the HUD, as on the flat screen; the headset doesn't see it,
+    because the 2D layer re-shows its last image. The hold lasts at least until that frame (up to
+    `VR_THUMB_WAIT`, 4 frames), even with `vr_menuSettle` 0 or 1 (`R_VR_SceneEyes` in `tr_vr.c`).
   - **The laser:** while a menu is up (`vr_menuLaser`), a thin red quad layer is submitted after the 2D quad,
     from the weapon hand to where its ray meets the menu's plane. It is a second small swapchain (16x16,
     filled once with red), a strip 6 mm wide turned about its own line to face the head, placed in the
