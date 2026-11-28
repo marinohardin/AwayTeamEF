@@ -45,6 +45,10 @@ static cvar_t	*vr_wheelDistance;
 static cvar_t	*vr_wheelWidth;
 static cvar_t	*vr_wheelHeight;
 static cvar_t	*vr_debugCapture;
+static cvar_t	*vr_debugFrames;
+static cvar_t	*vr_menuLaser;
+static cvar_t	*vr_layoutVersion;
+static cvar_t	*vr_menuSettle;
 static cvar_t	*vr_active;		// read-only, for the client: 1 while frames go to the headset
 static cvar_t	*vr_debugHeadTurn;	// "yaw pitch roll": a pretend head turn, for testing
 
@@ -59,6 +63,19 @@ static qboolean r_vrFrame;		// R_VR_BeginFrame ran VR_BeginFrame; R_VR_EndFrame 
 static qboolean r_vrWarnedSmp;
 static qboolean r_vrExitHandled;	// the runtime ended the session: flat or quit was queued
 static vrFrameKind_t r_vrKind;
+static vrFrameKind_t r_vrPrevKind = VRF_GAME;
+static qboolean r_vrHold;		// this frame is one of those
+static int r_vrMenuSettle;		// frames left of holding the HUD at a menu's opening (see R_VR_BeginFrame)
+
+/*
+The in-game menu's first frames aren't a clean picture: the first one is the menu on an opaque black
+background and the next one has nothing drawn at all (the single-player bridge hides the menu for one
+frame to capture the save thumbnail), and only then does the menu settle. Shown as they come, that is a
+black flash and a blank frame, one flicker every time the menu opens (K4). So for the first
+VR_MENU_SETTLE frames after a game frame the world stays frozen and the 2D layer keeps showing the last
+image it had (the HUD), no dimming and no laser, and then the menu comes in whole.
+*/
+#define VR_MENU_SETTLE	3	// vr_menuSettle's default
 
 static void R_VR_Recenter_f( void ) {
 	VR_Recenter();
@@ -73,7 +90,7 @@ static void R_VR_Screenshot_f( void ) {
 		ri.Printf( PRINT_ALL, "vr_screenshot needs vr_debugCapture 1 (and a vid_restart)\n" );
 		return;
 	}
-	vk_vr_request_capture();
+	vk_vr_request_capture( ri.Cmd_Argc() > 1 ? atoi( ri.Cmd_Argv( 1 ) ) : 1 );
 }
 
 static cvar_t *R_VR_Cvar( const char *name, const char *value, int flags, const char *min, const char *max,
@@ -102,9 +119,9 @@ void R_VR_Register( void ) {
 	vr_refreshRate = R_VR_Cvar( "vr_refreshRate", "72", CVAR_ARCHIVE_ND | CVAR_LATCH, "0", "144", CV_FLOAT,
 		"VR: display refresh rate to ask the headset for, in Hz (0: its default). Requires vid_restart." );
 
-	vr_hudDistance = R_VR_Cvar( "vr_hudDistance", "1.8", CVAR_ARCHIVE_ND, "0.5", "5", CV_FLOAT,
+	vr_hudDistance = R_VR_Cvar( "vr_hudDistance", "1.2", CVAR_ARCHIVE_ND, "0.5", "5", CV_FLOAT,
 		"VR: distance of the HUD in metres." );
-	vr_hudWidth = R_VR_Cvar( "vr_hudWidth", "1.5", CVAR_ARCHIVE_ND, "0.3", "5", CV_FLOAT,
+	vr_hudWidth = R_VR_Cvar( "vr_hudWidth", "1.2", CVAR_ARCHIVE_ND, "0.3", "5", CV_FLOAT,
 		"VR: width of the HUD in metres." );
 	vr_hudHeight = R_VR_Cvar( "vr_hudHeight", "-0.1", CVAR_ARCHIVE_ND, "-2", "2", CV_FLOAT,
 		"VR: height of the HUD's centre above eye level, in metres." );
@@ -113,14 +130,27 @@ void R_VR_Register( void ) {
 	vr_hudFollowAngle = R_VR_Cvar( "vr_hudFollowAngle", "30", CVAR_ARCHIVE_ND, "0", "90", CV_FLOAT,
 		"VR: degrees the head may turn away before the HUD follows it (vr_hudFollow 2)." );
 
-	vr_menuDistance = R_VR_Cvar( "vr_menuDistance", "2.0", CVAR_ARCHIVE_ND, "0.5", "5", CV_FLOAT,
+	vr_menuDistance = R_VR_Cvar( "vr_menuDistance", "1.0", CVAR_ARCHIVE_ND, "0.5", "5", CV_FLOAT,
 		"VR: distance of the menu screen in metres." );
-	vr_menuWidth = R_VR_Cvar( "vr_menuWidth", "2.0", CVAR_ARCHIVE_ND, "0.3", "6", CV_FLOAT,
+	vr_menuWidth = R_VR_Cvar( "vr_menuWidth", "1.3", CVAR_ARCHIVE_ND, "0.3", "6", CV_FLOAT,
 		"VR: width of the menu screen in metres." );
 	vr_menuHeadLocked = R_VR_Cvar( "vr_menuHeadLocked", "0", CVAR_ARCHIVE_ND, "0", "1", CV_INTEGER,
 		"VR: 0 the menu stays where it opened, 1 it is locked to the head." );
 	vr_menuDim = R_VR_Cvar( "vr_menuDim", "0.6", CVAR_ARCHIVE_ND, "0", "1", CV_FLOAT,
 		"VR: how much the frozen world behind a menu is darkened (0 none, 1 black)." );
+
+	// The layer cvars are archived, so a config saved by an older build still holds the old default
+	// distances and sizes, and a new default would never reach it. Version 1 of the layout moved the
+	// HUD and the menu closer (K10): once, those four go to the new defaults.
+	vr_layoutVersion = R_VR_Cvar( "vr_layoutVersion", "0", CVAR_ARCHIVE_ND, "0", "100", CV_INTEGER,
+		"VR: which defaults the HUD and menu placement cvars were last reset to (set by the game)." );
+	if ( vr_layoutVersion->integer < 1 ) {
+		ri.Cvar_Set( "vr_hudDistance", "1.2" );
+		ri.Cvar_Set( "vr_hudWidth", "1.2" );
+		ri.Cvar_Set( "vr_menuDistance", "1.0" );
+		ri.Cvar_Set( "vr_menuWidth", "1.3" );
+		ri.Cvar_Set( "vr_layoutVersion", "1" );
+	}
 
 	vr_cutsceneScreen = R_VR_Cvar( "vr_cutsceneScreen", "1", CVAR_ARCHIVE_ND, "0", "1", CV_INTEGER,
 		"VR: cutscene cameras and cinematics on a virtual screen (1), or cutscene cameras in stereo (0)." );
@@ -143,6 +173,15 @@ void R_VR_Register( void ) {
 	ri.Cvar_Set( "vr_active", "0" );
 	vr_debugCapture = R_VR_Cvar( "vr_debugCapture", "0", CVAR_LATCH, "0", "1", CV_INTEGER,
 		"VR debugging: make the eye images readable for vr_screenshot. Requires vid_restart." );
+	vr_menuSettle = R_VR_Cvar( "vr_menuSettle", "3", CVAR_ARCHIVE_ND, "0", "12", CV_INTEGER,
+		"VR: frames the HUD stays up, world frozen, when the in-game menu opens, so the menu's unsettled first frames "
+		"aren't shown (0 = show them as they come)." );
+	vr_debugFrames = ri.Cvar_Get( "vr_debugFrames", "0", CVAR_TEMP );
+	ri.Cvar_SetDescription( vr_debugFrames,
+		"VR debugging: 1 = log what every frame submits (the world, the dimmer, the 2D quad, the laser). "
+		"With vr_screenshot <n> the captured files are numbered by the same frame number." );
+	vr_menuLaser = R_VR_Cvar( "vr_menuLaser", "1", CVAR_ARCHIVE_ND, "0", "1", CV_INTEGER,
+		"VR: 1 = a red laser from the weapon hand to the menu cursor while a menu is up." );
 	vr_debugHeadTurn = ri.Cvar_Get( "vr_debugHeadTurn", "", 0 );
 	ri.Cvar_SetDescription( vr_debugHeadTurn,
 		"VR debugging: pretend head turn, \"yaw pitch roll\" in degrees (yaw left, pitch up and roll anticlockwise are positive)." );
@@ -269,8 +308,19 @@ void R_VR_BeginFrame( void ) {
 	}
 	R_VR_DebugHeadTurn();
 	r_vrKind = R_VR_FrameKind();
+	if ( r_vrKind == VRF_MENU && r_vrPrevKind != VRF_MENU && r_vrPrevKind != VRF_MENU_LIVE && VR_HaveFrozenEyes() ) {
+		r_vrMenuSettle = vr_menuSettle->integer;	// a menu opens over a running game
+	} else if ( r_vrKind != VRF_MENU ) {
+		r_vrMenuSettle = 0;
+	}
+	r_vrPrevKind = r_vrKind;
+	r_vrHold = r_vrMenuSettle > 0 && VR_HaveCanvas();
+	if ( r_vrMenuSettle > 0 ) {
+		r_vrMenuSettle--;
+	}
+	VR_SetHoldCanvas( r_vrHold );
 	// in play the dimmer is the head-in-a-wall fade (vr_move.c)
-	dim = ( r_vrKind == VRF_MENU || r_vrKind == VRF_MENU_LIVE ) ? vr_menuDim->value :
+	dim = r_vrHold ? 0.0f : ( r_vrKind == VRF_MENU || r_vrKind == VRF_MENU_LIVE ) ? vr_menuDim->value :
 		r_vrKind == VRF_THEATER ? vr_theaterDim->value : VR_GetComfortFade();
 	VR_BeginFrame( r_vrKind == VRF_GAME || r_vrKind == VRF_MENU_LIVE, dim );
 	r_vrFrame = qtrue;
@@ -308,12 +358,24 @@ void R_VR_EndFrame( void ) {
 		break;
 	case VRF_MENU:
 	case VRF_MENU_LIVE:
+		if ( r_vrHold ) {
+			// still the HUD on the frozen world, as the last game frame left them
+			layers.projection = VR_PROJ_FROZEN;
+			layers.quadMode = VR_QUAD_HUD;
+			layers.placement.distance = vr_hudDistance->value;
+			layers.placement.width = vr_hudWidth->value;
+			layers.placement.height = vr_hudHeight->value;
+			layers.placement.follow = vr_hudFollow->integer;
+			layers.placement.followAngle = vr_hudFollowAngle->value;
+			break;
+		}
 		layers.projection = r_vrKind == VRF_MENU_LIVE && vk_vr_eyes_written() ? VR_PROJ_FRESH : VR_PROJ_FROZEN;
 		layers.dim = vr_menuDim->value > 0.0f;
 		layers.quadMode = VR_QUAD_MENU;
 		layers.placement.distance = vr_menuDistance->value;
 		layers.placement.width = vr_menuWidth->value;
 		layers.placement.follow = vr_menuHeadLocked->integer ? 1 : 0;
+		layers.laser = vr_menuLaser->integer;
 		break;
 	case VRF_THEATER:
 		layers.projection = VR_PROJ_FROZEN;
@@ -325,7 +387,8 @@ void R_VR_EndFrame( void ) {
 		layers.placement.follow = 0;
 		break;
 	}
-	layers.quad = vk_vr_canvas_written();
+	layers.quad = r_vrHold ? 1 : vk_vr_canvas_written();
+	layers.debug = vr_debugFrames->integer;
 
 	// single-threaded back end: the frame's command buffer has been submitted by now
 	VR_EndFrame( &layers );

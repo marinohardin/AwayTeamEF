@@ -301,6 +301,15 @@ static struct {
 	vrSwapchain_t		vignette;			// filled once with a radial mask (vr_move: vignette)
 	int					vignetteState;		// 0 empty, 1 acquired for its fill this frame, 2 filled
 
+	// the menu laser: a thin red quad from the weapon hand to the menu cursor (VR_SetMenuLaser)
+	vrSwapchain_t		laser;				// filled once with red
+	int					laserState;			// 0 empty, 1 acquired for its fill this frame, 2 filled
+	int					laserOn;			// the ends below are set for the frame in laserFrame
+	unsigned			laserFrame;
+	float				laserFrom[3], laserTo[3];
+	unsigned			frameNumber;		// every VR_BeginFrame
+	int					holdCanvas;			// VR_SetHoldCanvas
+
 	// ending: our own exit request (shutdown, vid_restart) vs the runtime ending the session
 	int					exitRequested;		// we called xrRequestExitSession
 	vrExitReason_t		exitReason;			// the runtime ended the session or lost the headset
@@ -847,6 +856,14 @@ static int VR_CreateEyeSwapchains( void ) {
 		VR_Log( 0, "VR: no vignette layer\n" );
 	}
 	vr.vignetteState = 0;
+
+	// the menu laser: one small red image, filled once by the renderer
+	if ( !VR_CreateSwapchain( &vr.laser, "laser", 16, 16, format,
+			XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT ) ) {
+		VR_Log( 0, "VR: no laser layer\n" );
+	}
+	vr.laserState = 0;
+	vr.laserOn = 0;
 	return 1;
 }
 
@@ -1125,6 +1142,9 @@ void VR_DestroySession( void ) {
 	VR_DestroySwapchain( &vr.dimmer );
 	VR_DestroySwapchain( &vr.vignette );
 	vr.vignetteState = 0;
+	VR_DestroySwapchain( &vr.laser );
+	vr.laserState = 0;
+	vr.laserOn = 0;
 
 	if ( vr.viewSpace != XR_NULL_HANDLE ) {
 		qxrDestroySpace( vr.viewSpace );
@@ -1360,6 +1380,7 @@ int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 	static int loggedViews;
 
 	vr.frameActive = 0;
+	vr.frameNumber++;
 
 	if ( vr.session == XR_NULL_HANDLE ) {
 		return 0;
@@ -1446,7 +1467,9 @@ int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 			VR_Acquire( &vr.swapchains[eye] );
 		}
 	}
-	VR_Acquire( &vr.canvas );
+	if ( !vr.holdCanvas ) {
+		VR_Acquire( &vr.canvas );
+	}
 
 	vr.dimmerPending = 0.0f;
 	if ( dimAlpha > 0.0f && fabsf( dimAlpha - vr.dimmerAlpha ) > 0.005f && VR_Acquire( &vr.dimmer ) ) {
@@ -1455,9 +1478,20 @@ int VR_BeginFrame( int wantEyes, float dimAlpha ) {
 	if ( vr.vignetteState == 0 && vr.comfortVignette > 0.0f && VR_Acquire( &vr.vignette ) ) {
 		vr.vignetteState = 1;	// the renderer fills it this frame
 	}
+	if ( vr.laserState == 0 && vr.laserOn && VR_Acquire( &vr.laser ) ) {
+		vr.laserState = 1;		// the renderer fills it this frame
+	}
 
 	vr.frameActive = 1;
 	return 1;
+}
+
+int VR_HaveCanvas( void ) {
+	return vr.canvas.released;
+}
+
+void VR_SetHoldCanvas( int hold ) {
+	vr.holdCanvas = hold;
 }
 
 int VR_FrameActive( void ) {
@@ -1571,6 +1605,36 @@ int VR_GetVignetteImageIndex( void ) {
 		return -1;
 	}
 	return (int)vr.vignette.acquiredIndex;
+}
+
+int VR_GetLaserImageIndex( void ) {
+	if ( !vr.frameActive || !vr.laser.acquired || vr.laserState != 1 ) {
+		return -1;
+	}
+	return (int)vr.laser.acquiredIndex;
+}
+
+int VR_GetLaserSwapchain( vrSwapchainInfo_t *info ) {
+	if ( vr.laser.handle == XR_NULL_HANDLE ) {
+		return 0;
+	}
+	VR_FillInfo( &vr.laser, info );
+	return 1;
+}
+
+unsigned VR_GetFrameNumber( void ) {
+	return vr.frameNumber;
+}
+
+void VR_SetMenuLaser( const float from[3], const float to[3] ) {
+	if ( !from || !to ) {
+		vr.laserOn = 0;
+		return;
+	}
+	memcpy( vr.laserFrom, from, sizeof( vr.laserFrom ) );
+	memcpy( vr.laserTo, to, sizeof( vr.laserTo ) );
+	vr.laserOn = 1;
+	vr.laserFrame = vr.frameNumber;
 }
 
 int VR_GetEyeImageIndex( int eye ) {
@@ -1697,6 +1761,108 @@ int VR_GetLastQuad( vrQuadMode_t *mode, float centre[3], float *yaw, float size[
 	return 1;
 }
 
+// a unit vector, false when the input has no length
+static int VR_Unit( const float *v, float *out ) {
+	const float len = sqrtf( v[0] * v[0] + v[1] * v[1] + v[2] * v[2] );
+
+	if ( len < 1e-5f ) {
+		return 0;
+	}
+	out[0] = v[0] / len;
+	out[1] = v[1] / len;
+	out[2] = v[2] / len;
+	return 1;
+}
+
+/*
+The menu laser as a quad layer: a thin strip along the line, turned about it to face the head, so
+it reads as a line from any side. Returns 0 when there is no laser to draw this frame.
+*/
+#define VR_LASER_WIDTH	0.006f	// metres
+static int VR_BuildLaserQuad( XrCompositionLayerQuad *q ) {
+	float dir[3], d[3], head[3], toHead[3], z[3], x[3], mid[3], headYaw, len, dot;
+	float m[3][3], w, qx, qy, qz;
+	int i;
+
+	if ( !vr.laserOn || vr.frameNumber - vr.laserFrame > 3 || vr.laserState != 2 || !vr.laser.released ) {
+		return 0;
+	}
+	for ( i = 0; i < 3; i++ ) {
+		d[i] = vr.laserTo[i] - vr.laserFrom[i];
+		mid[i] = 0.5f * ( vr.laserTo[i] + vr.laserFrom[i] );
+	}
+	len = sqrtf( d[0] * d[0] + d[1] * d[1] + d[2] * d[2] );
+	if ( !VR_Unit( d, dir ) ) {
+		return 0;
+	}
+	VR_HeadPose( head, &headYaw );
+	for ( i = 0; i < 3; i++ ) {
+		toHead[i] = head[i] - mid[i];
+	}
+	dot = toHead[0] * dir[0] + toHead[1] * dir[1] + toHead[2] * dir[2];
+	for ( i = 0; i < 3; i++ ) {
+		toHead[i] -= dot * dir[i];
+	}
+	if ( !VR_Unit( toHead, z ) ) {
+		return 0;
+	}
+	// the strip's axes: x across it, y along it, z towards the head (x = y cross z)
+	x[0] = dir[1] * z[2] - dir[2] * z[1];
+	x[1] = dir[2] * z[0] - dir[0] * z[2];
+	x[2] = dir[0] * z[1] - dir[1] * z[0];
+
+	// rotation matrix (columns x, dir, z; m[row][column]) to a quaternion
+	for ( i = 0; i < 3; i++ ) {
+		m[i][0] = x[i];
+		m[i][1] = dir[i];
+		m[i][2] = z[i];
+	}
+	if ( m[0][0] + m[1][1] + m[2][2] > 0.0f ) {
+		const float t = sqrtf( m[0][0] + m[1][1] + m[2][2] + 1.0f ) * 2.0f;
+		w = 0.25f * t;
+		qx = ( m[2][1] - m[1][2] ) / t;
+		qy = ( m[0][2] - m[2][0] ) / t;
+		qz = ( m[1][0] - m[0][1] ) / t;
+	} else if ( m[0][0] > m[1][1] && m[0][0] > m[2][2] ) {
+		const float t = sqrtf( 1.0f + m[0][0] - m[1][1] - m[2][2] ) * 2.0f;
+		w = ( m[2][1] - m[1][2] ) / t;
+		qx = 0.25f * t;
+		qy = ( m[0][1] + m[1][0] ) / t;
+		qz = ( m[0][2] + m[2][0] ) / t;
+	} else if ( m[1][1] > m[2][2] ) {
+		const float t = sqrtf( 1.0f + m[1][1] - m[0][0] - m[2][2] ) * 2.0f;
+		w = ( m[0][2] - m[2][0] ) / t;
+		qx = ( m[0][1] + m[1][0] ) / t;
+		qy = 0.25f * t;
+		qz = ( m[1][2] + m[2][1] ) / t;
+	} else {
+		const float t = sqrtf( 1.0f + m[2][2] - m[0][0] - m[1][1] ) * 2.0f;
+		w = ( m[1][0] - m[0][1] ) / t;
+		qx = ( m[0][2] + m[2][0] ) / t;
+		qy = ( m[1][2] + m[2][1] ) / t;
+		qz = 0.25f * t;
+	}
+
+	memset( q, 0, sizeof( *q ) );
+	q->type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+	q->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+	q->space = vr.space;
+	q->eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	q->subImage.swapchain = vr.laser.handle;
+	q->subImage.imageRect.extent.width = (int32_t)vr.laser.width;
+	q->subImage.imageRect.extent.height = (int32_t)vr.laser.height;
+	q->pose.orientation.x = qx;
+	q->pose.orientation.y = qy;
+	q->pose.orientation.z = qz;
+	q->pose.orientation.w = w;
+	q->pose.position.x = mid[0];
+	q->pose.position.y = mid[1];
+	q->pose.position.z = mid[2];
+	q->size.width = VR_LASER_WIDTH;
+	q->size.height = len;
+	return 1;
+}
+
 // a line every ~10 seconds: the frame rate the runtime paced us at, and what was shown
 static void VR_FrameStats( vrProjection_t projection, int layerCount ) {
 	static XrTime start;
@@ -1724,10 +1890,10 @@ static void VR_FrameStats( vrProjection_t projection, int layerCount ) {
 void VR_EndFrame( const vrFrameLayers_t *layers ) {
 	XrCompositionLayerProjectionView projViews[VR_MAX_EYES];
 	XrCompositionLayerProjection proj;
-	XrCompositionLayerQuad dimQuad, quad, vigQuad;
-	const XrCompositionLayerBaseHeader *list[4];
+	XrCompositionLayerQuad dimQuad, quad, vigQuad, laserQuad;
+	const XrCompositionLayerBaseHeader *list[6];
 	XrFrameEndInfo ei;
-	int eye, eyesAcquired, layerCount = 0;
+	int eye, eyesAcquired, layerCount = 0, laserOn = 0;
 	vrProjection_t projection = VR_PROJ_NONE;
 
 	if ( vr.session == XR_NULL_HANDLE || !vr.frameBegun ) {
@@ -1749,6 +1915,10 @@ void VR_EndFrame( const vrFrameLayers_t *layers ) {
 	if ( vr.vignette.acquired ) {
 		VR_Release( &vr.vignette );
 		vr.vignetteState = 2;	// filled once; the runtime keeps showing the last released image
+	}
+	if ( vr.laser.acquired ) {
+		VR_Release( &vr.laser );
+		vr.laserState = 2;
 	}
 
 	if ( layers && vr.frameActive ) {
@@ -1848,8 +2018,20 @@ void VR_EndFrame( const vrFrameLayers_t *layers ) {
 		vr.lastQuadYaw = 2.0f * atan2f( quad.pose.orientation.y, quad.pose.orientation.w );
 		vr.lastQuadSize[0] = quad.size.width;
 		vr.lastQuadSize[1] = quad.size.height;
+		if ( layers->laser && vr.lastQuadLocal && VR_BuildLaserQuad( &laserQuad ) ) {
+			list[layerCount++] = (const XrCompositionLayerBaseHeader *)&laserQuad;
+			laserOn = 1;
+		}
 	} else {
 		vr.lastQuadMode = -1;
+	}
+
+	if ( layers && layers->debug ) {
+		VR_Log( 0, "VR frame %u: world %d, dim %.2f, quad mode %d at %.3f %.3f %.3f yaw %.4f size %.3f x %.3f, laser %d from %.4f %.4f %.4f to %.4f %.4f %.4f, "
+			"%d layers%s\n", vr.frameNumber, (int)projection, ( layers->dim && vr.dimmer.released ) ? vr.dimmerAlpha : 0.0f,
+			vr.lastQuadMode, vr.lastQuadCentre[0], vr.lastQuadCentre[1], vr.lastQuadCentre[2], vr.lastQuadYaw,
+			vr.lastQuadSize[0], vr.lastQuadSize[1], laserOn, vr.laserFrom[0], vr.laserFrom[1], vr.laserFrom[2],
+			vr.laserTo[0], vr.laserTo[1], vr.laserTo[2], layerCount, vr.frameActive ? "" : " (not active)" );
 	}
 
 	memset( &ei, 0, sizeof( ei ) );

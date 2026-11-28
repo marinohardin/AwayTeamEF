@@ -332,7 +332,7 @@ is held in the room (not head-locked): canvas pixels (0,0 at the top left, the r
 off the canvas). Used
 for the wheel here and for the menu cursor (vr_input_engine.c).
 */
-int VR_Pointer_OnCanvas( int wantMode, float *px, float *py ) {
+static int VR_Pointer_Trace( int wantMode, float *px, float *py, float *xrFrom, float *xrTo ) {
 	vrQuadMode_t mode;
 	vrBodyHand_t hand;
 	float centre[3], yaw, size[2], head[3], rel[3], xr[3];
@@ -375,6 +375,20 @@ int VR_Pointer_OnCanvas( int wantMode, float *px, float *py ) {
 		return qfalse;
 	}
 	VectorMA( hand.origin, t, hand.axis[0], d );
+	if ( xrFrom && xrTo ) {
+		// both ends in the reference space (OpenXR axes, metres): the game's frame turned back
+		// and the head origin added again
+		vec3_t p;
+
+		VectorCopy( hand.origin, p );
+		xrFrom[0] = -p[1] / scale + head[0];
+		xrFrom[1] = p[2] / scale + head[1];
+		xrFrom[2] = -p[0] / scale + head[2];
+		VectorCopy( d, p );
+		xrTo[0] = -p[1] / scale + head[0];
+		xrTo[1] = p[2] / scale + head[1];
+		xrTo[2] = -p[0] / scale + head[2];
+	}
 	VectorSubtract( d, q, d );
 	lx = DotProduct( d, right ) / scale;	// metres on the quad
 	ly = DotProduct( d, up ) / scale;
@@ -382,6 +396,15 @@ int VR_Pointer_OnCanvas( int wantMode, float *px, float *py ) {
 	*px = ( lx / size[0] + 0.5f ) * cls.glconfig.vidWidth;
 	*py = ( 0.5f - ly / size[1] ) * cls.glconfig.vidHeight;
 	return qtrue;	// it may be beyond the quad's edges: the caller decides
+}
+
+int VR_Pointer_OnCanvas( int wantMode, float *px, float *py ) {
+	return VR_Pointer_Trace( wantMode, px, py, NULL, NULL );
+}
+
+// the same, with the two ends of the ray for drawing it: the weapon hand and the hit point
+int VR_Pointer_Laser( int wantMode, float *px, float *py, float xrFrom[3], float xrTo[3] ) {
+	return VR_Pointer_Trace( wantMode, px, py, xrFrom, xrTo );
 }
 
 // where the hand's ray meets the wheel's quad, in the virtual frame the wheel is drawn in
