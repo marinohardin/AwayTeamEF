@@ -67,17 +67,21 @@ Size (1.5.0): flat 3.1 MB; Quest 3.2 MB (the loader adds about 0.4 MB stripped).
 
 ### The start screen
 
-Before the game, a flat panel (a plain Android activity, `StartActivity`) with four buttons, for
-the Quest's controller pointer, and a text field:
+Before the game, a flat panel (a plain Android activity, `StartActivity`) with buttons for
+the Quest's controller pointer, a number pad and a search for co-op games on the network:
 
 | Button | Starts the game with | Then |
 |---|---|---|
 | Single player | `+set com_holomatch 0` | the game's main menu |
 | Co-op host | `+set com_holomatch 0 +set sp_coop 1` | start or load a mission; the guest needs your headset's IP address (the Wi-Fi settings show it) |
-| Co-op join | `+set com_holomatch 0 +set coop_connect <address>` | joins that host. The address is the field above the buttons (digits and dots, `ip` or `ip:port`; the last one is kept) |
+| Co-op join | `+set com_holomatch 0 +set coop_connect <address>` | joins that host. The address is the line above the number pad on the right: tap digits, dot and colon (`ip` or `ip:port`; Back and Clear edit it; the last one is kept). It is not a text field, because the system keyboard hung the app |
+| Search local network | none: nothing starts | asks the network for co-op hosts and lists them (player and computer name, mission or map, difficulty, players, address). Tapping a game that can be joined fills the address and joins it. Games on another version, full, or with a password are greyed with the reason |
 | Holomatch | `+set com_holomatch 1` | the Holomatch server browser |
 
 These are the arguments the desktop launchers put on the command line (`efcode/launcher/lc_launch.c`).
+The search is the desktop launchers' query (`getcoopinfo <challenge> lan` as a UDP broadcast to port 29760,
+answered with `coopInfoResponse`; `CoopLan.java`, off the UI thread, about 2.5 s). A host whose "Show this
+game on my network" is off (`coop_lanVisible 0`) does not answer it; type its address instead.
 A line under the title says whether the paks are in the data folder. Co-op in the Quest build uses
 the same code as on Linux, so the guest's and host's apps must be on the same co-op compatibility
 version (the 1.5.x line); a phone, Mac, Windows or Linux partner works.
@@ -195,6 +199,10 @@ From the first session on a headset (2026-11-27). None is fixed yet; the numbers
 - **10. The HUD and the menu layer may float too far away.** The defaults are `vr_hudDistance`
   and `vr_menuDistance` (see [RENDERING.md](RENDERING.md)); a closer default is worth trying on
   the headset.
+- **Start screen address entry and the network search are untested on the headset.** The address is
+  typed on an on-screen number pad (the system keyboard hung the app when the old text field was
+  tapped; the cause could not be confirmed without a headset), and the search is only verified against
+  a Mac host from an emulator. Watch `adb logcat -s AwayTeamEF` while using them.
 - **The start screen's step into the game is untested on a headset.** The Quest should switch from
   the flat panel to VR when `QuestActivity` starts, because it carries the VR category. If it opens
   flat instead, start the game directly with
