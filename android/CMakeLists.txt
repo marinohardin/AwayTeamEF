@@ -32,7 +32,12 @@ endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/../cmake/EFPlatform.cmake)
 
 set(EF_ANDROID_PACKAGE "org.awayteamef.app" CACHE STRING "Android application id (also names the data folder)")
-set(EF_APP_VERSION "1.5.0" CACHE STRING "App version shown in the console")
+# the app version: the desktop builds' (EFAndroid-SP/app/jni/engine/CMakeLists.txt), unless given
+# (make-apk.sh passes its VERSION, which defaults to the same)
+file(STRINGS ${EF_ROOT}/EFAndroid-SP/app/jni/engine/CMakeLists.txt _ef_version_line
+  REGEX "^set\\(EF_APP_VERSION \"[^\"]+\"")
+string(REGEX REPLACE "^set\\(EF_APP_VERSION \"([^\"]+)\".*" "\\1" _ef_version "${_ef_version_line}")
+set(EF_APP_VERSION "${_ef_version}" CACHE STRING "App version shown in the console and to server browsers")
 set(EF_SDL3_SOURCE "" CACHE PATH "Unpacked SDL3 source (deps/versions.sh SDL3_VERSION)")
 set(EF_SDL2COMPAT_SOURCE "" CACHE PATH "Unpacked sdl2-compat source (deps/versions.sh SDL2COMPAT_VERSION)")
 # Bink cinematics need FFmpeg; the Android build has none yet, so movies are skipped
@@ -104,6 +109,7 @@ set(QCOMMON_SRC
   ${EF}/qcommon/cm_test.c   ${EF}/qcommon/cm_trace.c
   ${EF}/qcommon/cmd.c       ${EF}/qcommon/common.c    ${EF}/qcommon/cvar.c
   ${EF}/qcommon/files.c     ${EF}/qcommon/md4.c       ${EF}/qcommon/md5.c
+  ${EF}/qcommon/cfg_overlay.c
   ${EF}/qcommon/msg.c       ${EF}/qcommon/net_chan.c  ${EF}/qcommon/net_ip.c
   ${EF}/qcommon/huffman.c   ${EF}/qcommon/q_math.c    ${EF}/qcommon/q_shared.c
   ${EF}/qcommon/unzip.c     ${EF}/qcommon/ioapi.c     ${EF}/qcommon/puff.c
@@ -195,6 +201,17 @@ if(EF_VR)
   # libopenxr_loader.so is not linked: vr_openxr.c opens it at run time (make-apk.sh builds it).
   target_sources(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/jni/quest_jni.c)
   target_link_libraries(main PRIVATE ef_vr)
+  # EF_QUEST (q_shared.h): the desktop blocks with a Quest counterpart: "AwayTeamEF for Meta Quest
+  # <version>", the menus' Quit back to the start screen, the Loopback Host Fix, cMod's paks
+  target_compile_definitions(main PRIVATE EF_QUEST)
+  # the launchers' core for the Loopback Host Fix's public address (lc_nat.c: NAT-PMP, UPnP); only
+  # what quest_jni.c uses is linked. No GOG unpacking (no liblzma here).
+  set(LC_GOG OFF CACHE BOOL "" FORCE)
+  set(LC_BUNDLE_ZLIB OFF CACHE BOOL "" FORCE)
+  add_subdirectory(${EF}/launcher eflauncher)
+  # -U_FORTIFY_SOURCE: bionic's realpath() check trips on a launcher path buffer quest_jni.c never uses
+  target_compile_options(eflauncher PRIVATE -w -U_FORTIFY_SOURCE)
+  target_link_libraries(main PRIVATE eflauncher)
   # the SP bridge's VR hooks: room-scale movement (vr_move.h) and the hand-pose syscall
   # CG_VR_GETPOSE (vr_input.h)
   target_compile_definitions(sp_game_bridge PRIVATE EF_VR)

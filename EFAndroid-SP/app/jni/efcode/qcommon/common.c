@@ -412,10 +412,11 @@ do the appropriate things.
 void Com_Quit_f( void ) {
 	// don't try to shutdown if we are in a recursive error
 	char *p = Cmd_Args( );
-#if defined( EF_DESKTOP ) && !defined( DEDICATED )
+#if ( defined( EF_DESKTOP ) || defined( EF_QUEST ) ) && !defined( DEDICATED )
 	// the game's own Quit (a plain "quit") goes back to the launcher; Cmd+Q and
 	// closing the window come here as "quit Closed window" and quit for good
-	// (sys_platform.h; a no-op where there is no launcher)
+	// (sys_platform.h; a no-op where there is no launcher). Quest: back at the
+	// start screen (android/jni/quest_jni.c)
 	if ( !Q_stricmp( Cmd_Argv( 0 ), "quit" ) && Cmd_Argc( ) == 1 ) {
 		extern void Sys_PlatformQuitToLauncher( void );
 		Sys_PlatformQuitToLauncher( );

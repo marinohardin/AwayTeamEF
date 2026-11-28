@@ -11,9 +11,12 @@
 # controllers), and libopenxr_loader.so built here with the NDK from the Khronos
 # OpenXR-SDK-Source release that matches deps/openxr/include (downloaded once, about 5 MB,
 # checksum-checked). Data folder: /sdcard/Android/obb/org.awayteamef.quest/baseEF/.
+# It also carries cMod's game modules by Noah Metzger (Chomenor), included with his permission
+# (macos/cmod/README.txt), as the desktop packages do: assets/cmod/ in the APK, which QuestActivity
+# copies to the app's files/cmod/ for the engine (files.c checks them against cMod's release list).
 #
 # Install and run (a device or an arm64 emulator with Vulkan):
-#   adb install -r build-android/AwayTeamEF-1.5.0-arm64.apk
+#   adb install -r build-android/AwayTeamEF-<version>-arm64.apk
 #   adb shell mkdir -p /sdcard/Android/obb/org.awayteamef.app/baseEF
 #   adb push pak0.pk3 pak1.pk3 pak2.pk3 pak3.pk3 /sdcard/Android/obb/org.awayteamef.app/baseEF/
 #   adb shell am start -n org.awayteamef.app/.EFActivity -e args "'+set s_volume 0 +map borg1'"
@@ -31,7 +34,10 @@
 #   PLATFORM            compile-against platform (default: the newest installed, e.g. android-36)
 #   VR                  1 = the Quest variant (default 0 = flat)
 #   OUT                 build directory (default <repo>/build-android; VR=1: <repo>/android/build)
-#   VERSION             app version (default 1.5.0)
+#   VERSION             app version (default: EF_APP_VERSION in EFAndroid-SP/app/jni/engine/CMakeLists.txt,
+#                       the desktop builds' version, as windows/make-release.sh)
+#   CMOD_PAK            VR=1: cMod's pk3 (default: the newest macos/cmod/pakcmod-release-*.pk3, as
+#                       macos/make-app.sh; none there = an APK without cMod's modules)
 #   EF_ANDROID_KEYSTORE debug signing key (default ~/.android/awayteamef-debug.keystore;
 #                       made on first use, never in the repo)
 #   JOBS                parallel compile jobs
@@ -48,7 +54,8 @@ PLATFORM="${PLATFORM:-$(newest "$ANDROID_HOME/platforms")}"
 BT="$ANDROID_HOME/build-tools/$BUILD_TOOLS"
 ANDROID_JAR="$ANDROID_HOME/platforms/$PLATFORM/android.jar"
 VR="${VR:-0}"
-VERSION="${VERSION:-1.5.0}"
+VERSION="${VERSION:-$(sed -n 's/^set(EF_APP_VERSION "\([^"]*\)".*/\1/p' "$ROOT/EFAndroid-SP/app/jni/engine/CMakeLists.txt")}"
+[ -n "$VERSION" ] || { echo "make-apk: can't tell the version: set VERSION" >&2; exit 1; }
 if [ "$VR" = 1 ]; then
 	OUT="${OUT:-$ROOT/android/build}"
 	PACKAGE=org.awayteamef.quest
@@ -161,6 +168,21 @@ find "$SDLJAVA" $JAVA_DIRS -name '*.java' > "$OUT/java-sources.txt"
 "$BT/d8" --release --min-api $MIN_SDK --lib "$ANDROID_JAR" --output "$STAGE/dex" \
 	$(find "$STAGE/classes" -name '*.class')
 
+# ---- cMod's game modules (Quest): assets/cmod/, with its README and the game source license ----
+ASSETS_ARGS=()
+if [ "$VR" = 1 ]; then
+	CMOD_PAK="${CMOD_PAK:-$(ls "$ROOT"/macos/cmod/pakcmod-release-*.pk3 2>/dev/null | sort | tail -1)}"
+	if [ -n "$CMOD_PAK" ] && [ -f "$CMOD_PAK" ]; then
+		mkdir -p "$STAGE/assets/cmod"
+		cp "$CMOD_PAK" "$STAGE/assets/cmod/"
+		cp "$ROOT/macos/cmod/README.txt" "$ROOT/efgame/STEF Game Source License.doc" "$STAGE/assets/cmod/"
+		ASSETS_ARGS=(-A "$STAGE/assets")
+		echo "== cMod game modules: $(basename "$CMOD_PAK")"
+	else
+		echo "== note: no cMod pk3 (macos/cmod/pakcmod-release-*.pk3 or CMOD_PAK): building without cMod's game modules"
+	fi
+fi
+
 # ---- package ----
 UNSIGNED="$OUT/unsigned.apk"
 ALIGNED="$OUT/aligned.apk"
@@ -169,7 +191,7 @@ rm -f "$UNSIGNED" "$ALIGNED" "$APK"
 "$BT/aapt2" link -o "$UNSIGNED" -I "$ANDROID_JAR" \
 	--manifest "$MANIFEST" \
 	--min-sdk-version $MIN_SDK --target-sdk-version "$TARGET_SDK" \
-	--version-code $VERSION_CODE --version-name "$VERSION"
+	--version-code $VERSION_CODE --version-name "$VERSION" ${ASSETS_ARGS[@]+"${ASSETS_ARGS[@]}"}
 ( cd "$STAGE/dex" && zip -q -X "$UNSIGNED" classes.dex )
 ( cd "$STAGE" && zip -q -X -r "$UNSIGNED" lib )
 "$BT/zipalign" -P 16 -f 4 "$UNSIGNED" "$ALIGNED"

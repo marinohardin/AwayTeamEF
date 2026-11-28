@@ -31,6 +31,9 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 	( defined( __APPLE__ ) || defined( _WIN32 ) || defined( __linux__ ) )
   #define EF_DESKTOP 1
 #endif
+// EF_QUEST: the Meta Quest build (android/make-apk.sh VR=1; android/CMakeLists.txt defines it for the
+// engine). It is not a desktop build: only the EF_DESKTOP blocks with a Quest counterpart also check it
+// (the version string, the quit back to the start screen, the Loopback Host Fix, the bundled cMod paks).
 
 #ifdef STANDALONE
   #define PRODUCT_NAME				"iofoo3"
@@ -141,10 +144,12 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 #  define PRODUCT_DATE __DATE__
 #endif
 
-#if defined( ELITEFORCE ) && defined( EF_DESKTOP ) && defined( EF_APP_VERSION )
+#if defined( ELITEFORCE ) && ( defined( EF_DESKTOP ) || defined( EF_QUEST ) ) && defined( EF_APP_VERSION )
 // the version players and server browsers see; PRODUCT_NAME stays as it was
 // because it also names files (the PID file)
-#if defined( __APPLE__ )
+#if defined( EF_QUEST )
+#define Q3_VERSION "AwayTeamEF for Meta Quest " EF_APP_VERSION
+#elif defined( __APPLE__ )
 #define Q3_VERSION "AwayTeamEF for Mac " EF_APP_VERSION
 #elif defined( _WIN32 )
 #define Q3_VERSION "AwayTeamEF for Windows " EF_APP_VERSION

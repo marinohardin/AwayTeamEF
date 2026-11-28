@@ -49,7 +49,8 @@ idTech3 lineage, all **GPLv2**:
 - **cMod game modules** — **Noah Metzger (Chomenor)** — his released Holomatch cgame, ui and qagame
   (`pakcmod-release-2023-09-18.pk3`), bundled unchanged with his permission in
   `Contents/Resources/cmod`: the widescreen HUD and menus, lag compensation for servers you host,
-  weapon fire prediction and many game fixes. The Windows and Linux builds include them too. Built
+  weapon fire prediction and many game fixes. The Windows and Linux builds and the Meta Quest APK
+  include them too. Built
   from Raven's game source (see below), so under Raven's Limited Use license, not the GPL.
   <https://github.com/Chomenor/cmod-game-code>
 - **Co-op's netcode ideas** — **Noah Metzger (Chomenor)** — single-player co-op's lag compensation

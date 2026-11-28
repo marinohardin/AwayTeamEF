@@ -10,7 +10,8 @@ main() calls these at fixed points; each desktop platform implements them:
                  game-data chooser, File menu)
   Windows/Linux  sys_platform_desktop.c: own homepath name, game-data lookup
                  (sys_data.c), the launchers' hooks
-Android and Emscripten have no implementation: the inline no-ops below.
+Android and Emscripten have no implementation: the inline no-ops below
+(the Quest build has Sys_PlatformQuitToLauncher, in android/jni/quest_jni.c).
 ===========================================================================
 */
 
@@ -68,7 +69,12 @@ static ID_INLINE const char *Sys_PlatformResolveGameData( int argc, char **argv,
 static ID_INLINE void Sys_PlatformPostInit( void ) { }
 static ID_INLINE void Sys_PlatformQuitSignals( void ) { }
 static ID_INLINE void Sys_PlatformFrame( void ) { }
+#if defined( EF_QUEST ) && !defined( DEDICATED )
+// Quest: the game's own Quit goes back to the start screen (android/jni/quest_jni.c)
+void Sys_PlatformQuitToLauncher( void );
+#else
 static ID_INLINE void Sys_PlatformQuitToLauncher( void ) { }
+#endif
 
 #endif
 

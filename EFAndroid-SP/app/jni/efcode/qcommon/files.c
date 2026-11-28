@@ -1655,15 +1655,27 @@ The cMod paks shipped with the app. Only paks on cMod's list are kept.
   Windows: <folder of the .exe>/cmod/*.pk3
   Linux:   <bin>/../share/eliteforce-marino/cmod/*.pk3 (AppImage: usr/share/...),
            else <folder of the binary>/cmod/*.pk3
+  Quest:   <app files dir>/cmod/*.pk3, copied there from the APK's assets by
+           QuestActivity before the engine starts (android/jni/quest_jni.c)
 =================
 */
+#ifdef EF_QUEST
+extern const char *Sys_QuestCmodDir( void );	// android/jni/quest_jni.c
+#endif
 static void FS_LoadCmodPaks( void ) {
-#ifdef EF_DESKTOP
+#if defined( EF_DESKTOP ) || defined( EF_QUEST )
 	char dir[MAX_OSPATH];
 	char **files;
 	int numFiles, i;
 
-#ifdef __APPLE__
+#if defined( EF_QUEST )
+	const char *questDir = Sys_QuestCmodDir();
+
+	if ( !Com_Holomatch() || !questDir || !questDir[0] ) {
+		return;
+	}
+	Q_strncpyz( dir, questDir, sizeof( dir ) );
+#elif defined( __APPLE__ )
 	if ( !Com_Holomatch() || !fs_apppath || !fs_apppath->string[0] ) {
 		return;
 	}

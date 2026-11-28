@@ -2778,15 +2778,26 @@ void CL_ServersResponsePacket( const netadr_t* from, msg_t *msg, qboolean extend
 			break;
 	}
 
-#ifdef EF_DESKTOP
+#if defined( EF_DESKTOP ) || defined( EF_QUEST )
 	// The launcher's Loopback Host Fix: a server hosted on this network is
 	// listed under the network's public address, which most routers don't route
 	// back in from inside. List it as this computer (127.0.0.1) instead, so the
 	// host sees their own server, with a ping, and can join it. The launcher sets
 	// cl_loopbackHostIP to the public address (any platform, or by hand).
+	// Quest: no launcher sets it; the engine asks the router itself (quest_jni.c).
 	{
 		const char *own = Cvar_VariableString( "cl_loopbackHostIP" );
 		netadr_t ownAdr;
+#ifdef EF_QUEST
+		extern const char *Sys_QuestPublicAddress( void );	// android/jni/quest_jni.c
+
+		if ( !*own ) {
+			own = Sys_QuestPublicAddress();
+			if ( !own ) {
+				own = "";
+			}
+		}
+#endif
 
 		if ( *own && NET_StringToAdr( own, &ownAdr, NA_IP ) && ownAdr.type == NA_IP ) {
 			for ( i = 0; i < numservers; i++ ) {
