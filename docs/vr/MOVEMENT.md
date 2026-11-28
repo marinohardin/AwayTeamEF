@@ -95,6 +95,28 @@ eye stays where it is in the world. The hands use the same body yaw, so they sta
 player or a smooth turn runs, in proportion to how fast. It is a head-locked quad with a radial
 mask, drawn by the runtime, so it costs nothing in the eye render.
 
+## How Use picks a target
+
+Single player and the co-op host's own player (`G_VRUsePick`, `game/g_utils.cpp`). The game's
+Use and the highlight both call it, with the eye, body yaw and hand poses the frame was drawn with,
+so a press uses what is boxed. In order:
+
+1. What the weapon hand points at, up to 88 units from the hand: a thin ray first, then a ray
+   6 units thick for small buttons.
+2. The same along the head's gaze, up to 80 units from the eyes.
+3. A switch or console that fires on Use (a use-button trigger, which is how most of the
+   campaign's switches work). It counts if the player stands in its area, or if the hand's ray or
+   the gaze reaches into it from within 24 units. When the switch needs the player to face it,
+   the body's view, the head or the hand may face it (within about 60 degrees, judged level).
+   The flat game takes this only from the body's view, which in VR follows the stick turns, not
+   the real head. That is why switches used to need odd angles, above all when the player had
+   turned in the room instead of with the stick.
+
+What Use will act on gets light-blue corner brackets in the world (other scanned things keep their
+own colour). Without tracked hands or head, Use is the flat one. A co-op guest's Use is still the
+flat one, judged on the host, except that its hand can face a switch. `cg_vrGunInfo 2` prints each
+press ("VR use: ...").
+
 ## cvars
 
 | cvar | Default | Meaning |

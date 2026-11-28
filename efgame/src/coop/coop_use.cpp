@@ -25,6 +25,7 @@
 #include "g_functions.h"
 #include "coop_public.h"
 #include "coop_local.h"
+#include "vr_shared.h"
 
 extern bool		in_camera;
 extern qboolean	player_locked;
@@ -95,6 +96,19 @@ static qboolean COOP_HasUseTarget( gentity_t *ent )
 		coop_useWhat = "a downed partner";
 		return qtrue;
 	}
+	{
+		// VR player 1: Use's own pick (hand, head, use triggers), as the press will use
+		const int vrKind = G_VRUseWouldAct( ent );
+		if ( vrKind >= 0 )
+		{
+			coop_useWhat = vrKind != VR_USE_NONE ? "the VR use target" : "nothing (VR)";
+			if ( vrKind != VR_USE_NONE )
+			{
+				return qtrue;
+			}
+			goto triggers;	// a trigger the body stands in still counts, as the flat check
+		}
+	}
 	VectorCopy( ent->client->renderInfo.eyePoint, src );
 	AngleVectors( ent->client->renderInfo.eyeAngles, fwd, NULL, NULL );
 	VectorMA( src, COOP_USE_REACH, fwd, dest );
@@ -117,6 +131,7 @@ static qboolean COOP_HasUseTarget( gentity_t *ent )
 			return qtrue;	// a crew member who answers
 		}
 	}
+triggers:
 	n = gi.EntitiesInBox( ent->absmin, ent->absmax, list, 64 );
 	for ( int i = 0; i < n; i++ )
 	{
@@ -199,8 +214,12 @@ static void COOP_Ping( int idx, gentity_t *ent )
 	{
 		return;
 	}
-	VectorCopy( ent->client->renderInfo.eyePoint, src );
-	AngleVectors( ent->client->renderInfo.eyeAngles, fwd, NULL, NULL );
+	// a VR player points with the hand (player 1: else the head), as Use; a flat one with its view
+	if ( !G_VRPointRay( ent, src, fwd ) )
+	{
+		VectorCopy( ent->client->renderInfo.eyePoint, src );
+		AngleVectors( ent->client->renderInfo.eyeAngles, fwd, NULL, NULL );
+	}
 	VectorMA( src, COOP_PING_RANGE, fwd, dest );
 	gi.trace( &tr, src, NULL, NULL, dest, ent->s.number, MASK_SHOT );
 	if ( tr.fraction < 1.0f && tr.entityNum < ENTITYNUM_WORLD && COOP_IsPlayer( &g_entities[tr.entityNum] ) )

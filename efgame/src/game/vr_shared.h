@@ -64,6 +64,41 @@ qboolean	VR_FetchPose( vrGamePose_t *pose );
 qboolean	VR_HandToWorld( const vrGamePose_t *pose, int hand, const vec3_t eye, float yaw,
 				vec3_t origin, vec3_t axis[3] );
 
+// VR Use (g_utils.cpp): what Use acts on for player 1, from the weapon hand, the head's gaze and
+// the use-button triggers about the player. The game's Use and the cgame's highlight both ask
+// G_VRUsePick, with the eye, yaw and pose the cgame drew the frame with (vr_useView) while fresh.
+#define VR_USE_NONE			0
+#define VR_USE_ENTITY		1	// a usable thing (ValidUseTarget)
+#define VR_USE_LOCKED		2	// a locked stasis door (the refusal sound)
+#define VR_USE_NPC			3	// a crew member who answers
+#define VR_USE_TRIGGER		4	// a trigger that fires on Use (most switches and consoles)
+#define VR_USE_VIA_HAND		0
+#define VR_USE_VIA_HEAD		1
+#define VR_USE_VIA_TRIGGER	2
+
+typedef struct {
+	int		kind;			// VR_USE_
+	int		entityNum;		// ENTITYNUM_NONE for nothing
+	int		via;			// VR_USE_VIA_
+} vrUsePick_t;
+
+typedef struct {
+	int				time;	// cg.time of the frame, 0: none yet
+	vec3_t			eye;	// cg.refdef.vieworg
+	float			yaw;	// the body's yaw (cg.refdefViewAngles[YAW])
+	vrGamePose_t	pose;
+} vrUseView_t;
+
+extern vrUseView_t	vr_useView;
+
+qboolean	G_VRUsePick( gentity_t *ent, const vrGamePose_t *pose, const vec3_t eye, float yaw, vrUsePick_t *pick );
+// a FACING trigger in VR: 1 the hand, head or body faces movedir, 0 none does, -1 not a VR player
+int			G_VRFacing( gentity_t *ent, const vec3_t movedir );
+// what Use would do for player 1 now (VR_USE_), -1 when not in VR
+int			G_VRUseWouldAct( gentity_t *ent );
+// where a VR player points (player 1: the hand, else the head; a VR guest: its hand); qfalse: flat
+qboolean	G_VRPointRay( gentity_t *ent, vec3_t start, vec3_t dir );
+
 // cgame: tell the engine's weapon wheel what the player can switch to (once per drawn frame in VR)
 void		CG_VR_ReportWeapons( void );
 

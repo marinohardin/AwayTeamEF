@@ -232,6 +232,10 @@ From the first session on a headset (2026-11-27); the numbers are the owner's.
   the Meta XR Simulator, still to check on a headset: partners now draw it toward where the hand
   points (see [COOP.md](COOP.md#what-flat-partners-see)). A partner on an older 1.5.x build sees
   it end within about 20 units of the real spot, as it does for a flat player.
+- **Fixed (not yet tried on a headset): Use on switches and consoles, and the co-op ping.** Use
+  now picks from the hand, the head and the switch areas, and a switch that wants to be faced
+  accepts the head or the hand ([MOVEMENT.md](MOVEMENT.md#how-use-picks-a-target)); the ping
+  goes where the hand points ([COOP.md](COOP.md#the-ping)).
 - **The start screen's step into the game is untested on a headset.** The Quest should switch from
   the flat panel to VR when `QuestActivity` starts, because it carries the VR category. If it opens
   flat instead, start the game directly with
