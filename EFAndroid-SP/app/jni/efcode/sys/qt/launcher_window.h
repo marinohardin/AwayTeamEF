@@ -101,6 +101,7 @@ private:
 	void applyControls( lc_controls_set set, bool ask );
 	void showControls();
 	void askDeckControls();
+	bool requestDeckControls();
 	template <class D> int runSheet( D *d );
 
 	/* state */

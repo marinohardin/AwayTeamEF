@@ -143,6 +143,31 @@ static int IsBindLine( const char *line )
 	return StrEqualCI( cmd, "bind" ) || StrEqualCI( cmd, "unbind" ) || StrEqualCI( cmd, "unbindall" );
 }
 
+/* a game controller's key: PAD0_A, PAD0_LEFTTRIGGER, ... and the older JOY1-32 / AUX1-16 */
+static int IsControllerKey( const char *key )
+{
+	static const char *const prefixes[] = { "PAD", "JOY", "AUX" };
+	size_t i, k;
+
+	for ( i = 0; i < sizeof( prefixes ) / sizeof( prefixes[0] ); i++ ) {
+		for ( k = 0; prefixes[i][k] && tolower( (unsigned char)key[k] ) == tolower( (unsigned char)prefixes[i][k] ); k++ )
+			;
+		if ( !prefixes[i][k] )
+			return 1;
+	}
+	return 0;
+}
+
+/* the line starting at line binds a controller key (the Steam Deck layout, the player's own):
+   both sets keep those, they only set the keyboard and mouse */
+static int IsControllerBind( const char *line )
+{
+	char cmd[16], key[64];
+
+	return Token( &line, cmd, sizeof( cmd ) ) && StrEqualCI( cmd, "bind" )
+		&& Token( &line, key, sizeof( key ) ) && IsControllerKey( key );
+}
+
 /* ---- API ---------------------------------------------------------------------- */
 
 char *lc_controls_rewrite( const char *text, int holomatch, lc_controls_set set )
@@ -150,32 +175,44 @@ char *lc_controls_rewrite( const char *text, int holomatch, lc_controls_set set 
 	size_t count, i, len = text ? strlen( text ) : 0, room;
 	const bind_t *binds = Binds( holomatch, &count );
 	const char *p = text ? text : "";
-	char *out, *o;
+	char *out, *o, *pads, *po;
 
 	room = len + 2 + 32;		/* the kept lines, a newline, "unbindall\n" */
 	for ( i = 0; i < count; i++ )
 		room += strlen( binds[i].key ) + strlen( binds[i].command ) + 16;
-	if ( !( out = malloc( room ) ) )
+	out = malloc( room );
+	pads = malloc( len + 2 );	/* the controller bindings, kept */
+	if ( !out || !pads ) {
+		free( out );
+		free( pads );
 		return NULL;
+	}
 	o = out;
+	po = pads;
 
-	/* every line but the bind lines, as it is */
+	/* every line but the bind lines, as it is; the controller's bindings set aside */
 	while ( *p ) {
 		const char *end = strchr( p, '\n' );
 		size_t n = end ? (size_t)( end - p ) + 1 : strlen( p );
+		char **dst = !IsBindLine( p ) ? &o : IsControllerBind( p ) ? &po : NULL;
 
-		if ( !IsBindLine( p ) ) {
-			memcpy( o, p, n );
-			o += n;
+		if ( dst ) {
+			memcpy( *dst, p, n );
+			*dst += n;
 			if ( !end ) {
-				*o++ = '\n';	/* a last line without one */
+				*( *dst )++ = '\n';	/* a last line without one */
 			}
 		}
 		p += n;
 	}
+	*po = 0;
 
-	if ( set == LC_CONTROLS_RECOMMENDED ) {
+	/* after "unbindall", or (original) with default.cfg's, which binds no controller */
+	if ( set == LC_CONTROLS_RECOMMENDED )
 		o += strlen( strcpy( o, "unbindall\n" ) );
+	o += strlen( strcpy( o, pads ) );
+	free( pads );
+	if ( set == LC_CONTROLS_RECOMMENDED ) {
 		for ( i = 0; i < count; i++ ) {
 			/* the engine's own form (Key_WriteBindings) */
 			o += strlen( strcpy( o, "bind " ) );
@@ -203,7 +240,8 @@ int lc_controls_is_recommended( const char *text, int holomatch )
 		char cmd[16], key[64], command[256];
 
 		if ( Token( &q, cmd, sizeof( cmd ) ) && StrEqualCI( cmd, "bind" )
-			&& Token( &q, key, sizeof( key ) ) && Token( &q, command, sizeof( command ) ) ) {
+			&& Token( &q, key, sizeof( key ) ) && Token( &q, command, sizeof( command ) )
+			&& !IsControllerKey( key ) ) {		/* the controller's are the player's own */
 			seen++;
 			for ( i = 0; i < count; i++ ) {
 				if ( StrEqualCI( key, binds[i].key ) ) {
