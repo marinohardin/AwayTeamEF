@@ -52,7 +52,8 @@ public class EFActivity extends SDLActivity {
                 }
             }
         }
-        Log.i(TAG, "engine arguments: " + args);
+        // passwords (Holomatch's, co-op's) are not logged
+        Log.i(TAG, "engine arguments: " + args.toString().replaceAll("((?:coop_)?password, )(\"[^\"]*\"|[^,\\]]*)", "$1***"));
         return args.toArray(new String[0]);
     }
 }
