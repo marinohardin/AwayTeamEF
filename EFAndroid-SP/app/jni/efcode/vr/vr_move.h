@@ -39,6 +39,8 @@ struct usercmd_s;
 // add the VR movement to a usercmd: proportional stick speed, real or button crouch, and no
 // key lean from Use + strafe (the head is the lean in VR)
 void	VR_Move_Cmd( struct usercmd_s *cmd );
+// on a ladder, moving into it climbs (vr_ladderClimb): after the angles are final (VR_HM_Cmd)
+void	VR_Move_LadderCmd( struct usercmd_s *cmd );
 #endif
 
 // once per input sync (vr_input_engine.c). inState is a const vrInputState_t *; game = no key

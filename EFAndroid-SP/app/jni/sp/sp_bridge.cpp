@@ -1206,6 +1206,17 @@ static void SP_VR_View( int cgTime ){
     float yaw = SHORT2ANGLE( g_lastcmd.angles[YAW] + ps->delta_angles[YAW] );
     VR_Move_SPView( cgTime, yaw, DEFAULT_MAXS_2 + STANDARD_VIEWHEIGHT_OFFSET, SP_VR_ViewTrace );
 }
+
+// the VR ladder climb (vr_move.c, VR_Move_LadderCmd): the local player as the cgame has it (host or
+// co-op guest), from the newest snapshot
+extern "C" int SP_VR_PlayerState( float origin[3], int *viewHeight, int deltaAngles[3], int *onGround ){
+    if( !g_spActive ) return 0;
+    VectorCopy( g_snap.ps.origin, origin );
+    *viewHeight = g_snap.ps.viewheight;
+    for( int i = 0; i < 3; i++ ) deltaAngles[i] = g_snap.ps.delta_angles[i];
+    *onGround = g_snap.ps.groundEntityNum != ENTITYNUM_NONE;
+    return 1;
+}
 #endif
 
 static void BuildSnapshot(void){

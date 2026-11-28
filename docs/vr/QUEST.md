@@ -191,11 +191,17 @@ From the first session on a headset (2026-11-27). None is fixed yet; the numbers
 - **4. The pause menu flickers once when it opens.** Probably one frame between the frozen world
   and the menu layer (the 2D quad switches from the HUD to the menu placement a frame before the
   frozen world is submitted).
-- **7. Walking into a ladder doesn't climb it; forward plus jump does.** The game's climb follows
-  the view pitch, and the pitch sent with movement isn't the head's. Until then, hold forward and
-  press jump (the off-hand trigger) at the ladder.
-- **8. Brief white dots in the distance, for a frame or two.** Cause unknown: cracks between
-  surfaces, flares, or something per eye.
+- **7. Walking into a ladder doesn't climb it; forward plus jump does.** Fixed (round 3): the
+  game's climb follows the command's pitch, which in VR is the body's (single player) or the gun's
+  (Holomatch), not the head's. Moving into a ladder now climbs it, and down while looking down;
+  see Ladders in [MOVEMENT.md](MOVEMENT.md) (`vr_ladderClimb`, `vr_ladderDownPitch`).
+- **8. Brief white dots in the distance, for a frame or two.** Not reproduced in the simulator:
+  with the head still, 12 eye captures in a row show no pixel that lights up in one frame only
+  (borg1, flares on). The eye images clear to black, so cracks between surfaces would show black,
+  not white. Candidates left: shimmer of small bright details as the real head moves (no
+  mipmap/MSAA cure for sub-pixel highlights), and the flare visibility test, which reads its
+  result one frame late while the previous frame may still be drawing. Headset checks:
+  `r_flares 0`; and `vr_msaa 0` (then `vid_restart`) against the default 4.
 - **10. The HUD and the menu layer may float too far away.** The defaults are `vr_hudDistance`
   and `vr_menuDistance` (see [RENDERING.md](RENDERING.md)); a closer default is worth trying on
   the headset.

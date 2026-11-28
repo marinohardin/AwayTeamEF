@@ -38,6 +38,8 @@ docs/vr/MOVEMENT.md; in short:
 
 extern kbutton_t	in_speed;			// cl_input.c
 extern int			SP_IsActive( void );	// sp_bridge.cpp: a single-player game is running
+// sp_bridge.cpp: the local player's origin, view height, delta angles and ground, as the cgame has them
+extern int			SP_VR_PlayerState( float origin[3], int *viewHeight, int deltaAngles[3], int *onGround );
 
 #define VM_HISTORY			16
 #define VM_SP_BUTTON_USE	32		// the SP game's BUTTON_USE ("+use", button 5)
@@ -49,6 +51,12 @@ extern int			SP_IsActive( void );	// sp_bridge.cpp: a single-player game is runn
 #define VM_SP_TIMEOUT		1500	// ms without VR_Move_SPView: the SP bridge isn't driving the body
 #define VM_SP_BUTTON_VRLEAN	0x8000	// the SP game's BUTTON_VRLEAN: an analog lean in bits 16-23
 #define VM_LEAN_DEADZONE	1.5f	// game units of sideways head offset that are still no lean
+#define VM_CONTENTS_LADDER	128		// CONTENTS_LADDER in both games (the engine's surfaceflags.h lacks it)
+#define VM_MASK_WATER		( 8 | 16 | 32 )	// lava, slime, water: the games' MASK_WATER
+#define VM_MINS_Z			-24.0f	// the player's box bottom below the origin, both games
+#define VM_LADDER_REACH		32.0f	// units ahead a slim box looks for the wall a ladder is on
+#define VM_LADDER_FACING	0.5f	// the move must head into that wall within 60 degrees
+#define VM_LADDER_RAMP		15.0f	// degrees over which looking down turns the climb from up to down
 
 typedef struct {
 	int		time;			// level time of the game tick
@@ -71,12 +79,16 @@ static struct {
 	cvar_t		*worldScale;
 	cvar_t		*deadzone;
 	cvar_t		*leanScale;
+	cvar_t		*ladder;
+	cvar_t		*ladderDownPitch;
 
 	qboolean	valid;			// a tracked head since the last recentre
 	unsigned	recenterSeen;
 	float		head[3];		// the head (between the eyes), reference space, plus vr_debugHead
 	float		headYaw;		// radians, counter-clockwise from the room's forward (-Z)
 	float		offhandYaw;
+	float		headPitch;		// degrees, up positive (the ladder climb)
+	float		offhandPitch;
 	float		anchor[3];		// the head origin, before the button crouch and the wall push-back
 	float		want[2];		// x, z: how far the body should still move after the head
 	float		wantYaw;		// the body yaw of the request VR_Move_SPWant handed out
@@ -142,6 +154,12 @@ static void VM_Register( void ) {
 	vm.leanScale = Cvar_Get( "vr_leanScale", "1", CVAR_ARCHIVE );
 	Cvar_CheckRange( vm.leanScale, 0, 3, qfalse );
 	Cvar_SetDescription( vm.leanScale, "VR: how much of the head's sideways offset becomes the game's lean (what co-op partners and NPCs see, and the lean stance). 0: none." );
+	vm.ladder = Cvar_Get( "vr_ladderClimb", "1", CVAR_ARCHIVE );
+	Cvar_CheckRange( vm.ladder, 0, 1, qtrue );
+	Cvar_SetDescription( vm.ladder, "VR: on a ladder, moving into it climbs (down while looking down), as forward with the view pitched does in flat play. 0: the game's own ladder move only." );
+	vm.ladderDownPitch = Cvar_Get( "vr_ladderDownPitch", "25", CVAR_ARCHIVE );
+	Cvar_CheckRange( vm.ladderDownPitch, -60, 80, qfalse );
+	Cvar_SetDescription( vm.ladderDownPitch, "VR: degrees below level the head (or the off-hand with vr_moveDirection 1) must look for moving into a ladder to climb down rather than up." );
 	Cmd_AddCommand( "vr_debugTurn", VM_DebugTurn_f );
 	vm.registered = qtrue;
 }
@@ -174,6 +192,14 @@ static float VM_Yaw( const float q[4] ) {
 		return 0.0f;	// looking straight up or down
 	}
 	return atan2f( -fx, -fz );
+}
+
+// the pitch of a pose's forward (-Z) axis, degrees, up positive
+static float VM_Pitch( const float q[4] ) {
+	float fy = 2.0f * ( q[3] * q[0] - q[1] * q[2] );
+
+	fy = fy > 1.0f ? 1.0f : fy < -1.0f ? -1.0f : fy;
+	return RAD2DEG( asinf( fy ) );
 }
 
 // reference space (x, z) -> the game's body frame (forward, left) and back
@@ -262,6 +288,8 @@ void VR_Move_Frame( const void *inState, int game, float dt ) {
 		vm.head[2] = in->head.position[2] + xr[2];
 		vm.headYaw = VM_Yaw( in->head.orientation );
 		vm.offhandYaw = in->aim[VR_HAND_LEFT].valid ? VM_Yaw( in->aim[VR_HAND_LEFT].orientation ) : vm.headYaw;
+		vm.headPitch = VM_Pitch( in->head.orientation );
+		vm.offhandPitch = in->aim[VR_HAND_LEFT].valid ? VM_Pitch( in->aim[VR_HAND_LEFT].orientation ) : vm.headPitch;
 		if ( !vm.valid ) {
 			VM_Reanchor();
 		}
@@ -445,6 +473,179 @@ int VR_Move_LeanButtons( void ) {
 		}
 	}
 	return VM_SP_BUTTON_VRLEAN | ( ( b & 0xff ) << 16 );
+}
+
+// ---------------------------------------------------------------------------
+// ladders: moving into one climbs it
+// ---------------------------------------------------------------------------
+
+// Both games move a player on a ladder like a swimmer: the wish is the command's forward move
+// along the view's forward, pitch included, plus the up move. A flat player walks into a ladder
+// with the view pitched up (or down) and climbs. In VR the command's pitch is the body's (level in
+// single player) or the gun hand's (Holomatch), not where the player looks, so walking into a
+// ladder only pressed against it. Here, while the player is on a ladder (the games' own test:
+// ladder contents at the feet and at the waist) and the command moves the box into the wall the
+// ladder stands on, the command is rewritten so the game's own sums give a climb: up, or down when
+// the head (the off-hand with vr_moveDirection 1) looks more than vr_ladderDownPitch below level.
+// Only the command's move values change, so the usercmd and the games are as before.
+
+// the games' waterlevel test: 2 = ladder at the feet and at the waist
+static qboolean VM_OnLadder( const vec3_t origin, int viewHeight ) {
+	vec3_t p;
+	float waist = ( (float)viewHeight - VM_MINS_Z ) * 0.5f;
+
+	VectorCopy( origin, p );
+	p[2] = origin[2] + VM_MINS_Z + 1.0f;
+	if ( !( CM_PointContents( p, 0 ) & VM_CONTENTS_LADDER ) ) {
+		return qfalse;
+	}
+	p[2] = origin[2] + VM_MINS_Z + waist;
+	return ( CM_PointContents( p, 0 ) & ( VM_MASK_WATER | VM_CONTENTS_LADDER ) ) ? qtrue : qfalse;
+}
+
+// does a slim box from the origin, moved along the horizontal dir, run into a wall within reach
+// (past the player's own half width), heading into it? Slimmer than the player, so the snapshot's
+// rounded origin against a wall doesn't start it in the wall.
+static qboolean VM_IntoWall( const vec3_t origin, const vec3_t dir ) {
+	vec3_t mins = { -8.0f, -8.0f, -4.0f }, maxs = { 8.0f, 8.0f, 16.0f }, end;
+	trace_t tr;
+
+	VectorMA( origin, VM_LADDER_REACH, dir, end );
+	CM_BoxTrace( &tr, origin, end, mins, maxs, 0, CONTENTS_SOLID | CONTENTS_PLAYERCLIP, qfalse );
+	if ( vm.debugMove->integer > 2 ) {
+		Com_Printf( "vrmove: ladder wall trace start %d all %d frac %.2f normal %.2f %.2f %.2f\n", tr.startsolid, tr.allsolid, tr.fraction,
+			tr.plane.normal[0], tr.plane.normal[1], tr.plane.normal[2] );
+	}
+	if ( tr.startsolid || tr.allsolid || tr.fraction >= 1.0f ) {
+		return qfalse;
+	}
+	return DotProduct( tr.plane.normal, dir ) < -VM_LADDER_FACING ? qtrue : qfalse;
+}
+
+void VR_Move_LadderCmd( usercmd_t *cmd ) {
+	vec3_t origin, angles, fwd, right, flatFwd, flatRight, move, wish;
+	int viewHeight, delta[3], onGround, i;
+	float len, pitch, c, sp, cp, fm, rm, um, big, keep, a;
+
+	if ( !vm.registered || !vm.gameInput || !vm.valid || !vm.ladder->integer ) {
+		return;
+	}
+	if ( ( !cmd->forwardmove && !cmd->rightmove ) || cmd->upmove < 0 ) {
+		return;	// no move, or a crouch (which climbs down by itself)
+	}
+	if ( SP_IsActive() ) {
+		if ( !SP_VR_PlayerState( origin, &viewHeight, delta, &onGround ) ) {
+			return;
+		}
+	} else if ( VR_HM_Active() && cl.snap.valid ) {
+		VectorCopy( cl.snap.ps.origin, origin );
+		viewHeight = cl.snap.ps.viewheight;
+		for ( i = 0; i < 3; i++ ) {
+			delta[i] = cl.snap.ps.delta_angles[i];
+		}
+		onGround = cl.snap.ps.groundEntityNum != ENTITYNUM_NONE;
+	} else {
+		return;
+	}
+	if ( !VM_OnLadder( origin, viewHeight ) ) {
+		if ( vm.debugMove->integer > 2 ) {
+			Com_Printf( "vrmove: not on a ladder at %.1f %.1f %.1f vh %d\n", origin[0], origin[1], origin[2], viewHeight );
+		}
+		return;
+	}
+
+	// the move the command asks for, in the world, as walking would make it (pitch left out)
+	for ( i = 0; i < 3; i++ ) {
+		angles[i] = SHORT2ANGLE( cmd->angles[i] + delta[i] );
+	}
+	AngleVectors( angles, fwd, right, NULL );
+	VectorSet( flatFwd, fwd[0], fwd[1], 0.0f );
+	VectorSet( flatRight, right[0], right[1], 0.0f );
+	if ( VectorNormalize( flatFwd ) < 0.01f || VectorNormalize( flatRight ) < 0.01f ) {
+		return;
+	}
+	for ( i = 0; i < 3; i++ ) {
+		move[i] = flatFwd[i] * cmd->forwardmove + flatRight[i] * cmd->rightmove;
+	}
+	len = VectorLength( move );
+	if ( len < 1.0f ) {
+		return;
+	}
+	VectorScale( move, 1.0f / len, wish );
+	if ( !VM_IntoWall( origin, wish ) ) {
+		return;	// along the wall or away from it: the game's own move (stepping off, sideways)
+	}
+
+	// up, or down when looking down; the ramp keeps it from flipping at one angle
+	pitch = vm.moveDirection->integer == 1 ? vm.offhandPitch : vm.headPitch;
+	c = ( pitch + vm.ladderDownPitch->value ) / VM_LADDER_RAMP;
+	c = c > 1.0f ? 1.0f : c < -1.0f ? -1.0f : c;
+	if ( c < 0.0f && onGround ) {
+		c = 0.0f;	// at the foot: no crouch from the climb
+	}
+
+	// the world wish: mostly the climb, a little into the ladder (off at the top), plus the up move
+	keep = 1.0f - 0.75f * fabsf( c );
+	VectorScale( move, keep, wish );
+	wish[2] = c * len + cmd->upmove;
+
+	// the command whose wish (forward with the command's pitch, right, up) is that vector. The up
+	// move may not go below 0 (that crouches): climbing down needs the forward move pitched down.
+	// Single player may send its own pitch for that (in VR the eyes take only the body's yaw from
+	// the game); Holomatch's angles are the gun's aim, so there only a gun pointed down helps.
+	a = DotProduct( wish, flatFwd );
+	if ( wish[2] < 0.0f && SP_IsActive() ) {
+		float down;
+		if ( fabsf( a ) < 0.05f * len ) {
+			return;
+		}
+		down = RAD2DEG( atanf( -wish[2] / a ) );
+		down = down > 80.0f ? 80.0f : down < -80.0f ? -80.0f : down;
+		cmd->angles[PITCH] = ANGLE2SHORT( down ) - delta[PITCH];
+		angles[PITCH] = SHORT2ANGLE( cmd->angles[PITCH] + delta[PITCH] );
+		AngleVectors( angles, fwd, NULL, NULL );
+	}
+	cp = sqrtf( fwd[0] * fwd[0] + fwd[1] * fwd[1] );	// cos of the command's pitch
+	sp = -fwd[2];										// its sine, down positive
+	if ( cp < 0.05f ) {
+		return;
+	}
+	fm = a / cp;
+	rm = DotProduct( wish, flatRight );
+	um = wish[2] + sp * fm;
+	if ( um < 0.0f ) {
+		// only the pitched forward move can give the drop (or the rest of a climb with the aim up)
+		const float fm2 = fabsf( sp ) > 0.05f ? -wish[2] / sp : 0.0f;
+		if ( um > -2.0f ) {
+			um = 0.0f;
+		} else if ( fm2 * a > 0.0f ) {
+			fm = fm2;
+			um = 0.0f;
+		} else {
+			return;	// not with this aim: the game's own move
+		}
+	}
+
+	// as fast as the stick asks: the largest value is the move's own length (at most 127)
+	big = fabsf( fm ) > fabsf( rm ) ? fabsf( fm ) : fabsf( rm );
+	big = fabsf( um ) > big ? fabsf( um ) : big;
+	if ( big < 1.0f ) {
+		return;
+	}
+	len = ( len > 127.0f ? 127.0f : len ) / big;
+	if ( vm.debugMove->integer ) {
+		static int next;
+		if ( Sys_Milliseconds() >= next ) {
+			next = Sys_Milliseconds() + 250;
+			Com_Printf( "vrmove: ladder at %.1f %.1f %.1f, pitch %+.1f, climb %+.2f: move %d %d %d -> %d %d %d\n",
+				origin[0], origin[1], origin[2], pitch, c, cmd->forwardmove, cmd->rightmove, cmd->upmove,
+				ClampChar( (int)floorf( fm * len + 0.5f ) ), ClampChar( (int)floorf( rm * len + 0.5f ) ),
+				ClampChar( (int)floorf( um * len + 0.5f ) ) );
+		}
+	}
+	cmd->forwardmove = ClampChar( (int)floorf( fm * len + 0.5f ) );
+	cmd->rightmove = ClampChar( (int)floorf( rm * len + 0.5f ) );
+	cmd->upmove = ClampChar( (int)floorf( um * len + 0.5f ) );
 }
 
 // ---------------------------------------------------------------------------
